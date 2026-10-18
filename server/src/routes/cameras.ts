@@ -1,0 +1,145 @@
+import { Router } from "express";
+import { z } from "zod";
+import { actorOf, requirePermission } from "../auth/middleware.js";
+import { registry } from "../integrations/registry.js";
+import { HttpError } from "../lib/errors.js";
+import { param, parse } from "../lib/validate.js";
+import { runCheck } from "../monitoring/checkService.js";
+import { notifier } from "../notifications/notifier.js";
+import {
+  cameraInputSchema,
+  cameraUpdateSchema,
+  createCamera,
+  getCamera,
+  getHistory,
+  getSummary,
+  listCameras,
+  listLocations,
+  listQuerySchema,
+  removeCameras,
+  setMonitoring,
+  updateCamera,
+} from "../services/cameraService.js";
+import { testCameraConfig, testSavedCamera } from "../services/connectionService.js";
+import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
+import { deviceLimiter, importLimiter } from "./limits.js";
+
+export const camerasRouter = Router();
+const read = requirePermission("cameras:read");
+const write = requirePermission("cameras:write");
+const check = requirePermission("cameras:check");
+
+camerasRouter.get("/", read, async (req, res) => {
+  res.json(await listCameras(parse(listQuerySchema, req.query)));
+});
+
+camerasRouter.get("/summary", read, async (_req, res) => {
+  res.json(await getSummary());
+});
+
+camerasRouter.get("/locations", read, async (_req, res) => {
+  res.json(await listLocations());
+});
+
+camerasRouter.post("/", write, async (req, res) => {
+  const input = parse(cameraInputSchema, req.body);
+  const id = await createCamera(input, actorOf(req), req.ip);
+  res.status(201).json(await getCamera(id));
+});
+
+// Test an unsaved configuration from the Add Camera form.
+camerasRouter.post("/test-connection", write, deviceLimiter, async (req, res) => {
+  const input = parse(cameraInputSchema, req.body);
+  res.json(await testCameraConfig(registry.get(input.brand), input));
+});
+
+camerasRouter.get("/import/template", read, (_req, res) => {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="camera-import-template.csv"');
+  res.send(csvTemplate());
+});
+
+camerasRouter.post("/import/validate", write, importLimiter, async (req, res) => {
+  const { rows, options } = parse(importRequestSchema, req.body);
+  const results = publicValidation(await validateImport(rows, options));
+  res.json({
+    results,
+    summary: {
+      total: results.length,
+      valid: results.filter((r) => r.status === "valid").length,
+      invalid: results.filter((r) => r.status === "invalid").length,
+      duplicate: results.filter((r) => r.status === "duplicate").length,
+    },
+  });
+});
+
+camerasRouter.post("/import", write, importLimiter, async (req, res) => {
+  const { rows, options } = parse(importRequestSchema, req.body);
+  res.json(await commitImport(rows, options, actorOf(req), req.ip));
+});
+
+camerasRouter.post("/bulk-delete", write, async (req, res) => {
+  const { ids } = parse(z.object({ ids: z.array(z.string()).min(1).max(500) }), req.body);
+  res.json(await removeCameras(ids, actorOf(req), req.ip));
+});
+
+camerasRouter.get("/:id", read, async (req, res) => {
+  res.json(await getCamera(param(req)));
+});
+
+camerasRouter.patch("/:id", write, async (req, res) => {
+  const patch = parse(cameraUpdateSchema, req.body);
+  await updateCamera(param(req), patch, actorOf(req), req.ip);
+  res.json(await getCamera(param(req)));
+});
+
+camerasRouter.delete("/:id", write, async (req, res) => {
+  const result = await removeCameras([param(req)], actorOf(req), req.ip);
+  if (result.removed.length === 0) throw new HttpError(404, "NOT_FOUND", "Camera not found");
+  res.status(204).end();
+});
+
+camerasRouter.post("/:id/monitoring", write, async (req, res) => {
+  const { enabled } = parse(z.object({ enabled: z.boolean() }), req.body);
+  await setMonitoring(param(req), enabled, actorOf(req), req.ip);
+  res.json(await getCamera(param(req)));
+});
+
+// Test a saved camera, optionally with unsaved edits applied (blank password keeps the stored one).
+camerasRouter.post("/:id/test-connection", check, deviceLimiter, async (req, res) => {
+  const overrides = parse(cameraUpdateSchema, req.body ?? {});
+  if (Object.keys(overrides).length > 0 && !req.auth!.user.permissions.includes("cameras:write")) {
+    throw new HttpError(403, "FORBIDDEN", "Testing modified settings requires camera edit permission");
+  }
+  res.json(await testSavedCamera(param(req), overrides));
+});
+
+camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) => {
+  await getCamera(param(req)); // 404 for unknown cameras
+  const outcome = await runCheck(param(req), "manual", { registry, notifier });
+  if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
+  res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req)) });
+});
+
+camerasRouter.get("/:id/storage", read, async (req, res) => {
+  const cam = await getCamera(param(req));
+  res.json({
+    cameraId: cam.id,
+    checkedAt: cam.status.lastSuccessAt,
+    status: cam.status.storageHealth,
+    totalBytes: cam.status.totalBytes,
+    usedBytes: cam.status.usedBytes,
+    freeBytes: cam.status.freeBytes,
+    usedPercentage: cam.status.usedPercentage,
+    devices: cam.devices,
+    error: cam.status.lastErrorCode ? { code: cam.status.lastErrorCode, message: cam.status.lastErrorMessage } : undefined,
+  });
+});
+
+camerasRouter.get("/:id/history", read, async (req, res) => {
+  const q = parse(
+    z.object({ hours: z.coerce.number().int().min(1).max(24 * 365).default(168), limit: z.coerce.number().int().min(1).max(5000).default(1000) }),
+    req.query,
+  );
+  res.json(await getHistory(param(req), q));
+});

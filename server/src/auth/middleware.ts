@@ -1,0 +1,48 @@
+import { timingSafeEqual } from "node:crypto";
+import type { NextFunction, Request, Response } from "express";
+import { HttpError } from "../lib/errors.js";
+import type { Actor } from "../services/auditService.js";
+import { type AuthContext, getSession, SESSION_COOKIE } from "./sessions.js";
+
+declare module "express-serve-static-core" {
+  interface Request {
+    auth?: AuthContext;
+  }
+}
+
+export async function authenticate(req: Request, _res: Response, next: NextFunction) {
+  const token = req.cookies?.[SESSION_COOKIE];
+  if (typeof token === "string" && token.length > 0 && token.length < 200) {
+    req.auth = (await getSession(token)) ?? undefined;
+  }
+  next();
+}
+
+export function requireAuth(req: Request, _res: Response, next: NextFunction) {
+  if (!req.auth) return next(new HttpError(401, "UNAUTHENTICATED", "Please sign in"));
+  next();
+}
+
+/** Double-submit style CSRF check: the per-session token must be sent in a header. */
+export function requireCsrf(req: Request, _res: Response, next: NextFunction) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  const sent = req.get("x-csrf-token") ?? "";
+  const expected = req.auth?.csrfToken ?? "";
+  const ok = sent.length === expected.length && expected.length > 0 && timingSafeEqual(Buffer.from(sent), Buffer.from(expected));
+  if (!ok) return next(new HttpError(403, "CSRF_FAILED", "Missing or invalid CSRF token. Reload the page and try again."));
+  next();
+}
+
+export function requirePermission(permission: string) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.auth) return next(new HttpError(401, "UNAUTHENTICATED", "Please sign in"));
+    if (!req.auth.user.permissions.includes(permission)) {
+      return next(new HttpError(403, "FORBIDDEN", "You do not have permission to perform this action"));
+    }
+    next();
+  };
+}
+
+export function actorOf(req: Request): Actor {
+  return { id: req.auth!.user.id, username: req.auth!.user.username };
+}

@@ -1,0 +1,522 @@
+import { z } from "zod";
+import { pool, withTransaction, type Queryable } from "../db/pool.js";
+import { registry } from "../integrations/registry.js";
+import { CameraApiError, type CameraConfig } from "../integrations/types.js";
+import { conflict, HttpError, notFound } from "../lib/errors.js";
+import { getCipher } from "../security/cipher.js";
+import { HostNotAllowedError, normalizeHost } from "../security/hostGuard.js";
+import { type Actor, audit } from "./auditService.js";
+
+// ------------------------------------------------------------------ validation
+
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .nullable()
+    .transform((v) => (v ? v : null));
+
+const threshold = z.coerce.number().min(1).max(100).optional().nullable();
+
+const hostSchema = z
+  .string()
+  .trim()
+  .min(1, "IP address or hostname is required")
+  .max(253)
+  .transform((v, ctx) => {
+    try {
+      return normalizeHost(v);
+    } catch (err) {
+      ctx.addIssue({ code: "custom", message: err instanceof HostNotAllowedError ? err.message : "Invalid host" });
+      return z.NEVER;
+    }
+  });
+
+const brandSchema = z
+  .string()
+  .trim()
+  .min(1, "Brand is required")
+  .transform((v, ctx) => {
+    const key = registry.resolveKey(v);
+    if (!key) {
+      ctx.addIssue({ code: "custom", message: `Unknown brand "${v}"` });
+      return z.NEVER;
+    }
+    if (!registry.isSupported(key)) {
+      ctx.addIssue({ code: "custom", message: `${v} support is planned but not available yet` });
+      return z.NEVER;
+    }
+    return key;
+  });
+
+const pemSchema = z
+  .string()
+  .trim()
+  .max(20000)
+  .refine((v) => v === "" || /-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----/.test(v), {
+    message: "Must be a PEM certificate (-----BEGIN CERTIFICATE-----)",
+  })
+  .optional()
+  .nullable()
+  .transform((v) => (v ? v : null));
+
+const baseFields = {
+  name: z.string().trim().min(1, "Camera name is required").max(120),
+  host: hostSchema,
+  port: z.coerce.number().int().min(1).max(65535).optional().nullable(),
+  protocol: z.enum(["http", "https"]).default("http"),
+  brand: brandSchema,
+  model: optionalText(120),
+  location: optionalText(120),
+  username: z.string().trim().min(1, "Username is required").max(64),
+  password: z.string().min(1, "Password is required").max(128),
+  monitoringEnabled: z.boolean().default(true),
+  warningThreshold: threshold,
+  criticalThreshold: threshold,
+  caCertificate: pemSchema,
+};
+
+function thresholdsOk(v: { warningThreshold?: number | null; criticalThreshold?: number | null }) {
+  return v.warningThreshold == null || v.criticalThreshold == null || v.warningThreshold < v.criticalThreshold;
+}
+const thresholdMessage = { message: "Warning threshold must be lower than the critical threshold", path: ["warningThreshold"] };
+
+export const cameraInputSchema = z.object(baseFields).strict().refine(thresholdsOk, thresholdMessage);
+export type CameraInput = z.infer<typeof cameraInputSchema>;
+
+export const cameraUpdateSchema = z
+  .object({
+    ...baseFields,
+    // On update the password is optional: omit it to keep the stored one.
+    password: z.string().min(1).max(128).optional(),
+    username: baseFields.username.optional(),
+  })
+  .partial()
+  .strict()
+  .refine(thresholdsOk, thresholdMessage);
+export type CameraUpdate = z.infer<typeof cameraUpdateSchema>;
+
+export function defaultPort(brandKey: string, protocol: "http" | "https") {
+  const ports = registry.get(brandKey).meta.defaultPorts;
+  return protocol === "https" ? ports.https : ports.http;
+}
+
+// ------------------------------------------------------------------ queries
+
+const SELECT_CAMERA = `
+  SELECT c.id, c.name, c.host, c.port, c.protocol, c.brand_key, b.display_name AS brand_name,
+         c.model, c.location, c.monitoring_enabled, c.warning_threshold, c.critical_threshold,
+         (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
+         c.created_at, c.updated_at,
+         cr.username, cr.updated_at AS credentials_updated_at,
+         s.connection_status, s.storage_health, s.last_error_code, s.last_error_message,
+         s.last_attempt_at, s.last_success_at, s.consecutive_failures, s.consecutive_auth_failures,
+         s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
+         s.device_model, s.device_serial, s.firmware_version, s.next_check_at,
+         (s.check_lock_until IS NOT NULL AND s.check_lock_until > now()) AS check_in_progress,
+         (SELECT count(*)::int FROM alerts a WHERE a.camera_id = c.id AND a.status <> 'resolved') AS open_alerts
+  FROM cameras c
+  JOIN camera_brands b ON b.key = c.brand_key
+  LEFT JOIN camera_credentials cr ON cr.camera_id = c.id
+  LEFT JOIN camera_status s ON s.camera_id = c.id`;
+
+export interface CameraRow {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  protocol: "http" | "https";
+  brand_key: string;
+  brand_name: string;
+  model: string | null;
+  location: string | null;
+  monitoring_enabled: boolean;
+  warning_threshold: number | null;
+  critical_threshold: number | null;
+  has_ca_certificate: boolean;
+  username: string | null;
+  connection_status: string;
+  storage_health: string;
+  [key: string]: unknown;
+}
+
+/** API shape: camelCase, never contains the password or its ciphertext. */
+export function toCameraView(r: CameraRow) {
+  return {
+    id: r.id,
+    name: r.name,
+    host: r.host,
+    port: r.port,
+    protocol: r.protocol,
+    brand: r.brand_key,
+    brandName: r.brand_name,
+    model: r.model ?? (r.device_model as string | null) ?? null,
+    location: r.location,
+    monitoringEnabled: r.monitoring_enabled,
+    warningThreshold: r.warning_threshold,
+    criticalThreshold: r.critical_threshold,
+    hasCaCertificate: r.has_ca_certificate,
+    username: r.username,
+    credentialsUpdatedAt: r.credentials_updated_at ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    status: {
+      connection: r.connection_status ?? "unknown",
+      storageHealth: r.storage_health ?? "unknown",
+      lastErrorCode: r.last_error_code ?? null,
+      lastErrorMessage: r.last_error_message ?? null,
+      lastAttemptAt: r.last_attempt_at ?? null,
+      lastSuccessAt: r.last_success_at ?? null,
+      consecutiveFailures: r.consecutive_failures ?? 0,
+      totalBytes: r.total_bytes ?? null,
+      usedBytes: r.used_bytes ?? null,
+      freeBytes: r.free_bytes ?? null,
+      usedPercentage: r.used_percentage ?? null,
+      nextCheckAt: r.next_check_at ?? null,
+      checkInProgress: r.check_in_progress ?? false,
+      openAlerts: r.open_alerts ?? 0,
+    },
+    device: {
+      model: r.device_model ?? null,
+      serialNumber: r.device_serial ?? null,
+      firmwareVersion: r.firmware_version ?? null,
+    },
+  };
+}
+export type CameraView = ReturnType<typeof toCameraView>;
+
+export const listQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  brand: z.string().trim().max(40).optional(),
+  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled"]).optional(),
+  location: z.string().trim().max(120).optional(),
+  minUsage: z.coerce.number().min(0).max(100).optional(),
+  maxUsage: z.coerce.number().min(0).max(100).optional(),
+  sort: z.enum(["name", "host", "brand", "location", "connection", "health", "usage", "lastSuccess"]).default("name"),
+  order: z.enum(["asc", "desc"]).default("asc"),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(25),
+});
+export type ListQuery = z.infer<typeof listQuerySchema>;
+
+const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
+  name: "lower(c.name)",
+  host: "c.host",
+  brand: "c.brand_key",
+  location: "lower(c.location)",
+  connection: "s.connection_status",
+  health: "CASE s.storage_health WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'healthy' THEN 1 ELSE 0 END",
+  usage: "s.used_percentage",
+  lastSuccess: "s.last_success_at",
+};
+
+export async function listCameras(q: ListQuery) {
+  const where = ["c.deleted_at IS NULL"];
+  const params: unknown[] = [];
+  const p = (v: unknown) => `$${params.push(v)}`;
+  if (q.search) {
+    const like = p(`%${q.search.replace(/[%_\\]/g, (m) => `\\${m}`)}%`);
+    where.push(`(c.name ILIKE ${like} OR c.host ILIKE ${like} OR c.location ILIKE ${like} OR c.model ILIKE ${like})`);
+  }
+  if (q.brand) where.push(`c.brand_key = ${p(q.brand)}`);
+  if (q.location) where.push(`c.location = ${p(q.location)}`);
+  if (q.status === "disabled") where.push("c.monitoring_enabled = false");
+  else if (q.status && ["online", "offline", "unknown"].includes(q.status)) {
+    where.push(`c.monitoring_enabled AND s.connection_status = ${p(q.status)}`);
+  } else if (q.status) where.push(`c.monitoring_enabled AND s.storage_health = ${p(q.status)}`);
+  if (q.minUsage !== undefined) where.push(`s.used_percentage >= ${p(q.minUsage)}`);
+  if (q.maxUsage !== undefined) where.push(`s.used_percentage <= ${p(q.maxUsage)}`);
+
+  const clause = where.join(" AND ");
+  const base = `FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause}`;
+  const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n ${base}`, params)).rows[0]!.n;
+  const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
+  const limit = p(q.pageSize);
+  const offset = p((q.page - 1) * q.pageSize);
+  const { rows } = await pool.query<CameraRow>(
+    `${SELECT_CAMERA} WHERE ${clause} ORDER BY ${order} LIMIT ${limit} OFFSET ${offset}`,
+    params,
+  );
+  return { items: rows.map(toCameraView), total, page: q.page, pageSize: q.pageSize };
+}
+
+export async function listLocations(): Promise<string[]> {
+  const { rows } = await pool.query<{ location: string }>(
+    "SELECT DISTINCT location FROM cameras WHERE deleted_at IS NULL AND location IS NOT NULL ORDER BY location",
+  );
+  return rows.map((r) => r.location);
+}
+
+export async function getCameraRow(id: string, db: Queryable = pool): Promise<CameraRow> {
+  if (!z.string().uuid().safeParse(id).success) throw notFound("Camera");
+  const { rows } = await db.query<CameraRow>(`${SELECT_CAMERA} WHERE c.id = $1 AND c.deleted_at IS NULL`, [id]);
+  if (!rows[0]) throw notFound("Camera");
+  return rows[0];
+}
+
+export async function getCamera(id: string) {
+  const row = await getCameraRow(id);
+  const devices = await pool.query(
+    `SELECT vendor_id AS id, name, type, health_status AS "healthStatus", raw_status AS "rawStatus",
+            total_bytes AS "totalBytes", free_bytes AS "freeBytes", used_bytes AS "usedBytes",
+            used_percentage AS "usedPercentage", writable, property, format_type AS "formatType", updated_at AS "updatedAt"
+     FROM storage_devices WHERE camera_id = $1 ORDER BY vendor_id`,
+    [id],
+  );
+  return { ...toCameraView(row), devices: devices.rows };
+}
+
+export async function getSummary() {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE c.monitoring_enabled)::int AS monitored,
+            count(*) FILTER (WHERE c.monitoring_enabled AND s.connection_status = 'online')::int AS online,
+            count(*) FILTER (WHERE c.monitoring_enabled AND s.connection_status = 'offline')::int AS offline,
+            count(*) FILTER (WHERE c.monitoring_enabled AND s.connection_status = 'unknown')::int AS unknown,
+            count(*) FILTER (WHERE NOT c.monitoring_enabled)::int AS disabled,
+            count(*) FILTER (WHERE c.monitoring_enabled AND s.storage_health = 'warning')::int AS warning,
+            count(*) FILTER (WHERE c.monitoring_enabled AND s.storage_health = 'critical')::int AS critical,
+            coalesce(sum(s.total_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS total_bytes,
+            coalesce(sum(s.used_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS used_bytes,
+            coalesce(sum(s.free_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS free_bytes,
+            count(s.total_bytes) FILTER (WHERE c.monitoring_enabled)::int AS cameras_with_storage_data
+     FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id
+     WHERE c.deleted_at IS NULL`,
+  );
+  const r = rows[0];
+  const alerts = await pool.query(
+    `SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
+            count(*) FILTER (WHERE status = 'acknowledged')::int AS acknowledged,
+            count(*) FILTER (WHERE status <> 'resolved' AND severity = 'critical')::int AS critical
+     FROM alerts a JOIN cameras c ON c.id = a.camera_id WHERE c.deleted_at IS NULL`,
+  );
+  return {
+    totalCameras: r.total,
+    monitoredCameras: r.monitored,
+    online: r.online,
+    offline: r.offline,
+    unknown: r.unknown,
+    disabled: r.disabled,
+    storageWarning: r.warning,
+    storageCritical: r.critical,
+    totalBytes: r.total_bytes,
+    usedBytes: r.used_bytes,
+    freeBytes: r.free_bytes,
+    camerasWithStorageData: r.cameras_with_storage_data,
+    alerts: alerts.rows[0],
+  };
+}
+
+// ------------------------------------------------------------------ mutations
+
+function translateUniqueViolation(err: unknown): never {
+  if ((err as { code?: string }).code === "23505") {
+    throw conflict("A camera with this brand, host and port is already registered", { code: "DUPLICATE_CAMERA" });
+  }
+  throw err;
+}
+
+export async function createCamera(input: CameraInput, actor: Actor, ip?: string | null, db?: Queryable) {
+  const port = input.port ?? defaultPort(input.brand, input.protocol);
+  const cipher = getCipher();
+  const run = async (client: Queryable) => {
+    const { rows } = await client
+      .query<{ id: string }>(
+        `INSERT INTO cameras (name, host, port, protocol, brand_key, model, location, monitoring_enabled,
+                              warning_threshold, critical_threshold, ca_certificate, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+        [
+          input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
+          input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
+          input.caCertificate, actor.id,
+        ],
+      )
+      .catch(translateUniqueViolation);
+    const id = rows[0]!.id;
+    await client.query(
+      `INSERT INTO camera_credentials (camera_id, username, password_encrypted, key_version, updated_by)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, input.username, cipher.encrypt(input.password), cipher.keyVersion, actor.id],
+    );
+    await client.query("INSERT INTO camera_status (camera_id, next_check_at) VALUES ($1, now())", [id]);
+    await audit(
+      {
+        actor, ip, action: "camera.created", entityType: "camera", entityId: id,
+        details: { name: input.name, host: input.host, port, brand: input.brand, protocol: input.protocol },
+      },
+      client,
+    );
+    return id;
+  };
+  const id = db ? await run(db) : await withTransaction(run);
+  return id;
+}
+
+export async function updateCamera(id: string, patch: CameraUpdate, actor: Actor, ip?: string | null) {
+  return withTransaction(async (client) => {
+    const current = await getCameraRow(id, client);
+    const brand = patch.brand ?? current.brand_key;
+    const protocol = patch.protocol ?? current.protocol;
+    let port = patch.port === undefined ? current.port : patch.port;
+    // Switching protocol without choosing a port moves to that protocol's default port.
+    if (port == null || (patch.protocol && patch.port === undefined && patch.protocol !== current.protocol)) {
+      port = defaultPort(brand, protocol);
+    }
+    const warning = patch.warningThreshold === undefined ? current.warning_threshold : patch.warningThreshold;
+    const critical = patch.criticalThreshold === undefined ? current.critical_threshold : patch.criticalThreshold;
+    if (warning != null && critical != null && warning >= critical) {
+      throw new HttpError(400, "VALIDATION_ERROR", "Warning threshold must be lower than the critical threshold");
+    }
+    const endpointChanged =
+      brand !== current.brand_key || (patch.host ?? current.host) !== current.host || port !== current.port || protocol !== current.protocol;
+
+    await client
+      .query(
+        `UPDATE cameras SET name = $2, host = $3, port = $4, protocol = $5, brand_key = $6, model = $7, location = $8,
+                monitoring_enabled = $9, warning_threshold = $10, critical_threshold = $11,
+                ca_certificate = $12, updated_at = now()
+         WHERE id = $1`,
+        [
+          id,
+          patch.name ?? current.name,
+          patch.host ?? current.host,
+          port,
+          protocol,
+          brand,
+          patch.model === undefined ? current.model : patch.model,
+          patch.location === undefined ? current.location : patch.location,
+          patch.monitoringEnabled ?? current.monitoring_enabled,
+          warning,
+          critical,
+          patch.caCertificate === undefined
+            ? (await client.query("SELECT ca_certificate FROM cameras WHERE id = $1", [id])).rows[0].ca_certificate
+            : patch.caCertificate,
+        ],
+      )
+      .catch(translateUniqueViolation);
+
+    const credentialsChanged = patch.password !== undefined || (patch.username !== undefined && patch.username !== current.username);
+    if (credentialsChanged) {
+      const cipher = getCipher();
+      if (patch.password !== undefined) {
+        await client.query(
+          `UPDATE camera_credentials SET username = $2, password_encrypted = $3, key_version = $4, updated_at = now(), updated_by = $5
+           WHERE camera_id = $1`,
+          [id, patch.username ?? current.username, cipher.encrypt(patch.password), cipher.keyVersion, actor.id],
+        );
+      } else {
+        await client.query(
+          "UPDATE camera_credentials SET username = $2, updated_at = now(), updated_by = $3 WHERE camera_id = $1",
+          [id, patch.username, actor.id],
+        );
+      }
+      await audit({ actor, ip, action: "camera.credentials_changed", entityType: "camera", entityId: id }, client);
+    }
+    if (endpointChanged || credentialsChanged) {
+      // Check again soon with the new configuration; failure counters start over.
+      await client.query(
+        "UPDATE camera_status SET next_check_at = now(), consecutive_failures = 0, consecutive_auth_failures = 0 WHERE camera_id = $1",
+        [id],
+      );
+    }
+    const changed = Object.keys(patch).filter((k) => k !== "password" && k !== "username");
+    if (changed.length) {
+      await audit(
+        {
+          actor, ip, action: "camera.updated", entityType: "camera", entityId: id,
+          details: { fields: changed },
+        },
+        client,
+      );
+    }
+  });
+}
+
+export async function setMonitoring(id: string, enabled: boolean, actor: Actor, ip?: string | null) {
+  await getCameraRow(id);
+  await pool.query("UPDATE cameras SET monitoring_enabled = $2, updated_at = now() WHERE id = $1", [id, enabled]);
+  if (enabled) await pool.query("UPDATE camera_status SET next_check_at = now() WHERE camera_id = $1", [id]);
+  await audit({ actor, ip, action: enabled ? "camera.monitoring_enabled" : "camera.monitoring_disabled", entityType: "camera", entityId: id });
+}
+
+/**
+ * Removes cameras from monitoring. Rows are soft-deleted so history, alerts and audit
+ * records are preserved; stored credentials are destroyed because they are no longer needed.
+ * Nothing is sent to the physical camera.
+ */
+export async function removeCameras(ids: string[], actor: Actor, ip?: string | null) {
+  const valid = ids.filter((id) => z.string().uuid().safeParse(id).success);
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<{ id: string; name: string; host: string }>(
+      `UPDATE cameras SET deleted_at = now(), monitoring_enabled = false, updated_at = now()
+       WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL RETURNING id, name, host`,
+      [valid],
+    );
+    const removed = rows.map((r) => r.id);
+    if (removed.length) {
+      await client.query("DELETE FROM camera_credentials WHERE camera_id = ANY($1::uuid[])", [removed]);
+      await client.query("DELETE FROM storage_devices WHERE camera_id = ANY($1::uuid[])", [removed]);
+      const closed = await client.query<{ id: number }>(
+        `UPDATE alerts SET status = 'resolved', resolved_at = now(), resolved_by = $2, resolution_note = 'Camera removed from monitoring'
+         WHERE camera_id = ANY($1::uuid[]) AND status <> 'resolved' RETURNING id`,
+        [removed, actor.id],
+      );
+      for (const a of closed.rows) {
+        await client.query(
+          "INSERT INTO alert_events (alert_id, event_type, message, actor_user_id) VALUES ($1, 'resolved', 'Camera removed from monitoring', $2)",
+          [a.id, actor.id],
+        );
+      }
+      for (const r of rows) {
+        await audit({ actor, ip, action: "camera.removed", entityType: "camera", entityId: r.id, details: { name: r.name, host: r.host } }, client);
+      }
+    }
+    return { removed, notFound: ids.filter((id) => !removed.includes(id)) };
+  });
+}
+
+/** Builds the adapter config, decrypting the stored password. Used only server-side. */
+export async function getCameraConfig(id: string, timeoutMs: number, db: Queryable = pool): Promise<CameraConfig> {
+  const { rows } = await db.query(
+    `SELECT c.host, c.port, c.protocol, c.ca_certificate, cr.username, cr.password_encrypted
+     FROM cameras c LEFT JOIN camera_credentials cr ON cr.camera_id = c.id
+     WHERE c.id = $1 AND c.deleted_at IS NULL`,
+    [id],
+  );
+  const r = rows[0];
+  if (!r) throw notFound("Camera");
+  if (!r.password_encrypted) throw new CameraApiError("CREDENTIALS_UNAVAILABLE", "No credentials are stored for this camera");
+  let password: string;
+  try {
+    password = getCipher().decrypt(r.password_encrypted);
+  } catch {
+    throw new CameraApiError(
+      "CREDENTIALS_UNAVAILABLE",
+      "Stored credentials could not be decrypted. Check the encryption key configuration or re-enter the password.",
+    );
+  }
+  return {
+    host: r.host, port: r.port, protocol: r.protocol, caCertificate: r.ca_certificate,
+    username: r.username, password, timeoutMs,
+  };
+}
+
+export async function getHistory(id: string, opts: { hours: number; limit: number }) {
+  await getCameraRow(id);
+  const checks = await pool.query(
+    `SELECT checked_at AS "checkedAt", trigger, outcome, duration_ms AS "durationMs", attempts,
+            storage_health AS "storageHealth", total_bytes AS "totalBytes", used_bytes AS "usedBytes",
+            free_bytes AS "freeBytes", used_percentage AS "usedPercentage", error_message AS "errorMessage"
+     FROM storage_checks WHERE camera_id = $1 AND checked_at >= now() - make_interval(hours => $2)
+     ORDER BY checked_at DESC LIMIT $3`,
+    [id, opts.hours, opts.limit],
+  );
+  const events = await pool.query(
+    `SELECT occurred_at AS "occurredAt", from_status AS "fromStatus", to_status AS "toStatus", reason
+     FROM connection_events WHERE camera_id = $1 ORDER BY occurred_at DESC LIMIT 100`,
+    [id],
+  );
+  return { checks: checks.rows, connectionEvents: events.rows };
+}

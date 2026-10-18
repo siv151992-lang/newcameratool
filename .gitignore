@@ -1,2 +1,9 @@
-cameras.csv
-__pycache__/
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+*.csv
+!server/test/fixtures/*.csv
