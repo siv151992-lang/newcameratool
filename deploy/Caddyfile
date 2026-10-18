@@ -1,0 +1,13 @@
+# HTTPS reverse proxy for the dashboard.
+# `tls internal` issues a certificate from Caddy's own local CA, suitable for an office LAN
+# (install Caddy's root certificate on admin PCs, or replace with `tls /path/cert.pem /path/key.pem`).
+# For a public DNS name, remove the `tls internal` line and Caddy obtains a Let's Encrypt certificate.
+{$SITE_ADDRESS} {
+	tls internal
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy api:4000
+}

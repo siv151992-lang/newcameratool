@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme tokens (RGB triplets for Tailwind alpha support).
+   Chrome follows the reference data-viz palette; status colors are fixed across themes. */
+:root {
+  color-scheme: light;
+  --page: 249 249 247;         /* #f9f9f7 */
+  --surface: 252 252 251;      /* #fcfcfb */
+  --raised: 255 255 255;
+  --ink: 11 11 11;             /* #0b0b0b */
+  --ink-secondary: 82 81 78;   /* #52514e */
+  --ink-muted: 107 106 101;    /* darker than chart muted so small text clears 4.5:1 */
+  --line: 225 224 217;         /* #e1e0d9 */
+  --line-strong: 195 194 183;  /* #c3c2b7 */
+  --accent: 42 120 214;        /* #2a78d6 series-1 */
+  --accent-ink: 28 92 171;     /* #1c5cab accessible link/button text */
+  --accent-soft: 205 226 251;  /* #cde2fb */
+  --good: 12 163 12;           /* #0ca30c */
+  --warn: 250 178 25;          /* #fab219 */
+  --serious: 236 131 90;       /* #ec835a */
+  --bad: 208 59 59;            /* #d03b3b */
+  --unknown: 137 135 129;      /* #898781 */
+}
+
+.dark {
+  color-scheme: dark;
+  --page: 13 13 13;            /* #0d0d0d */
+  --surface: 26 26 25;         /* #1a1a19 */
+  --raised: 34 34 32;
+  --ink: 240 239 236;          /* #f0efec */
+  --ink-secondary: 195 194 183;/* #c3c2b7 */
+  --ink-muted: 152 150 144;
+  --line: 44 44 42;            /* #2c2c2a */
+  --line-strong: 56 56 53;     /* #383835 */
+  --accent: 57 135 229;        /* #3987e5 */
+  --accent-ink: 134 182 239;   /* #86b6ef */
+  --accent-soft: 16 66 129;    /* #104281 */
+}
+
+html, body { background: rgb(var(--page)); color: rgb(var(--ink)); }
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

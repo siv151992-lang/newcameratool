@@ -153,8 +153,14 @@ describe("storage checks", () => {
 
   it("prevents overlapping checks of the same camera", async () => {
     const id = await addCamera();
-    const [a, b] = await Promise.all([runCheck(id, "manual", deps), runCheck(id, "manual", deps)]);
-    expect([a.status, b.status].sort()).toEqual(["busy", "completed"]);
+    cam.mode = "hang"; // keep the first check in flight
+    const first = runCheck(id, "manual", deps);
+    await new Promise((r) => setTimeout(r, 200));
+    expect((await runCheck(id, "manual", deps)).status).toBe("busy");
+    expect((await first).status).toBe("completed");
+    // Once the first check finishes the lease is released.
+    cam.mode = "ok";
+    expect((await runCheck(id, "manual", deps)).status).toBe("completed");
   });
 });
 

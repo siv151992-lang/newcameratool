@@ -1,0 +1,68 @@
+# Production-style deployment: PostgreSQL, API (+ web UI), monitoring worker, and Caddy for HTTPS.
+# 1. cp .env.example .env and fill in the secrets
+# 2. docker compose up -d --build
+# 3. docker compose exec api node dist/cli/createAdmin.js --username admin
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cctv}
+      POSTGRES_USER: ${POSTGRES_USER:-cctv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cctv} -d ${POSTGRES_DB:-cctv}"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    image: cctv-storage-monitor:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-cctv}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cctv}
+      TRUST_PROXY: uniquelocal
+      COOKIE_SECURE: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "4000"
+
+  worker:
+    image: cctv-storage-monitor:latest
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-cctv}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cctv}
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    # The worker needs to reach the camera network. Docker's default bridge NAT usually works for
+    # LAN addresses; if not, use `network_mode: host` and point DATABASE_URL at the host's database port.
+    healthcheck:
+      disable: true
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - api
+
+volumes:
+  db-data:
+  caddy-data:

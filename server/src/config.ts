@@ -1,5 +1,8 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { z } from "zod";
+
+// Reads server/.env or the repository-root .env (real environment variables take precedence).
+dotenv.config({ path: [".env", "../.env"], quiet: true });
 
 const bool = (def: boolean) =>
   z

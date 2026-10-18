@@ -1,0 +1,712 @@
+openapi: 3.0.3
+info:
+  title: CCTV Storage Monitor API
+  version: 1.0.0
+  description: |
+    Backend API for the multi-brand CCTV storage monitoring dashboard.
+
+    **Authentication**: sign in with `POST /api/auth/login`. The session is an httpOnly cookie.
+    Every state-changing request (POST/PATCH/DELETE) must also send the `X-CSRF-Token` header with
+    the `csrfToken` returned by login or `GET /api/auth/me`.
+
+    **Roles**: `admin` (everything), `operator` (cameras:read, cameras:check, alerts, settings:read),
+    `viewer` (read-only). Each endpoint lists the permission it needs.
+
+    **Secrets**: camera passwords are write-only. No endpoint ever returns a password or its ciphertext.
+
+    Errors use the shape `{ "error": { "code": "...", "message": "...", "details": [...] } }`.
+servers:
+  - url: /api
+tags:
+  - name: Auth
+  - name: Cameras
+  - name: Import
+  - name: Alerts
+  - name: Settings
+  - name: Admin
+security:
+  - session: []
+    csrf: []
+
+paths:
+  /health:
+    get:
+      tags: [Admin]
+      summary: Liveness and database check
+      security: []
+      responses:
+        "200": { description: OK }
+        "503": { description: Database unavailable }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Signed in; sets the session cookie
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Error" }
+        "423": { description: Account temporarily locked after repeated failures }
+        "429": { description: Rate limited }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user and CSRF token
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      responses:
+        "204": { description: Signed out }
+  /auth/password:
+    post:
+      tags: [Auth]
+      summary: Change own password (signs out other sessions)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword: { type: string, format: password, minLength: 10 }
+      responses:
+        "204": { description: Changed }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /cameras:
+    get:
+      tags: [Cameras]
+      summary: List cameras (cameras:read)
+      parameters:
+        - { name: search, in: query, schema: { type: string } }
+        - { name: brand, in: query, schema: { type: string } }
+        - name: status
+          in: query
+          schema: { type: string, enum: [online, offline, unknown, healthy, warning, critical, disabled] }
+        - { name: location, in: query, schema: { type: string } }
+        - { name: minUsage, in: query, schema: { type: number } }
+        - { name: maxUsage, in: query, schema: { type: number } }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [name, host, brand, location, connection, health, usage, lastSuccess] }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, maximum: 200 } }
+      responses:
+        "200":
+          description: Page of cameras
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Camera" } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+    post:
+      tags: [Cameras]
+      summary: Register a camera (cameras:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CameraInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CameraDetail" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { description: A camera with the same brand, host and port exists }
+  /cameras/summary:
+    get:
+      tags: [Cameras]
+      summary: Dashboard summary counts and capacity totals (cameras:read)
+      responses:
+        "200": { description: OK }
+  /cameras/locations:
+    get:
+      tags: [Cameras]
+      summary: Distinct locations for filtering (cameras:read)
+      responses:
+        "200": { description: OK }
+  /cameras/test-connection:
+    post:
+      tags: [Cameras]
+      summary: Test an unsaved configuration (cameras:write). Nothing is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CameraInput" }
+      responses:
+        "200":
+          description: Diagnostic result (also returned when the camera fails the test)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionResult" }
+  /cameras/bulk-delete:
+    post:
+      tags: [Cameras]
+      summary: Remove several cameras from monitoring (cameras:write)
+      description: Soft-deletes the cameras (history and alerts are kept), destroys stored credentials and closes open alerts. Nothing is sent to the cameras.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        "200": { description: "{ removed: [...], notFound: [...] }" }
+  /cameras/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+    get:
+      tags: [Cameras]
+      summary: Camera with current status and storage devices (cameras:read)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CameraDetail" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [Cameras]
+      summary: Update a camera or rotate its credentials (cameras:write)
+      description: All fields optional. Omit `password` to keep the stored password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CameraUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CameraDetail" }
+    delete:
+      tags: [Cameras]
+      summary: Remove a camera from monitoring (cameras:write)
+      responses:
+        "204": { description: Removed }
+  /cameras/{id}/monitoring:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+    post:
+      tags: [Cameras]
+      summary: Enable or disable monitoring (cameras:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { description: Updated camera }
+  /cameras/{id}/test-connection:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+    post:
+      tags: [Cameras]
+      summary: Test a saved camera (cameras:check); optional body applies unsaved edits (requires cameras:write)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CameraUpdate" }
+      responses:
+        "200":
+          description: Diagnostic result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionResult" }
+  /cameras/{id}/check-storage:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+    post:
+      tags: [Cameras]
+      summary: Run a storage check now and record it (cameras:check)
+      responses:
+        "200": { description: "{ outcome, camera }" }
+        "409": { description: A check for this camera is already running }
+  /cameras/{id}/storage:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+    get:
+      tags: [Cameras]
+      summary: Latest normalised storage status (cameras:read)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageStatus" }
+  /cameras/{id}/history:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+      - { name: hours, in: query, schema: { type: integer, default: 168 } }
+      - { name: limit, in: query, schema: { type: integer, default: 1000, maximum: 5000 } }
+    get:
+      tags: [Cameras]
+      summary: Storage check history and connection events (cameras:read)
+      responses:
+        "200": { description: "{ checks: [...], connectionEvents: [...] }" }
+
+  /cameras/import/template:
+    get:
+      tags: [Import]
+      summary: Download the CSV template (cameras:read)
+      responses:
+        "200":
+          description: CSV file
+          content:
+            text/csv: {}
+  /cameras/import/validate:
+    post:
+      tags: [Import]
+      summary: Validate parsed CSV rows without saving (cameras:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportRequest" }
+      responses:
+        "200": { description: "Per-row results (valid / invalid / duplicate) with field errors; passwords are never echoed" }
+  /cameras/import:
+    post:
+      tags: [Import]
+      summary: Import valid rows; invalid rows are skipped (cameras:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportRequest" }
+      responses:
+        "200": { description: "{ summary, results }" }
+
+  /alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts (alerts:read)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, active, acknowledged, resolved, all], default: open } }
+        - { name: severity, in: query, schema: { type: string, enum: [info, warning, critical] } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: cameraId, in: query, schema: { type: string, format: uuid } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: pageSize, in: query, schema: { type: integer } }
+      responses:
+        "200": { description: Page of alerts }
+  /alerts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Alerts]
+      summary: Alert with its event history (alerts:read)
+      responses:
+        "200": { description: OK }
+  /alerts/{id}/acknowledge:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    post:
+      tags: [Alerts]
+      summary: Acknowledge an active alert (alerts:manage)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Note" }
+      responses:
+        "200": { description: Updated alert }
+        "409": { description: Alert is not active }
+  /alerts/{id}/resolve:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    post:
+      tags: [Alerts]
+      summary: Resolve an alert manually (alerts:manage)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Note" }
+      responses:
+        "200": { description: Updated alert }
+
+  /brands:
+    get:
+      tags: [Settings]
+      summary: Brand integrations and their support status (cameras:read)
+      responses:
+        "200": { description: OK }
+  /settings/monitoring:
+    get:
+      tags: [Settings]
+      summary: Monitoring settings (settings:read)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MonitoringSettings" }
+    patch:
+      tags: [Settings]
+      summary: Update monitoring settings (settings:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MonitoringSettings" }
+      responses:
+        "200": { description: Updated settings }
+        "400": { $ref: "#/components/responses/Error" }
+  /settings/notifications:
+    get:
+      tags: [Settings]
+      summary: Notification channels (settings:read)
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Settings]
+      summary: Create an email channel (settings:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationChannelInput" }
+      responses:
+        "201": { description: Created }
+  /settings/notifications/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Settings]
+      summary: Update a channel (settings:write)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationChannelInput" }
+      responses:
+        "200": { description: Updated }
+    delete:
+      tags: [Settings]
+      summary: Delete a channel (settings:write)
+      responses:
+        "204": { description: Deleted }
+  /settings/notifications/{id}/test:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Settings]
+      summary: Send a test notification (settings:write)
+      responses:
+        "200": { description: "{ ok, message }" }
+  /users:
+    get:
+      tags: [Admin]
+      summary: List users (users:manage)
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Admin]
+      summary: Create a user (users:manage)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                displayName: { type: string }
+                password: { type: string, format: password, minLength: 10 }
+                role: { type: string, enum: [admin, operator, viewer] }
+      responses:
+        "201": { description: Created }
+  /users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin]
+      summary: Change role, enable/disable, or reset password (users:manage)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, nullable: true }
+                role: { type: string, enum: [admin, operator, viewer] }
+                isActive: { type: boolean }
+                password: { type: string, format: password }
+      responses:
+        "204": { description: Updated }
+  /audit:
+    get:
+      tags: [Admin]
+      summary: Audit log (audit:read)
+      parameters:
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: pageSize, in: query, schema: { type: integer } }
+        - { name: entityType, in: query, schema: { type: string } }
+        - { name: entityId, in: query, schema: { type: string } }
+      responses:
+        "200": { description: OK }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: cctv_session
+    csrf:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+  parameters:
+    CameraId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+                  details:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        message: { type: string }
+  schemas:
+    Session:
+      type: object
+      properties:
+        csrfToken: { type: string }
+        user:
+          type: object
+          properties:
+            id: { type: string }
+            username: { type: string }
+            displayName: { type: string, nullable: true }
+            role: { type: string }
+            permissions: { type: array, items: { type: string } }
+    CameraInput:
+      type: object
+      required: [name, host, brand, username, password]
+      properties:
+        name: { type: string, maxLength: 120 }
+        host: { type: string, description: "IPv4/IPv6 address or hostname, without scheme, path or credentials" }
+        port: { type: integer, nullable: true, description: Defaults to the brand's port for the protocol }
+        protocol: { type: string, enum: [http, https], default: http }
+        brand: { type: string, example: hikvision }
+        model: { type: string, nullable: true }
+        location: { type: string, nullable: true }
+        username: { type: string }
+        password: { type: string, format: password, writeOnly: true }
+        monitoringEnabled: { type: boolean, default: true }
+        warningThreshold: { type: number, nullable: true, description: "Percent; null uses the global default" }
+        criticalThreshold: { type: number, nullable: true }
+        caCertificate: { type: string, nullable: true, description: PEM certificate to trust for this camera's HTTPS }
+    CameraUpdate:
+      allOf:
+        - $ref: "#/components/schemas/CameraInput"
+      description: Same fields as CameraInput, all optional.
+    StorageDevice:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string, nullable: true }
+        type: { type: string, nullable: true }
+        healthStatus: { type: string, enum: [healthy, degraded, unhealthy, unknown] }
+        rawStatus: { type: string, nullable: true, description: Status string reported by the camera }
+        totalBytes: { type: integer, nullable: true }
+        freeBytes: { type: integer, nullable: true }
+        usedBytes: { type: integer, nullable: true }
+        usedPercentage: { type: number, nullable: true }
+        writable: { type: boolean, nullable: true }
+    Camera:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        host: { type: string }
+        port: { type: integer }
+        protocol: { type: string }
+        brand: { type: string }
+        brandName: { type: string }
+        model: { type: string, nullable: true }
+        location: { type: string, nullable: true }
+        monitoringEnabled: { type: boolean }
+        username: { type: string, nullable: true }
+        status:
+          type: object
+          properties:
+            connection: { type: string, enum: [online, offline, unknown] }
+            storageHealth: { type: string, enum: [healthy, warning, critical, unknown] }
+            lastErrorCode: { type: string, nullable: true }
+            lastErrorMessage: { type: string, nullable: true }
+            lastAttemptAt: { type: string, format: date-time, nullable: true }
+            lastSuccessAt: { type: string, format: date-time, nullable: true }
+            totalBytes: { type: integer, nullable: true }
+            usedBytes: { type: integer, nullable: true }
+            freeBytes: { type: integer, nullable: true }
+            usedPercentage: { type: number, nullable: true }
+    CameraDetail:
+      allOf:
+        - $ref: "#/components/schemas/Camera"
+        - type: object
+          properties:
+            devices: { type: array, items: { $ref: "#/components/schemas/StorageDevice" } }
+    StorageStatus:
+      type: object
+      properties:
+        cameraId: { type: string }
+        checkedAt: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [healthy, warning, critical, unknown] }
+        devices: { type: array, items: { $ref: "#/components/schemas/StorageDevice" } }
+        totalBytes: { type: integer, nullable: true }
+        freeBytes: { type: integer, nullable: true }
+        usedBytes: { type: integer, nullable: true }
+        usedPercentage: { type: number, nullable: true }
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+    ConnectionResult:
+      type: object
+      properties:
+        ok: { type: boolean, description: Storage could be read }
+        reachable: { type: boolean }
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, enum: [reachability, authentication, api, storage] }
+              label: { type: string }
+              status: { type: string, enum: [passed, failed, warning, skipped] }
+              message: { type: string }
+        deviceInfo: { type: object }
+        storage: { type: object }
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum: [INVALID_HOST, HOST_NOT_ALLOWED, DNS_FAILED, UNREACHABLE, TIMEOUT, TLS_ERROR, AUTH_FAILED, AUTH_METHOD_INSECURE, PERMISSION_DENIED, API_UNAVAILABLE, API_ERROR, INVALID_RESPONSE, CREDENTIALS_UNAVAILABLE, UNSUPPORTED_BRAND]
+            message: { type: string }
+    ImportRequest:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [row]
+            properties:
+              row: { type: integer, description: Spreadsheet row number (header is row 1) }
+              name: { type: string }
+              ip: { type: string }
+              brand: { type: string }
+              model: { type: string }
+              username: { type: string }
+              password: { type: string, format: password }
+              location: { type: string }
+              port: { type: string }
+              protocol: { type: string }
+        options:
+          type: object
+          properties:
+            sharedCredentials:
+              type: object
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+            sharedCredentialsMode: { type: string, enum: [missing, all], default: missing }
+            monitoringEnabled: { type: boolean, default: true }
+            testConnectivity: { type: boolean, default: false }
+            testConcurrency: { type: integer, minimum: 1, maximum: 10, default: 3 }
+            skipFailedTests: { type: boolean, default: false }
+    Note:
+      type: object
+      properties:
+        note: { type: string, maxLength: 500 }
+    MonitoringSettings:
+      type: object
+      properties:
+        pollIntervalSeconds: { type: integer, minimum: 60, default: 300 }
+        concurrency: { type: integer, default: 10 }
+        requestTimeoutMs: { type: integer, default: 10000 }
+        maxRetries: { type: integer, default: 2 }
+        retryBaseDelayMs: { type: integer, default: 1000 }
+        offlineFailureThreshold: { type: integer, default: 3 }
+        authFailureThreshold: { type: integer, default: 2 }
+        storageUnavailableMinutes: { type: integer, default: 30 }
+        warningThresholdPercent: { type: number, default: 80 }
+        criticalThresholdPercent: { type: number, default: 90 }
+        fullThresholdPercent: { type: number, default: 100 }
+        recoveryHysteresisPercent: { type: number, default: 2 }
+        storageUsageAlertsEnabled: { type: boolean, default: true }
+        deviceInfoRefreshHours: { type: integer, default: 24 }
+        historyRetentionDays: { type: integer, default: 90 }
+        auditRetentionDays: { type: integer, default: 365 }
+    NotificationChannelInput:
+      type: object
+      properties:
+        type: { type: string, enum: [email] }
+        name: { type: string }
+        enabled: { type: boolean }
+        config:
+          type: object
+          properties:
+            recipients: { type: array, items: { type: string, format: email } }
+        minSeverity: { type: string, enum: [info, warning, critical] }
+        cooldownMinutes: { type: integer }
+        notifyOnRecovery: { type: boolean }
