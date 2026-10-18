@@ -35,7 +35,7 @@
 <div class="wrap">
 <table>
   <thead><tr><th>Camera</th><th>IP</th><th>Brand</th><th>Status</th><th>Usage</th><th>Free / Total (GB)</th><th>Detail</th></tr></thead>
-  <tbody id="rows"><tr><td colspan="7">Checking cameras…</td></tr></tbody>
+  <tbody id="rows"><tr><td colspan="7">Checking cameras… (offline cameras can take up to 30 seconds)</td></tr></tbody>
 </table>
 </div>
 <script>
@@ -43,7 +43,18 @@ const FULL_PCT = 95;   // treat cards above this as "FULL" (most cameras overwri
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 async function load() {
   document.getElementById("updated").textContent = "Refreshing…";
-  const data = await (await fetch("/api/status")).json();
+  let data;
+  try {
+    data = await (await fetch("/api/status")).json();
+  } catch (e) {
+    data = {error: "Cannot reach the dashboard server. Is camera_dashboard.py still running?"};
+  }
+  if (data.error) {
+    document.getElementById("rows").innerHTML =
+      `<tr><td colspan="7" style="color:var(--bad)">${esc(data.error)}</td></tr>`;
+    document.getElementById("updated").textContent = "Failed " + new Date().toLocaleTimeString();
+    return;
+  }
   const counts = {};
   document.getElementById("rows").innerHTML = data.map(r => {
     let state = r.state;

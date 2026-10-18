@@ -26,6 +26,7 @@ def http_get(ip, user, password, path):
     mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     mgr.add_password(None, url, user, password)
     opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),  # cameras are on the LAN; skip system/office proxies
         urllib.request.HTTPDigestAuthHandler(mgr),
         urllib.request.HTTPBasicAuthHandler(mgr),
     )
@@ -135,15 +136,33 @@ def check_camera(cam):
 
 
 def load_cameras(path):
-    with open(path, newline="", encoding="utf-8") as f:
-        return [{k.strip().lower(): (v or "").strip() for k, v in row.items()}
-                for row in csv.DictReader(f) if row.get("ip")]
+    if not Path(path).exists():
+        raise ValueError(f"{path} not found. Copy cameras.example.csv to {path} "
+                         "and add your cameras.")
+    # utf-8-sig drops the BOM that Excel adds; Excel may also save with ';'
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        text = f.read()
+    delimiter = ";" if text.count(";") > text.count(",") else ","
+    rows = [{(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+            for row in csv.DictReader(text.splitlines(), delimiter=delimiter)]
+    missing = {"ip", "username", "password"} - set(rows[0] if rows else {})
+    if missing:
+        raise ValueError(f"{path} is missing column(s): {', '.join(sorted(missing))}. "
+                         "First line must be: name,ip,brand,username,password")
+    cams = [r for r in rows if r.get("ip")]
+    for r in cams:
+        r["name"] = r.get("name") or r["ip"]
+        r.setdefault("brand", "auto")
+    return cams
 
 
 def check_all(path):
     cams = load_cameras(path)
     with ThreadPoolExecutor(max_workers=32) as pool:
-        return list(pool.map(check_camera, cams))
+        results = list(pool.map(check_camera, cams))
+    for r in results:
+        print(f"{r['checked']}  {r['name']:<20} {r['ip']:<16} {r['state']:<8} {r['detail']}")
+    return results
 
 
 PAGE = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
@@ -152,15 +171,21 @@ PAGE = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
 def serve(csv_path, port):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            status = 200
             if self.path.startswith("/api/status"):
-                body = json.dumps(check_all(csv_path)).encode()
+                try:
+                    data = check_all(csv_path)
+                except Exception as e:  # noqa: BLE001 - show the problem on the page
+                    print(f"Error: {e}")
+                    data, status = {"error": str(e)}, 500
+                body = json.dumps(data).encode()
                 ctype = "application/json"
             elif self.path in ("/", "/index.html"):
                 body, ctype = PAGE.encode(), "text/html; charset=utf-8"
             else:
                 self.send_error(404)
                 return
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
