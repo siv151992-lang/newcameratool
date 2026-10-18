@@ -6,7 +6,7 @@
    ```bash
    cp .env.example .env
    openssl rand -base64 32        # → CREDENTIAL_ENCRYPTION_KEY
-   openssl rand -base64 24        # → POSTGRES_PASSWORD
+   openssl rand -hex 24           # → POSTGRES_PASSWORD (hex: no characters that break the database URL)
    ```
    Set `SITE_ADDRESS` (e.g. `cctv.estancia.local`) and narrow `CAMERA_ALLOWED_NETWORKS` to your camera
    subnet(s).
