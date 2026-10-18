@@ -3,7 +3,10 @@
   "private": true,
   "version": "1.0.0",
   "description": "Multi-brand CCTV storage monitoring dashboard",
-  "workspaces": ["server", "web"],
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
     "dev:api": "npm run dev -w server",
     "dev:worker": "npm run dev:worker -w server",
@@ -11,9 +14,12 @@
     "build": "npm run build -w server && npm run build -w web",
     "migrate": "npm run migrate -w server",
     "create-admin": "npm run create-admin -w server --",
+    "status": "npm run status -w server --",
     "test": "npm test -w server && npm test -w web",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
     "lint": "npm run lint -w server && npm run lint -w web"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

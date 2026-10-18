@@ -49,6 +49,37 @@ NODE_ENV=production node dist/worker.js                              # monitorin
 Run both under a process manager (systemd, pm2) and put a TLS reverse proxy in front of the API.
 Set `TRUST_PROXY` to the proxy's address so client IPs in audit logs and rate limits are correct.
 
+## Running on Windows
+
+Both ways work from Command Prompt or PowerShell.
+
+**Docker Desktop:** install Docker Desktop and Git, then use the Docker Compose steps above
+(`copy .env.example .env`, edit it in Notepad, `docker compose build`, `docker compose up -d`).
+Without OpenSSL, generate the keys in PowerShell:
+
+```powershell
+[Convert]::ToBase64String((1..32 | % { Get-Random -Max 256 }))           # CREDENTIAL_ENCRYPTION_KEY
+-join ((48..57)+(97..102) | Get-Random -Count 32 | % { [char]$_ })      # POSTGRES_PASSWORD
+```
+
+**Without Docker:** install Node.js 22 LTS and PostgreSQL 16, then:
+
+```bat
+psql -U postgres -c "CREATE USER cctv WITH PASSWORD 'ChooseAPassword123';"
+psql -U postgres -c "CREATE DATABASE cctv OWNER cctv;"
+copy .env.example .env
+:: In .env set DATABASE_URL=postgres://cctv:ChooseAPassword123@localhost:5432/cctv,
+:: CREDENTIAL_ENCRYPTION_KEY, CAMERA_ALLOWED_NETWORKS, WEB_DIST_DIR=../web/dist
+:: and COOKIE_SECURE=false if you browse over plain http://
+npm install
+npm run build
+npm run migrate
+npm run create-admin -- --username admin
+```
+
+Start the API and the worker in two windows (`cd server`, then `node dist\index.js` and `node dist\worker.js`)
+and open http://localhost:4000. Check camera status from any window with `npm run status`.
+
 ## Upgrades
 
 ```bash

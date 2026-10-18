@@ -15,7 +15,9 @@
     "mock-camera": "tsx src/cli/mockCamera.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "status": "tsx src/cli/status.ts",
+    "status:prod": "node dist/cli/status.js"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

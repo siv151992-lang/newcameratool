@@ -112,6 +112,8 @@ displays decimal units (GB), so a card shown as 121942 MB by the camera appears 
 | `npm run build` | Compile the server and build the web app |
 | `npm run migrate` | Apply database migrations |
 | `npm run create-admin -- --username <name> [--role admin\|operator\|viewer]` | Create a user from the CLI |
+| `npm run status` | Print every camera's status (online/offline, storage used/free, last error) in the terminal |
+| `npm run status -- --check` | Check all monitored cameras now, then print the table (`--json` for machine-readable output) |
 
 Server integration tests use a separate database (default
 `postgres://cctv:cctv@localhost:5432/cctv_test`, override with `TEST_DATABASE_URL`). The test run **drops and
@@ -132,5 +134,7 @@ cameras are needed: tests use the simulated camera and mocked responses.
 - CSV import only (no Excel yet), up to 500 rows per file.
 - Docker images and the Compose file were written but could not be built in the development environment used
   to create this project; the compiled production build was run directly instead.
+
+In Docker, run the status command with `docker compose exec api node dist/cli/status.js` (add `--check` to refresh first).
 
 More: [Architecture and security](docs/architecture.md) · [Operations](docs/operations.md) · API docs at `/api/docs`.
