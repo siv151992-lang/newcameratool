@@ -169,8 +169,13 @@ def serve(csv_path, port):
         def log_message(self, *args):
             pass
 
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    except OSError as e:
+        raise SystemExit(f"Cannot start on port {port}: {e.strerror}. "
+                         f"Try another port, e.g. --port {port + 10}")
     print(f"Dashboard running at http://localhost:{port}  (Ctrl+C to stop)")
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    server.serve_forever()
 
 
 def main():
