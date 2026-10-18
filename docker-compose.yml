@@ -20,6 +20,7 @@ services:
   api:
     build: .
     image: cctv-storage-monitor:latest
+    pull_policy: build
     restart: unless-stopped
     env_file: .env
     environment:
@@ -33,7 +34,10 @@ services:
       - "4000"
 
   worker:
+    # Same image as the api; built locally, never pulled from a registry.
+    build: .
     image: cctv-storage-monitor:latest
+    pull_policy: build
     restart: unless-stopped
     command: ["node", "dist/worker.js"]
     env_file: .env
