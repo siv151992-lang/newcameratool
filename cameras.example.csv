@@ -1,0 +1,6 @@
+name,ip,brand,username,password
+Gate Camera,10.10.15.57,hikvision,admin,YourPassword1
+Parking,10.10.15.60,dahua,admin,YourPassword2
+Lobby,10.10.15.71,cpplus,admin,YourPassword3
+Warehouse,10.10.15.80,axis,root,YourPassword4
+Unknown Brand,10.10.15.90,auto,admin,YourPassword5

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera SD Status</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#6b7280; --line:#e5e7eb;
+          --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --off:#6b7280; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --card:#1a1f26; --text:#e5e7eb; --muted:#9ca3af; --line:#2a313a; }
+  }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:16px; }
+  h1 { font-size:20px; margin:0 auto 0 0; }
+  .pill { padding:4px 10px; border-radius:999px; font-size:13px; font-weight:600; color:#fff; }
+  .OK{background:var(--ok)} .FULL{background:var(--warn)} .FAULT,.NO_CARD{background:var(--bad)} .OFFLINE{background:var(--off)}
+  button { padding:6px 14px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; }
+  .wrap { padding:0 16px 16px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:8px; overflow:hidden; }
+  th,td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; }
+  .bar { width:120px; height:8px; background:var(--line); border-radius:4px; display:inline-block; vertical-align:middle; margin-right:6px; }
+  .bar i { display:block; height:100%; border-radius:4px; background:var(--ok); }
+  .detail { color:var(--muted); max-width:320px; overflow:hidden; text-overflow:ellipsis; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Camera SD Card Status</h1>
+  <span id="summary"></span>
+  <span id="updated" style="color:var(--muted);font-size:13px"></span>
+  <button onclick="load()">Refresh</button>
+</header>
+<div class="wrap">
+<table>
+  <thead><tr><th>Camera</th><th>IP</th><th>Brand</th><th>Status</th><th>Usage</th><th>Free / Total (GB)</th><th>Detail</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="7">Checking cameras…</td></tr></tbody>
+</table>
+</div>
+<script>
+const FULL_PCT = 95;   // treat cards above this as "FULL" (most cameras overwrite, so this is a warning)
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function load() {
+  document.getElementById("updated").textContent = "Refreshing…";
+  const data = await (await fetch("/api/status")).json();
+  const counts = {};
+  document.getElementById("rows").innerHTML = data.map(r => {
+    let state = r.state;
+    if (state === "OK" && r.used_pct >= FULL_PCT) state = "FULL";
+    counts[state] = (counts[state] || 0) + 1;
+    const pct = r.used_pct ?? 0;
+    const color = pct >= FULL_PCT ? "var(--warn)" : "var(--ok)";
+    const usage = r.used_pct == null ? "-" :
+      `<span class="bar"><i style="width:${pct}%;background:${color}"></i></span>${pct}%`;
+    const size = r.total_gb == null ? "-" : `${r.free_gb} / ${r.total_gb}`;
+    return `<tr><td>${esc(r.name)}</td><td>${esc(r.ip)}</td><td>${esc(r.brand)}</td>
+      <td><span class="pill ${state.replace(" ","_")}">${state}</span></td><td>${usage}</td><td>${size}</td>
+      <td class="detail" title="${esc(r.detail)}">${esc(r.detail)}</td></tr>`;
+  }).join("") || '<tr><td colspan="7">No cameras in cameras.csv</td></tr>';
+  document.getElementById("summary").innerHTML = Object.entries(counts)
+    .map(([k, v]) => `<span class="pill ${k.replace(" ","_")}">${k}: ${v}</span>`).join(" ");
+  document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+}
+load();
+setInterval(load, 5 * 60 * 1000);   // auto refresh every 5 minutes
+</script>
+</body>
+</html>
