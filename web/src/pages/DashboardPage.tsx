@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleHelp, HardDrive, Plus, Upload, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, HardDrive, Plus, Upload, WifiOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { Alert, Page, Summary } from "../api/types";
 import { CameraTable } from "../components/CameraTable";
 import { SeverityBadge } from "../components/status";
-import { Button, Card, EmptyState, ErrorMessage, PageHeader } from "../components/ui";
+import { Button, Card, ErrorMessage, PageHeader } from "../components/ui";
 import { useAuth } from "../hooks/auth";
 import { formatBytes, relativeTime } from "../lib/format";
 
@@ -79,20 +79,19 @@ export function DashboardPage() {
         <StatTile label="Available" value={s ? formatBytes(s.freeBytes) : "—"} icon={<HardDrive className={icon} />} />
       </div>
 
-      <Card
-        className="mt-5"
-        title="Open alerts"
-        actions={
-          <Link to="/alerts" className="text-sm font-medium text-accent-ink hover:underline">
-            View all
-          </Link>
-        }
-      >
-        {alerts.data && alerts.data.items.length === 0 ? (
-          <EmptyState icon={<CheckCircle2 className="h-6 w-6 text-good" />} title="No open alerts" />
-        ) : (
+      {/* Only shown when there is something to act on; otherwise the camera table moves up. */}
+      {alerts.data && alerts.data.items.length > 0 && (
+        <Card
+          className="mt-5"
+          title="Open alerts"
+          actions={
+            <Link to="/alerts" className="text-sm font-medium text-accent-ink hover:underline">
+              View all
+            </Link>
+          }
+        >
           <ul className="divide-y divide-line">
-            {alerts.data?.items.map((a) => (
+            {alerts.data.items.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
                 <SeverityBadge severity={a.severity} />
                 <span className="font-medium">{a.title}</span>
@@ -104,14 +103,9 @@ export function DashboardPage() {
                 </span>
               </li>
             ))}
-            {!alerts.data && (
-              <li className="flex items-center gap-2 px-4 py-3 text-sm text-ink-muted">
-                <CircleHelp className="h-4 w-4" /> Loading alerts…
-              </li>
-            )}
           </ul>
-        )}
-      </Card>
+        </Card>
+      )}
 
       <div className="mt-5">
         <CameraTable title="Cameras" />
