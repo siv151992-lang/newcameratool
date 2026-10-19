@@ -148,4 +148,5 @@ Configured in **Settings → Monitoring**: monitoring history (default 90 days) 
 | *Credentials unavailable* | The encryption key changed. Restore the original key or re-enter the camera password |
 | Emails not sent | Check SMTP variables, then **Settings → Notifications → Send test**. Failures are listed with their error in `notification_deliveries` |
 | `CSRF` / 403 errors after a deploy | Reload the page to get a fresh session token |
+| `ports are not available: exposing port TCP 0.0.0.0:80` (or 443) | Another program or Windows already uses that port. Set `HTTP_PORT=8080` and `HTTPS_PORT=8443` in `.env`, run `docker compose up -d`, and open `https://localhost:8443` |
 | Logs | `docker compose logs -f api worker`. Logs never contain passwords or request bodies |
