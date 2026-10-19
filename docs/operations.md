@@ -127,7 +127,7 @@ password.
 
 ## Retention
 
-Configured in **Settings → Monitoring**: monitoring history (default 90 days) and audit log / resolved alerts
+Configured in **Settings → Retention**: monitoring history (default 90 days) and audit log / resolved alerts
 (default 365 days). The worker purges older rows hourly.
 
 ## Troubleshooting

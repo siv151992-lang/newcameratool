@@ -128,7 +128,7 @@ cameras are needed: tests use the simulated camera and mocked responses.
 - Hikvision status strings beyond the common set (`ok`, `error`, `unformatted`, `smartFailed`, …) are shown
   as reported and treated as *unknown* health rather than guessed.
 - Cameras that **overwrite** old recordings normally sit near 100% used. Turn off *Raise alerts for high
-  storage usage* in **Settings → Monitoring** (or raise per-camera thresholds) so only real faults alert.
+  storage usage* in **Settings → Thresholds** (or raise per-camera thresholds) so only real faults alert.
 - Email is the only notification channel so far. The notifier has a driver interface ready for
   Slack/Teams/Telegram.
 - CSV import only (no Excel yet), up to 500 rows per file.

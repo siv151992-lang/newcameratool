@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Mail, Plus, Send, Trash2 } from "lucide-react";
+import { Activity, Archive, ChevronRight, Clock, Gauge, Mail, Palette, Plus, ScrollText, Send, Trash2, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, toQuery } from "../api/client";
 import type { AuditEntry, ManagedUser, MonitoringSettings, NotificationChannel, Page } from "../api/types";
 import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner } from "../components/ui";
@@ -11,41 +11,108 @@ import { useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
 import { absoluteTime, relativeTime } from "../lib/format";
 
-export function SettingsPage() {
-  const { can } = useAuth();
-  const tabs = [
-    can("settings:read") && { to: "monitoring", label: "Monitoring" },
-    can("settings:read") && { to: "notifications", label: "Notifications" },
-    can("users:manage") && { to: "users", label: "Users" },
-    { to: "account", label: "Account & theme" },
-    can("audit:read") && { to: "audit", label: "Audit log" },
-  ].filter(Boolean) as { to: string; label: string }[];
+interface Section {
+  path: string;
+  label: string;
+  description: string;
+  icon: ReactNode;
+  element: ReactNode;
+}
 
+function useSections(): Section[] {
+  const { can } = useAuth();
+  const icon = "h-5 w-5";
+  const all: (Section | false)[] = [
+    can("settings:read") && { path: "schedule", label: "Schedule", description: "How often cameras are checked, timeouts and retries.", icon: <Clock className={icon} />, element: <MonitoringSettingsTab groupKey="schedule" /> },
+    can("settings:read") && { path: "thresholds", label: "Thresholds", description: "Default warning, critical and full storage levels. Each camera can override them on its edit page.", icon: <Gauge className={icon} />, element: <MonitoringSettingsTab groupKey="thresholds" /> },
+    can("settings:read") && { path: "detection", label: "Problem detection", description: "When a camera counts as offline and when alerts are raised.", icon: <Activity className={icon} />, element: <MonitoringSettingsTab groupKey="detection" /> },
+    can("settings:read") && { path: "retention", label: "Retention", description: "How long history and audit records are kept.", icon: <Archive className={icon} />, element: <MonitoringSettingsTab groupKey="retention" /> },
+    can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
+    can("users:manage") && { path: "users", label: "Users", description: "Add users, set roles and reset passwords.", icon: <UsersIcon className={icon} />, element: <UsersTab /> },
+    { path: "account", label: "Account & theme", description: "Change your password and the light or dark theme.", icon: <Palette className={icon} />, element: <AccountTab /> },
+    can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
+  ];
+  return all.filter(Boolean) as Section[];
+}
+
+export function SettingsPage() {
+  const sections = useSections();
+  return (
+    <Routes>
+      <Route index element={<SettingsOverview sections={sections} />} />
+      {sections.map((s) => (
+        <Route key={s.path} path={s.path} element={<SectionLayout sections={sections} current={s} />} />
+      ))}
+      <Route path="*" element={<Navigate to="/settings" replace />} />
+    </Routes>
+  );
+}
+
+/** Settings home: one card per section; nothing is shown until a section is opened. */
+function SettingsOverview({ sections }: { sections: Section[] }) {
   return (
     <>
-      <PageHeader title="Settings" />
-      <nav aria-label="Settings sections" className="mb-5 flex flex-wrap gap-1 border-b border-line">
-        {tabs.map((t) => (
-          <NavLink
-            key={t.to}
-            to={t.to}
-            className={({ isActive }) =>
-              clsx("-mb-px border-b-2 px-3 py-2 text-sm font-medium", isActive ? "border-accent text-ink" : "border-transparent text-ink-secondary hover:text-ink")
-            }
+      <PageHeader title="Settings" description="Choose a section to view or change its settings." />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {sections.map((s) => (
+          <Link
+            key={s.path}
+            to={s.path}
+            className="group flex items-start gap-3 rounded-lg border border-line bg-surface p-4 transition hover:border-line-strong"
           >
-            {t.label}
-          </NavLink>
+            <span className="mt-0.5 text-accent" aria-hidden>{s.icon}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-medium text-ink">{s.label}</span>
+              <span className="mt-0.5 block text-sm text-ink-secondary">{s.description}</span>
+            </span>
+            <ChevronRight className="mt-0.5 h-4 w-4 text-ink-muted group-hover:text-ink" aria-hidden />
+          </Link>
         ))}
+      </div>
+    </>
+  );
+}
+
+/** A single section: breadcrumb bar on top, section headings on the side, that section's content. */
+function SectionLayout({ sections, current }: { sections: Section[]; current: Section }) {
+  return (
+    <>
+      <nav aria-label="Breadcrumb" className="mb-4">
+        <ol className="flex flex-wrap items-center gap-1.5 text-sm">
+          <li>
+            <Link to="/settings" className="text-ink-secondary hover:text-ink hover:underline">Settings</Link>
+          </li>
+          <li aria-hidden className="text-ink-muted"><ChevronRight className="h-4 w-4" /></li>
+          <li aria-current="page" className="font-medium text-ink">{current.label}</li>
+        </ol>
       </nav>
-      <Routes>
-        <Route index element={<Navigate to={tabs[0]!.to} replace />} />
-        {can("settings:read") && <Route path="monitoring" element={<MonitoringSettingsTab />} />}
-        {can("settings:read") && <Route path="notifications" element={<NotificationsTab />} />}
-        {can("users:manage") && <Route path="users" element={<UsersTab />} />}
-        <Route path="account" element={<AccountTab />} />
-        {can("audit:read") && <Route path="audit" element={<AuditTab />} />}
-        <Route path="*" element={<Navigate to={tabs[0]!.to} replace />} />
-      </Routes>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <nav aria-label="Settings sections" className="min-w-0 lg:sticky lg:top-20 lg:self-start">
+          <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+            {sections.map((s) => (
+              <li key={s.path} className="shrink-0">
+                <NavLink
+                  to={`/settings/${s.path}`}
+                  className={({ isActive }) =>
+                    clsx(
+                      "flex items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium",
+                      isActive ? "bg-accent-soft/70 text-ink" : "text-ink-secondary hover:bg-line/60 hover:text-ink",
+                    )
+                  }
+                >
+                  <span aria-hidden className="[&>svg]:h-4 [&>svg]:w-4">{s.icon}</span>
+                  {s.label}
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <div className="min-w-0">
+          <h1 className="mb-1 text-xl font-semibold">{current.label}</h1>
+          <p className="mb-5 text-sm text-ink-secondary">{current.description}</p>
+          {current.element}
+        </div>
+      </div>
     </>
   );
 }
@@ -54,8 +121,9 @@ export function SettingsPage() {
 
 type NumKey = { [K in keyof MonitoringSettings]: MonitoringSettings[K] extends number ? K : never }[keyof MonitoringSettings];
 
-const GROUPS: { title: string; fields: { key: NumKey; label: string; unit?: string; hint?: string; scale?: number }[] }[] = [
+const GROUPS: { key: string; title: string; fields: { key: NumKey; label: string; unit?: string; hint?: string; scale?: number }[] }[] = [
   {
+    key: "schedule",
     title: "Schedule",
     fields: [
       { key: "pollIntervalSeconds", label: "Polling interval", unit: "minutes", scale: 60, hint: "How often each camera is checked (1 minute – 24 hours)" },
@@ -66,6 +134,7 @@ const GROUPS: { title: string; fields: { key: NumKey; label: string; unit?: stri
     ],
   },
   {
+    key: "thresholds",
     title: "Thresholds (global defaults)",
     fields: [
       { key: "warningThresholdPercent", label: "Warning", unit: "% used" },
@@ -75,6 +144,7 @@ const GROUPS: { title: string; fields: { key: NumKey; label: string; unit?: stri
     ],
   },
   {
+    key: "detection",
     title: "Problem detection",
     fields: [
       { key: "offlineFailureThreshold", label: "Failures before offline", hint: "Consecutive failed checks before a camera is marked offline" },
@@ -84,6 +154,7 @@ const GROUPS: { title: string; fields: { key: NumKey; label: string; unit?: stri
     ],
   },
   {
+    key: "retention",
     title: "Retention",
     fields: [
       { key: "historyRetentionDays", label: "Monitoring history", unit: "days" },
@@ -92,7 +163,7 @@ const GROUPS: { title: string; fields: { key: NumKey; label: string; unit?: stri
   },
 ];
 
-function MonitoringSettingsTab() {
+function MonitoringSettingsTab({ groupKey }: { groupKey: string }) {
   const { can } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
@@ -101,6 +172,8 @@ function MonitoringSettingsTab() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [usageAlerts, setUsageAlerts] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const group = GROUPS.find((g) => g.key === groupKey)!;
+  const isThresholds = groupKey === "thresholds";
 
   useEffect(() => {
     if (!settings.data) return;
@@ -112,14 +185,15 @@ function MonitoringSettingsTab() {
 
   const save = useMutation({
     mutationFn: () => {
-      const body: Record<string, unknown> = { storageUsageAlertsEnabled: usageAlerts };
-      for (const g of GROUPS) for (const f of g.fields) body[f.key] = Math.round(Number(draft[f.key]) * (f.scale ?? 1) * 100) / 100;
+      // Only this section's fields are sent; the server keeps the rest unchanged.
+      const body: Record<string, unknown> = isThresholds ? { storageUsageAlertsEnabled: usageAlerts } : {};
+      for (const f of group.fields) body[f.key] = Math.round(Number(draft[f.key]) * (f.scale ?? 1) * 100) / 100;
       return api<MonitoringSettings>("/settings/monitoring", { method: "PATCH", body });
     },
     onSuccess: (s) => {
       qc.setQueryData(["settings", "monitoring"], s);
       setErrors({});
-      toast("success", "Monitoring settings saved");
+      toast("success", `${group.title.replace(/ \(.*\)$/, "")} settings saved`);
     },
     onError: (e) => {
       if (e instanceof ApiError) setErrors(Object.fromEntries(e.fieldErrors.map((f) => [f.field, f.message])));
@@ -139,38 +213,36 @@ function MonitoringSettingsTab() {
       className="space-y-5"
     >
       {!editable && <p className="text-sm text-ink-secondary">You can view these settings. Only administrators can change them.</p>}
-      {GROUPS.map((g) => (
-        <Card key={g.title} title={g.title}>
-          <div className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
-            {g.fields.map((f) => (
-              <Field key={f.key} label={`${f.label}${f.unit ? ` (${f.unit})` : ""}`} hint={f.hint} error={errors[f.key]}>
-                {(id, d) => (
-                  <Input
-                    id={id}
-                    aria-describedby={d}
-                    inputMode="decimal"
-                    disabled={!editable}
-                    value={draft[f.key] ?? ""}
-                    invalid={!!errors[f.key]}
-                    onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-                  />
-                )}
-              </Field>
-            ))}
-            {g.title.startsWith("Thresholds") && (
-              <div className="sm:col-span-2 lg:col-span-3">
-                <Checkbox
-                  label="Raise alerts for high storage usage"
-                  description="Turn this off if cameras are set to overwrite old recordings, so cards that are always nearly full don't stay in warning. Disk health, read-only and offline alerts still apply."
+      <Card>
+        <div className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
+          {group.fields.map((f) => (
+            <Field key={f.key} label={`${f.label}${f.unit ? ` (${f.unit})` : ""}`} hint={f.hint} error={errors[f.key]}>
+              {(id, d) => (
+                <Input
+                  id={id}
+                  aria-describedby={d}
+                  inputMode="decimal"
                   disabled={!editable}
-                  checked={usageAlerts}
-                  onChange={(e) => setUsageAlerts(e.target.checked)}
+                  value={draft[f.key] ?? ""}
+                  invalid={!!errors[f.key]}
+                  onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
                 />
-              </div>
-            )}
-          </div>
-        </Card>
-      ))}
+              )}
+            </Field>
+          ))}
+          {isThresholds && (
+            <div className="sm:col-span-2 lg:col-span-3">
+              <Checkbox
+                label="Raise alerts for high storage usage"
+                description="Turn this off if cameras are set to overwrite old recordings, so cards that are always nearly full don't stay in warning. Disk health, read-only and offline alerts still apply."
+                disabled={!editable}
+                checked={usageAlerts}
+                onChange={(e) => setUsageAlerts(e.target.checked)}
+              />
+            </div>
+          )}
+        </div>
+      </Card>
       {editable && (
         <div className="flex justify-end">
           <Button type="submit" variant="primary" loading={save.isPending}>Save settings</Button>
