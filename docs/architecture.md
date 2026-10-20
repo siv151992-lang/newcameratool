@@ -33,6 +33,10 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 | `services/` | Cameras, alerts, import, settings, users, audit, notifications |
 | `security/` | AES-256-GCM cipher, password hashing, SSRF host guard, redaction |
 | `routes/` | HTTP endpoints, validation and permission checks |
+| `ai/forecast.ts`, `ai/analysis.ts` | Pure functions: least-squares storage forecasts, anomaly rules, health score, recommended actions |
+| `ai/insightsService.ts` | Read-only data access for AI Mode (15-minute averages of `storage_checks`, connection events, open alerts); cached for 60 s |
+| `ai/tools.ts`, `ai/assistant.ts` | The assistant: validated read-only tools and the Claude tool-use loop (official Anthropic SDK) |
+| `ai/report.ts`, `ai/aiSettings.ts` | Monitoring reports (+ optional AI summary) and the AI Mode on/off setting |
 
 ## Adding a camera brand
 
@@ -88,6 +92,7 @@ It authenticates with a WS-Security UsernameToken and, if the token is rejected,
 | Headers | Helmet (CSP without inline scripts, HSTS, nosniff, frame protection) |
 | Audit | Camera create/update/remove, credential changes, monitoring toggles, imports, alert acknowledge/resolve, settings, users, logins |
 | Import | CSV parsed in the browser; the file is never uploaded; rows are processed in memory only |
+| AI assistant | The model never gets database access: it can only call the tools in `ai/tools.ts` (fixed parameterised queries, zod-validated input, allow-listed output fields, at most 8 rounds per question). Tools the user lacks permission for are not offered. No credentials, keys or headers are ever in tool results; the API key stays in the server environment. Questions are rate-limited and audited (tool names only) |
 
 Network recommendation: run the monitor on a trusted management network, restrict
 `CAMERA_ALLOWED_NETWORKS` to the camera VLAN(s), and firewall the cameras so only the monitor can reach

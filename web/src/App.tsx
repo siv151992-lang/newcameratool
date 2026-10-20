@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { Spinner } from "./components/ui";
 import { useAuth } from "./hooks/auth";
+import { AiPage } from "./pages/AiPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { BrandsPage } from "./pages/BrandsPage";
 import { CameraDetailPage } from "./pages/CameraDetailPage";
@@ -26,6 +27,7 @@ export function App() {
         {can("cameras:write") && <Route path="cameras/:id/edit" element={<CameraFormPage />} />}
         <Route path="cameras/:id" element={<CameraDetailPage />} />
         <Route path="alerts" element={<AlertsPage />} />
+        <Route path="ai/*" element={<AiPage />} />
         <Route path="integrations" element={<BrandsPage />} />
         <Route path="settings/*" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

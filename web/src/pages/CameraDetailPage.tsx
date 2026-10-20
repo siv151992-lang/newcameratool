@@ -9,6 +9,8 @@ import { Diagnostics } from "../components/Diagnostics";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
 import { ConnectionBadge, DeviceHealthBadge, HealthBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
 import { UsageHistoryChart } from "../components/UsageHistoryChart";
+import { useAiStatus } from "../hooks/ai";
+import { CameraForecastPanel } from "./AiPage";
 import { Button, Card, Dialog, EmptyState, ErrorMessage, Spinner } from "../components/ui";
 import { useAuth } from "../hooks/auth";
 import { useCheckNow, useRemoveCameras, useSetMonitoring, useTestSavedCamera } from "../hooks/cameras";
@@ -91,6 +93,7 @@ export function CameraDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { can } = useAuth();
+  const ai = useAiStatus();
   const [hours, setHours] = useState(168);
   const [showTable, setShowTable] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -324,6 +327,12 @@ export function CameraDetailPage() {
             )}
           </div>
         </Card>
+
+        {ai.data?.enabled && (
+          <Card title="Storage forecast" className="lg:col-span-2">
+            <CameraForecastPanel cameraId={id} />
+          </Card>
+        )}
 
         <Card title="Configuration">
           <dl className="grid grid-cols-2 gap-4 p-4">

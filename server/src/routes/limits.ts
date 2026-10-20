@@ -12,4 +12,6 @@ export const loginLimiter = rateLimit({ ...common, windowMs: 15 * 60_000, limit:
 // Connection tests and manual checks make requests to devices on the network.
 export const deviceLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 60, message: msg("Too many device requests. Slow down and try again.") });
 export const importLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 30, message: msg("Too many import requests. Try again shortly.") });
+// Each AI question or summary calls an external, paid API.
+export const aiLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 20, message: msg("Too many AI requests. Wait a minute and try again.") });
 export const apiLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 600, message: msg("Too many requests.") });

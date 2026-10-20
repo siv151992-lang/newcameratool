@@ -1,10 +1,11 @@
 import clsx from "clsx";
-import { Bell, Camera, LayoutDashboard, LogOut, Menu, Moon, Plug, Settings, Sun, Upload, Video, X } from "lucide-react";
+import { Bell, Camera, LayoutDashboard, LogOut, Menu, Moon, Plug, Settings, Sparkles, Sun, Upload, Video, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Summary } from "../api/types";
+import { useAiStatus } from "../hooks/ai";
 import { useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
 import { Button } from "./ui";
@@ -38,6 +39,7 @@ export function AppShell() {
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   const summary = useQuery({ queryKey: ["summary"], queryFn: () => api<Summary>("/cameras/summary"), refetchInterval: 30_000 });
+  const ai = useAiStatus();
   const close = () => setOpen(false);
   const icon = "h-4 w-4";
 
@@ -46,6 +48,7 @@ export function AppShell() {
       <NavItem to="/" icon={<LayoutDashboard className={icon} />} onClick={close}>Dashboard</NavItem>
       <NavItem to="/cameras" icon={<Camera className={icon} />} onClick={close}>Cameras</NavItem>
       <NavItem to="/alerts" icon={<Bell className={icon} />} badge={summary.data?.alerts.active} onClick={close}>Alerts</NavItem>
+      {ai.data?.enabled && <NavItem to="/ai" icon={<Sparkles className={icon} />} onClick={close}>AI Mode</NavItem>}
       {can("cameras:write") && <NavItem to="/cameras/import" icon={<Upload className={icon} />} onClick={close}>Import</NavItem>}
       <NavItem to="/integrations" icon={<Plug className={icon} />} onClick={close}>Integrations</NavItem>
       <NavItem to="/settings" icon={<Settings className={icon} />} onClick={close}>Settings</NavItem>

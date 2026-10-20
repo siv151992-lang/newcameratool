@@ -249,3 +249,113 @@ export interface ImportRowResult {
   cameraId?: string;
   test?: { ok: boolean; code?: string; message: string };
 }
+
+// ------------------------------------------------------------------ AI Mode (server/src/ai/*)
+
+export interface AiStatus {
+  enabled: boolean;
+  assistant: { available: boolean; model: string; reason?: string };
+}
+
+export type FindingSeverity = "info" | "warning" | "critical";
+
+export interface Forecast {
+  status: "insufficient_data" | "growing" | "stable" | "decreasing" | "full_overwriting";
+  confidence: "high" | "medium" | "low" | null;
+  notes: string[];
+  current: { usedPercentage: number; usedBytes: number | null; totalBytes: number | null; freeBytes: number | null; measuredAt: number } | null;
+  growthPercentPerDay: number | null;
+  growthBytesPerDay: number | null;
+  recentPercentPerDay: number | null;
+  rSquared: number | null;
+  daysToWarning: number | null;
+  daysToCritical: number | null;
+  warningAt: string | null;
+  criticalAt: string | null;
+  projections: { horizonDays: number; usedPercentage: number }[];
+  period: { from: number; to: number; points: number; days: number } | null;
+}
+
+export interface Anomaly {
+  type: string;
+  severity: FindingSeverity;
+  title: string;
+  explanation: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface RecommendedAction {
+  priority: "critical" | "high" | "medium" | "low";
+  cameraId: string;
+  cameraName: string;
+  action: string;
+  reason: string;
+}
+
+export interface CameraInsight {
+  camera: {
+    id: string;
+    name: string;
+    host: string;
+    location: string | null;
+    brand: string;
+    monitoringEnabled: boolean;
+    connection: ConnectionStatus;
+    storageHealth: StorageHealth;
+    recordingState: RecordingState;
+    usedPercentage: number | null;
+    totalBytes: number | null;
+    usedBytes: number | null;
+    freeBytes: number | null;
+    lastSuccessAt: number | null;
+    warningThreshold: number;
+    criticalThreshold: number;
+  };
+  forecast: Forecast;
+  anomalies: Anomaly[];
+  health: { score: number; grade: "good" | "fair" | "poor" | "unknown"; factors: { label: string; impact: number }[] };
+  actions: RecommendedAction[];
+  link: string;
+}
+
+export interface FleetInsights {
+  generatedAt: string;
+  historyDays: number;
+  cameras: CameraInsight[];
+  actions: RecommendedAction[];
+  summary: {
+    cameras: number;
+    monitored: number;
+    offline: number;
+    notRecording: number;
+    storageCritical: number;
+    storageWarning: number;
+    criticalWithin7Days: number;
+    anomalies: number;
+    averageHealth: number | null;
+  };
+}
+
+export interface CameraForecastView extends CameraInsight {
+  actual: { t: string; usedPercentage: number }[];
+  projected: { t: string; usedPercentage: number }[];
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AssistantAnswer {
+  answer: string;
+  toolCalls: { name: string; input: unknown; isError: boolean }[];
+  stopReason: string | null;
+}
+
+export interface MonitoringReport {
+  title: string;
+  period: "24h" | "7d";
+  generatedAt: string;
+  markdown: string;
+  aiSummary?: string;
+}

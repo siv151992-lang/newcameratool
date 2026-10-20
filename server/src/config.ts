@@ -39,6 +39,11 @@ const schema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().default("cctv-monitor@localhost"),
   PUBLIC_URL: z.string().optional(),
+  // AI Mode assistant and report summaries (optional). Without a key, AI Mode still shows the
+  // statistical forecasts, anomalies and recommendations; only the assistant is unavailable.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  AI_MODEL: z.string().default("claude-opus-5-5"),
+  AI_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
   BOOTSTRAP_ADMIN_USERNAME: z.string().optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().optional(),
 });

@@ -46,6 +46,33 @@ alert center (acknowledge / resolve, history), brand integrations page, monitori
 notifications with cooldowns and recovery notices, users with roles (admin / operator / viewer), audit log,
 and OpenAPI documentation at `/api/docs`.
 
+## AI Mode
+
+An optional intelligence layer on top of the rule-based monitoring (**AI Mode** in the sidebar; an
+administrator can switch it off in **Settings → AI Mode**). Checks, alerts, camera management and
+scheduled monitoring never depend on it.
+
+- **Storage forecasts** — for each camera: current usage, growth per day, estimated days to the warning
+  and critical thresholds, projected usage in 24 h / 7 d / 30 d, a confidence level, the period used and the
+  latest measurement, with a chart that shows measured usage solid and the projection dashed. Forecasts are
+  a straight-line trend through recent history (up to 14 days, since the last card format or swap); they are
+  withheld when the history is too short instead of being guessed.
+- **Anomaly detection** — sudden consumption spikes, sharp usage drops (possible footage loss), capacity
+  changes, usage unchanged for 24 hours while the camera says it records, repeated disconnections and stale
+  data, each with an explanation and the evidence.
+- **Camera health scores** and **recommended actions** — a 0–100 score with the reasons behind each
+  deduction, and prioritised actions (e.g. "free space before 2026-10-24", "check PoE power").
+- **Reports** — last 24 hours or 7 days: fleet status, incidents, cameras needing attention, forecasts,
+  anomalies and actions, downloadable as Markdown.
+- **AI Monitoring Assistant** — ask questions such as *"Which cameras may run out of storage in the next
+  seven days?"*. Claude answers by calling a fixed set of read-only lookups (no SQL access), only those the
+  signed-in user is allowed to use; answers link to the camera pages and separate observations, estimates
+  and recommendations. Requires `ANTHROPIC_API_KEY` (see `.env.example`); reports can then also get an
+  AI-written summary.
+
+Forecasts, anomalies, health scores and actions are computed locally by transparent rules and work without
+any AI service or internet access.
+
 ## Quick start (development)
 
 Prerequisites: Node.js 20+ and PostgreSQL 14+.
@@ -138,9 +165,12 @@ cameras are needed: tests use the simulated camera and mocked responses.
 
 ## Known limitations
 
-- **Hikvision is the only brand implemented.** It has been tested against simulated ISAPI responses modelled
-  on real camera output (including the response format from this project's brief), not against physical
-  hardware in this environment. Validate with **Test connection** on your camera models and firmware.
+- **Brands are tested against simulated responses, not physical hardware in this environment.** Hikvision
+  is modelled on real camera output; Dahua, Axis, Uniview and ONVIF are marked *unverified* until confirmed.
+  Validate with **Test connection** on your camera models and firmware.
+- **AI Mode forecasts are straight-line trends.** They do not model schedules (e.g. weekday-only recording)
+  and are shown with a confidence level; the assistant needs `ANTHROPIC_API_KEY` and internet access, and
+  its answers should be checked on the camera pages before acting on them.
 - Hikvision status strings beyond the common set (`ok`, `error`, `unformatted`, `smartFailed`, …) are shown
   as reported and treated as *unknown* health rather than guessed.
 - Cameras that **overwrite** old recordings normally sit near 100% used. Turn off *Raise alerts for high

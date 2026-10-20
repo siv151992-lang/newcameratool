@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Activity, Archive, ChevronRight, Clock, Gauge, Mail, Palette, Plus, ScrollText, Send, Trash2, Users as UsersIcon } from "lucide-react";
+import { Activity, Archive, ChevronRight, Clock, Gauge, Mail, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, toQuery } from "../api/client";
-import type { AuditEntry, ManagedUser, MonitoringSettings, NotificationChannel, Page } from "../api/types";
+import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NotificationChannel, Page } from "../api/types";
 import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner } from "../components/ui";
 import { useToast } from "../components/toast";
+import { useAiStatus } from "../hooks/ai";
 import { useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
 import { absoluteTime, relativeTime } from "../lib/format";
@@ -28,6 +29,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "detection", label: "Problem detection", description: "When a camera counts as offline and when alerts are raised.", icon: <Activity className={icon} />, element: <MonitoringSettingsTab groupKey="detection" /> },
     can("settings:read") && { path: "retention", label: "Retention", description: "How long history and audit records are kept.", icon: <Archive className={icon} />, element: <MonitoringSettingsTab groupKey="retention" /> },
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
+    can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Users", description: "Add users, set roles and reset passwords.", icon: <UsersIcon className={icon} />, element: <UsersTab /> },
     { path: "account", label: "Account & theme", description: "Change your password and the light or dark theme.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
@@ -262,6 +264,59 @@ function MonitoringSettingsTab({ groupKey }: { groupKey: string }) {
         </div>
       )}
     </form>
+  );
+}
+
+// ------------------------------------------------------------------ AI Mode
+
+function AiSettingsTab() {
+  const { can } = useAuth();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const status = useAiStatus();
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => api<{ enabled: boolean }>("/ai/settings", { method: "PATCH", body: { enabled } }),
+    onSuccess: (s) => {
+      qc.setQueryData<AiStatus>(["ai", "status"], (old) => (old ? { ...old, enabled: s.enabled } : old));
+      qc.invalidateQueries({ queryKey: ["ai"] });
+      toast("success", s.enabled ? "AI Mode turned on" : "AI Mode turned off");
+    },
+    onError: (e) => toast("error", (e as Error).message),
+  });
+  if (status.isLoading) return <Spinner />;
+  if (status.error) return <ErrorMessage error={status.error} />;
+  const s = status.data!;
+  return (
+    <div className="space-y-5">
+      <Card>
+        <div className="space-y-4 p-4">
+          <Checkbox
+            label="Enable AI Mode"
+            description="Adds the AI Mode page: storage forecasts, anomaly detection, camera health scores, recommended actions, reports and the assistant. Checks, alerts and camera management never depend on it."
+            disabled={!can("settings:write") || save.isPending}
+            checked={s.enabled}
+            onChange={(e) => save.mutate(e.target.checked)}
+          />
+        </div>
+      </Card>
+      <Card title="Assistant and AI summaries">
+        <dl className="grid gap-4 p-4 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-xs text-ink-muted">Status</dt>
+            <dd className="text-ink">{s.assistant.available ? "Configured" : "Not configured"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-muted">Model</dt>
+            <dd className="text-ink">{s.assistant.model}</dd>
+          </div>
+          <div className="sm:col-span-2 text-ink-secondary">
+            {s.assistant.available
+              ? "Questions and report summaries are answered by Claude using read-only lookups of the monitoring data. Camera names, IP addresses and monitoring data are sent to the AI service; passwords and keys never are."
+              : `${s.assistant.reason ?? ""} Forecasts, anomalies, recommendations and reports work without it.`}
+          </div>
+        </dl>
+      </Card>
+    </div>
   );
 }
 

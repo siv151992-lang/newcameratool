@@ -474,6 +474,74 @@ paths:
                 password: { type: string, format: password }
       responses:
         "204": { description: Updated }
+  /ai/status:
+    get:
+      tags: [AI Mode]
+      summary: Whether AI Mode is on and whether the assistant is configured (cameras:read)
+      responses:
+        "200": { description: "{ enabled, assistant: { available, model, reason? } }" }
+  /ai/settings:
+    patch:
+      tags: [AI Mode]
+      summary: Turn AI Mode on or off (settings:write)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { enabled: { type: boolean } } }
+      responses:
+        "200": { description: Updated }
+  /ai/insights:
+    get:
+      tags: [AI Mode]
+      summary: Forecast, anomalies, health score and recommended actions for every camera (cameras:read)
+      responses:
+        "200": { description: OK }
+        "403": { description: AI Mode is off (AI_DISABLED) }
+  /ai/cameras/{id}/forecast:
+    get:
+      tags: [AI Mode]
+      summary: One camera's forecast with measured and projected chart series (cameras:read)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 14 } }
+      responses:
+        "200": { description: OK }
+  /ai/assistant:
+    post:
+      tags: [AI Mode]
+      summary: Ask the AI Monitoring Assistant (cameras:read; requires ANTHROPIC_API_KEY)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: object
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      content: { type: string, maxLength: 4000 }
+      responses:
+        "200": { description: "{ answer, toolCalls, stopReason }" }
+        "503": { description: Assistant not configured or AI service unreachable }
+  /ai/report:
+    get:
+      tags: [AI Mode]
+      summary: Monitoring report for the last 24 hours or 7 days, as JSON and Markdown (cameras:read)
+      parameters:
+        - { name: period, in: query, schema: { type: string, enum: [24h, 7d], default: 24h } }
+      responses:
+        "200": { description: OK }
+  /ai/report/summary:
+    post:
+      tags: [AI Mode]
+      summary: The report plus an AI-written summary (cameras:read; requires ANTHROPIC_API_KEY)
+      responses:
+        "200": { description: OK }
   /audit:
     get:
       tags: [Admin]

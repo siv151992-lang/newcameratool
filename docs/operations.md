@@ -77,6 +77,26 @@ npm run create-admin -- --username admin
 Start the API and the worker in two windows (`cd server`, then `node dist\index.js` and `node dist\worker.js`)
 and open http://localhost:4000. Check camera status from any window with `npm run status`.
 
+## AI Mode
+
+AI Mode (forecasts, anomalies, health scores, recommendations, reports) is on by default and needs no
+setup or internet access. Turn it off in **Settings → AI Mode**; monitoring is unaffected either way.
+
+To enable the **assistant** and AI report summaries, add a Claude API key to `.env` and restart:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+docker compose up -d     # or restart the API process
+```
+
+The server then needs outbound HTTPS to `api.anthropic.com` (allow it in the office firewall/proxy). Each
+question sends the question and the relevant monitoring data (camera names, IPs, storage values, alerts —
+never passwords or keys) to Anthropic and is billed to the key's account; questions are limited to 20 per
+minute. `AI_MODEL` (default `claude-opus-5-5`) and `AI_EFFORT` (default `medium`) can be changed in `.env`.
+
+Forecasts improve with history: they need at least 6 hours of measurements, and 30-day projections need
+about a week of steady data.
+
 ## Upgrades
 
 ```bash
