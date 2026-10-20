@@ -6,8 +6,8 @@
    ```bash
    cp .env.example .env
    ```
-   Set `SITE_ADDRESS` (e.g. `cctv.estancia.local`) and narrow `CAMERA_ALLOWED_NETWORKS` to your camera
-   subnet(s). `CREDENTIAL_ENCRYPTION_KEY` and `POSTGRES_PASSWORD` can stay empty: on the first start the
+   Set `SITE_ADDRESS` (e.g. `cctv.estancia.local`). The camera subnets the monitor may contact are set
+   after sign-in in **Settings → Camera networks** (`CAMERA_ALLOWED_NETWORKS` is only the starting default). `CREDENTIAL_ENCRYPTION_KEY` and `POSTGRES_PASSWORD` can stay empty: on the first start the
    `init-secrets` step generates a database password (kept in the `secrets` volume) and the API generates
    the encryption key (kept in the `app-data` volume). To choose them yourself instead:
    `openssl rand -base64 32` for the key, `openssl rand -hex 24` for the password. If a database already
@@ -153,7 +153,7 @@ Configured in **Settings → Retention**: monitoring history (default 90 days) a
 
 | Symptom | Likely cause and fix |
 |---|---|
-| Test connection: *Address … is outside the allowed camera networks* | Add the camera subnet to `CAMERA_ALLOWED_NETWORKS` and restart |
+| Test connection: *Address … is outside the allowed camera networks* | Add the camera subnet in **Settings → Camera networks** (applies within 30 seconds, no restart) |
 | *Camera unreachable (connection refused)* | Wrong port or protocol, or the camera's web service is disabled. Check the camera's *Network → Advanced → Integration protocol* and port settings |
 | *Camera did not respond in time* | Routing/firewall issue, or camera overloaded. Try `curl` from the server host. Increase the request timeout in settings for slow links |
 | *Authentication failed* | Wrong username/password, or the camera temporarily locked the account after repeated failed attempts (Hikvision cameras do this; the lock duration is set on the camera). Use a dedicated low-privilege user on the camera |

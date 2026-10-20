@@ -392,6 +392,39 @@ paths:
       responses:
         "200": { description: Updated settings }
         "400": { $ref: "#/components/responses/Error" }
+  /settings/networks:
+    get:
+      tags: [Settings]
+      summary: Allowed camera networks, and registered cameras outside them (settings:read)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NetworkSettings" }
+    patch:
+      tags: [Settings]
+      summary: Replace the allowed camera networks (settings:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allowedNetworks]
+              properties:
+                allowedNetworks:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string, example: 10.10.15.0/24, description: "CIDR range (/8 or narrower for IPv4, /16 for IPv6) or single address" }
+      responses:
+        "200":
+          description: Saved settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NetworkSettings" }
+        "400": { $ref: "#/components/responses/Error" }
   /settings/notifications:
     get:
       tags: [Settings]
@@ -754,6 +787,16 @@ components:
       type: object
       properties:
         note: { type: string, maxLength: 500 }
+    NetworkSettings:
+      type: object
+      properties:
+        allowedNetworks: { type: array, items: { type: string } }
+        isDefault: { type: boolean, description: "True while the CAMERA_ALLOWED_NETWORKS default is in use" }
+        camerasOutside:
+          type: array
+          items:
+            type: object
+            properties: { id: { type: string, format: uuid }, name: { type: string }, host: { type: string } }
     MonitoringSettings:
       type: object
       properties:

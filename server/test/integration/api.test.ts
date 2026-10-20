@@ -2,6 +2,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { pool } from "../../src/db/pool.js";
+import { hostGuard } from "../../src/security/hostGuardInstance.js";
 import { MockHikvisionCamera } from "../../src/testing/mockHikvision.js";
 import { createTestUser, PASSWORD, prepareDb, resetData } from "../helpers.js";
 
@@ -152,6 +153,33 @@ describe("cameras", () => {
     expect(JSON.stringify(wrong.body)).not.toContain("bad-pass");
     const metadata = await agent.post("/api/cameras/test-connection").set("X-CSRF-Token", csrf).send({ ...cameraBody(), host: "169.254.169.254" }).expect(200);
     expect(metadata.body.error.code).toBe("HOST_NOT_ALLOWED");
+  });
+
+  it("lets administrators change the allowed camera networks, applied immediately", async () => {
+    const operator = await signIn("operator");
+    const initial = await operator.agent.get("/api/settings/networks").expect(200);
+    expect(initial.body).toMatchObject({ isDefault: true, allowedNetworks: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], camerasOutside: [] });
+    await operator.agent.patch("/api/settings/networks").set("X-CSRF-Token", operator.csrf).send({ allowedNetworks: ["10.10.15.0/24"] }).expect(403);
+
+    const { agent, csrf } = await signIn("admin");
+    const office = await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Office 57", host: "10.10.15.57" }).expect(201);
+    const bad = await agent.patch("/api/settings/networks").set("X-CSRF-Token", csrf).send({ allowedNetworks: ["10.10.15.0/24", "0.0.0.0/0"] }).expect(400);
+    expect(bad.body.error.details[0]).toMatchObject({ field: "allowedNetworks.1", message: expect.stringMatching(/too broad/) });
+    await agent.patch("/api/settings/networks").set("X-CSRF-Token", csrf).send({ allowedNetworks: [] }).expect(400);
+
+    try {
+      const saved = await agent.patch("/api/settings/networks").set("X-CSRF-Token", csrf).send({ allowedNetworks: ["192.168.1.0/24"] }).expect(200);
+      expect(saved.body).toMatchObject({ isDefault: false, allowedNetworks: ["192.168.1.0/24"] });
+      expect(saved.body.camerasOutside).toEqual([{ id: office.body.id, name: "Office 57", host: "10.10.15.57" }]);
+      const refused = await agent.post("/api/cameras/test-connection").set("X-CSRF-Token", csrf).send({ ...cameraBody(), host: "10.10.15.57" }).expect(200);
+      expect(refused.body.error).toMatchObject({ code: "HOST_NOT_ALLOWED", message: expect.stringMatching(/Camera networks/) });
+
+      const audit = await pool.query("SELECT details FROM audit_logs WHERE action = 'settings.networks_updated'");
+      expect(audit.rows[0].details).toMatchObject({ to: ["192.168.1.0/24"] });
+    } finally {
+      await pool.query("DELETE FROM app_settings WHERE key = 'networks'");
+      hostGuard.invalidate();
+    }
   });
 
   it("enables/disables monitoring and bulk-removes cameras", async () => {

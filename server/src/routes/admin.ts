@@ -3,6 +3,7 @@ import { z } from "zod";
 import { actorOf, requirePermission } from "../auth/middleware.js";
 import { pool } from "../db/pool.js";
 import { registry } from "../integrations/registry.js";
+import { hostGuard } from "../security/hostGuardInstance.js";
 import { param, parse } from "../lib/validate.js";
 import { notifier } from "../notifications/notifier.js";
 import { audit, listAudit } from "../services/auditService.js";
@@ -15,6 +16,7 @@ import {
   testChannel,
   updateChannel,
 } from "../services/notificationChannelService.js";
+import { camerasOutside, getNetworkSettings, networkSettingsSchema, updateNetworkSettings } from "../services/networkSettings.js";
 import { getMonitoringSettings, monitoringSettingsSchema, updateMonitoringSettings } from "../services/settingsService.js";
 import { createUser, createUserSchema, listUsers, updateUser, updateUserSchema } from "../services/userService.js";
 
@@ -36,6 +38,20 @@ settingsRouter.patch("/monitoring", requirePermission("settings:write"), async (
   const updated = await updateMonitoringSettings(patch, req.auth!.user.id);
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.monitoring_updated", entityType: "settings", entityId: "monitoring", details: patch });
   res.json(updated);
+});
+settingsRouter.get("/networks", requirePermission("settings:read"), async (_req, res) => {
+  const s = await getNetworkSettings();
+  res.json({ ...s, camerasOutside: await camerasOutside(s.allowedNetworks) });
+});
+settingsRouter.patch("/networks", requirePermission("settings:write"), async (req, res) => {
+  const before = await getNetworkSettings();
+  const updated = await updateNetworkSettings(parse(networkSettingsSchema, req.body), req.auth!.user.id);
+  hostGuard.invalidate();
+  await audit({
+    actor: actorOf(req), ip: req.ip, action: "settings.networks_updated", entityType: "settings", entityId: "networks",
+    details: { from: before.allowedNetworks, to: updated.allowedNetworks },
+  });
+  res.json({ ...updated, camerasOutside: await camerasOutside(updated.allowedNetworks) });
 });
 settingsRouter.get("/notifications", requirePermission("settings:read"), async (_req, res) => {
   res.json(await listChannels());

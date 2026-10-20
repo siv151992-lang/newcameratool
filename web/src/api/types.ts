@@ -169,6 +169,12 @@ export interface Brand {
   cameraCount: number;
 }
 
+export interface NetworkSettings {
+  allowedNetworks: string[];
+  isDefault: boolean;
+  camerasOutside: { id: string; name: string; host: string }[];
+}
+
 export interface MonitoringSettings {
   pollIntervalSeconds: number;
   concurrency: number;

@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Activity, Archive, ChevronRight, Clock, Gauge, Mail, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, ChevronRight, Clock, Gauge, Mail, Network, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, toQuery } from "../api/client";
-import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NotificationChannel, Page } from "../api/types";
-import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner } from "../components/ui";
+import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NetworkSettings, NotificationChannel, Page } from "../api/types";
+import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea } from "../components/ui";
 import { useToast } from "../components/toast";
 import { useAiStatus } from "../hooks/ai";
 import { useAuth } from "../hooks/auth";
@@ -28,6 +28,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "thresholds", label: "Thresholds", description: "Default warning, critical and full storage levels. Each camera can override them on its edit page.", icon: <Gauge className={icon} />, element: <MonitoringSettingsTab groupKey="thresholds" /> },
     can("settings:read") && { path: "detection", label: "Problem detection", description: "When a camera counts as offline and when alerts are raised.", icon: <Activity className={icon} />, element: <MonitoringSettingsTab groupKey="detection" /> },
     can("settings:read") && { path: "retention", label: "Retention", description: "How long history and audit records are kept.", icon: <Archive className={icon} />, element: <MonitoringSettingsTab groupKey="retention" /> },
+    can("settings:read") && { path: "networks", label: "Camera networks", description: "The network ranges the monitor may contact cameras on.", icon: <Network className={icon} />, element: <NetworksTab /> },
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Users", description: "Add users, set roles and reset passwords.", icon: <UsersIcon className={icon} />, element: <UsersTab /> },
@@ -261,6 +262,108 @@ function MonitoringSettingsTab({ groupKey }: { groupKey: string }) {
       {editable && (
         <div className="flex justify-end">
           <Button type="submit" variant="primary" loading={save.isPending}>Save settings</Button>
+        </div>
+      )}
+    </form>
+  );
+}
+
+// ------------------------------------------------------------------ Camera networks
+
+function NetworksTab() {
+  const { can } = useAuth();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const editable = can("settings:write");
+  const settings = useQuery({ queryKey: ["settings", "networks"], queryFn: () => api<NetworkSettings>("/settings/networks") });
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (settings.data) setText(settings.data.allowedNetworks.join("\n"));
+  }, [settings.data]);
+
+  const lines = text.split(/[\n,]/).map((l) => l.trim()).filter(Boolean);
+  const save = useMutation({
+    mutationFn: () => api<NetworkSettings>("/settings/networks", { method: "PATCH", body: { allowedNetworks: lines } }),
+    onSuccess: (s) => {
+      qc.setQueryData(["settings", "networks"], s);
+      setError(null);
+      toast("success", "Camera networks saved");
+    },
+    onError: (e) => {
+      // Field errors name the entry by position (allowedNetworks.2); show the message, which quotes the entry.
+      const first = e instanceof ApiError ? e.fieldErrors[0] : undefined;
+      setError(first?.message ?? (e as Error).message);
+    },
+  });
+
+  if (settings.isLoading) return <Spinner />;
+  if (settings.error) return <ErrorMessage error={settings.error} />;
+  const s = settings.data!;
+
+  return (
+    <form
+      onSubmit={(e: FormEvent) => {
+        e.preventDefault();
+        save.mutate();
+      }}
+      className="space-y-5"
+    >
+      {!editable && <p className="text-sm text-ink-secondary">You can view these settings. Only administrators can change them.</p>}
+      <Card>
+        <div className="grid gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
+          <Field
+            label="Allowed camera networks"
+            hint="One per line: a range such as 10.10.15.0/24 or a single address such as 10.10.15.57. Cameras outside these networks are refused."
+            error={error ?? undefined}
+          >
+            {(id, d) => (
+              <Textarea
+                id={id}
+                aria-describedby={d}
+                aria-invalid={!!error}
+                rows={Math.min(12, Math.max(5, lines.length + 1))}
+                spellCheck={false}
+                disabled={!editable}
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setError(null);
+                }}
+              />
+            )}
+          </Field>
+          <div className="space-y-3 text-sm text-ink-secondary">
+            <p>
+              {s.isDefault
+                ? "Using the server's default list (CAMERA_ALLOWED_NETWORKS). Saving here replaces it."
+                : "Set in the dashboard. Changes apply to tests and scheduled checks within 30 seconds."}
+            </p>
+            <p>Loopback, link-local and multicast addresses are always blocked, whatever is listed here.</p>
+            <p className="text-ink-muted">Common office ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.</p>
+          </div>
+        </div>
+      </Card>
+      {s.camerasOutside.length > 0 && (
+        <div role="status" className="rounded-md border border-warn/40 bg-warn/10 p-4 text-sm">
+          <div className="flex items-center gap-2 font-medium text-ink">
+            <AlertTriangle className="h-4 w-4 text-warn" aria-hidden />
+            {s.camerasOutside.length === 1 ? "1 camera is" : `${s.camerasOutside.length} cameras are`} outside these networks and will not be checked
+          </div>
+          <ul className="mt-2 space-y-0.5 pl-6 text-ink-secondary">
+            {s.camerasOutside.slice(0, 10).map((c) => (
+              <li key={c.id}>
+                <Link to={`/cameras/${c.id}`} className="text-ink underline-offset-2 hover:underline">{c.name}</Link> · {c.host}
+              </li>
+            ))}
+            {s.camerasOutside.length > 10 && <li>and {s.camerasOutside.length - 10} more</li>}
+          </ul>
+        </div>
+      )}
+      {editable && (
+        <div className="flex justify-end">
+          <Button type="submit" variant="primary" loading={save.isPending} disabled={lines.length === 0}>Save networks</Button>
         </div>
       )}
     </form>

@@ -110,7 +110,7 @@ The four simulate a healthy card, a nearly full card, a disk error and a two-dis
 ## Production deployment (Docker Compose)
 
 ```bash
-cp .env.example .env     # set SITE_ADDRESS and CAMERA_ALLOWED_NETWORKS
+cp .env.example .env     # set SITE_ADDRESS; camera networks are set in Settings → Camera networks
 docker compose up -d --build
 docker compose exec api node dist/cli/createAdmin.js --username admin
 ```
@@ -135,7 +135,7 @@ Only do this on a network and camera you are authorised to access.
    ```bash
    curl --digest -u admin:'YourCameraPassword' "http://<CAMERA_IP>/ISAPI/ContentMgmt/Storage"
    ```
-2. Make sure the camera's address is inside `CAMERA_ALLOWED_NETWORKS` (e.g. `10.10.15.0/24`).
+2. Make sure the camera's address is inside an allowed network in **Settings → Camera networks** (e.g. `10.10.15.0/24`).
 3. In the UI choose **Add camera**, enter the IP and credentials and click **Test connection**.
    Each step reports separately, so you can tell an unreachable camera from wrong credentials, a missing
    storage API, or a disk fault.
