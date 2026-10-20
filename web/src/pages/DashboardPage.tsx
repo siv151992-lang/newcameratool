@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, HardDrive, Plus, Upload, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, HardDrive, Plus, Upload, WifiOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -63,12 +63,19 @@ export function DashboardPage() {
       />
       <ErrorMessage error={summary.error} className="mb-4" />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <StatTile label="Registered cameras" value={s?.totalCameras ?? "—"} icon={<Camera className={icon} />} hint={s && s.disabled > 0 ? `${s.disabled} with monitoring disabled` : "All monitored"} to="/cameras" />
         <StatTile label="Online" value={s?.online ?? "—"} icon={<CheckCircle2 className={`${icon} text-good`} />} hint={s && s.unknown > 0 ? `${s.unknown} not yet checked` : undefined} />
         <StatTile label="Offline" value={s?.offline ?? "—"} icon={<WifiOff className={`${icon} text-bad`} />} hint="After repeated failed checks" />
         <StatTile label="Storage warnings" value={s?.storageWarning ?? "—"} icon={<AlertTriangle className={`${icon} text-warn`} />} />
         <StatTile label="Critical storage" value={s?.storageCritical ?? "—"} icon={<AlertOctagon className={`${icon} text-bad`} />} />
+        <StatTile
+          label="Not recording"
+          value={s?.notRecording ?? "—"}
+          icon={<CircleStop className={`${icon} text-warn`} />}
+          hint={s ? `${s.recording} recording now` : undefined}
+          to="/cameras?recording=idle"
+        />
         <StatTile
           label="Total capacity"
           value={s ? formatBytes(s.totalBytes) : "—"}

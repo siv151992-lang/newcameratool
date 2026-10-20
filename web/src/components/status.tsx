@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleHelp, CirclePause, WifiOff } from "lucide-react";
-import type { ConnectionStatus, Severity, StorageHealth } from "../api/types";
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, WifiOff } from "lucide-react";
+import type { ConnectionStatus, RecordingState, Severity, StorageHealth } from "../api/types";
 
 /**
  * Status indicators always pair color with an icon and a text label, so meaning never
@@ -45,6 +45,14 @@ export function HealthBadge({ health }: { health: StorageHealth }) {
   if (health === "warning") return <Pill tone="warn" icon={AlertTriangle} label="Warning" />;
   if (health === "critical") return <Pill tone="bad" icon={AlertOctagon} label="Critical" />;
   return <Pill tone="unknown" icon={CircleHelp} label="Unknown" />;
+}
+
+export function RecordingBadge({ state, detail }: { state: RecordingState; detail?: string | null }) {
+  const title = detail ?? undefined;
+  if (state === "recording") return <Pill tone="good" icon={CircleDot} label="Recording" title={title} />;
+  if (state === "idle") return <Pill tone="warn" icon={CircleStop} label="Not recording" title={title} />;
+  if (state === "error") return <Pill tone="bad" icon={AlertOctagon} label="Recording error" title={title} />;
+  return <Pill tone="unknown" icon={CircleHelp} label="Unknown" title={title ?? "Not checked yet, or not reported by this camera"} />;
 }
 
 export function SeverityBadge({ severity }: { severity: Severity }) {

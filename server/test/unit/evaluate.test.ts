@@ -96,3 +96,27 @@ describe("evaluateConditions", () => {
     expect(types(evalWith(fail, { minutesWithoutStorage: 31 }))).toEqual(["storage_unavailable:warning"]);
   });
 });
+
+describe("recording alerts", () => {
+  const ok: CheckResult = { ok: true, reading: reading(50) };
+  const rec = (state: "recording" | "idle" | "error" | "unknown") => ({ state, channels: [], detail: `status: ${state}` });
+
+  it("warns when not recording and is critical on a recording error", () => {
+    expect(types(evalWith(ok, { recording: rec("recording") }))).toEqual([]);
+    expect(types(evalWith(ok, { recording: rec("idle") }))).toEqual(["not_recording:warning"]);
+    expect(types(evalWith(ok, { recording: rec("error") }))).toEqual(["not_recording:critical"]);
+    expect(evalWith(ok, { recording: rec("idle") }).active[0]!.description).toContain("status: idle");
+  });
+
+  it("resolves when recording again, but leaves the alert alone when the state is unknown or not read", () => {
+    expect(evalWith(ok, { recording: rec("recording") }).evaluated).toContain("not_recording");
+    expect(evalWith(ok, { recording: rec("unknown") }).evaluated).not.toContain("not_recording");
+    expect(evalWith(ok).evaluated).not.toContain("not_recording");
+  });
+
+  it("can be switched off, which also resolves open alerts", () => {
+    const off = evalWith(ok, { recording: rec("idle"), settings: { ...DEFAULT_MONITORING_SETTINGS, recordingAlertsEnabled: false } });
+    expect(off.active).toEqual([]);
+    expect(off.evaluated).toContain("not_recording");
+  });
+});

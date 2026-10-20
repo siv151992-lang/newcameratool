@@ -171,6 +171,7 @@ function MonitoringSettingsTab({ groupKey }: { groupKey: string }) {
   const settings = useQuery({ queryKey: ["settings", "monitoring"], queryFn: () => api<MonitoringSettings>("/settings/monitoring") });
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [usageAlerts, setUsageAlerts] = useState(true);
+  const [recordingAlerts, setRecordingAlerts] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const group = GROUPS.find((g) => g.key === groupKey)!;
   const isThresholds = groupKey === "thresholds";
@@ -181,12 +182,15 @@ function MonitoringSettingsTab({ groupKey }: { groupKey: string }) {
     for (const g of GROUPS) for (const f of g.fields) d[f.key] = String(settings.data[f.key] / (f.scale ?? 1));
     setDraft(d);
     setUsageAlerts(settings.data.storageUsageAlertsEnabled);
+    setRecordingAlerts(settings.data.recordingAlertsEnabled);
   }, [settings.data]);
 
   const save = useMutation({
     mutationFn: () => {
       // Only this section's fields are sent; the server keeps the rest unchanged.
-      const body: Record<string, unknown> = isThresholds ? { storageUsageAlertsEnabled: usageAlerts } : {};
+      const body: Record<string, unknown> = isThresholds
+        ? { storageUsageAlertsEnabled: usageAlerts, recordingAlertsEnabled: recordingAlerts }
+        : {};
       for (const f of group.fields) body[f.key] = Math.round(Number(draft[f.key]) * (f.scale ?? 1) * 100) / 100;
       return api<MonitoringSettings>("/settings/monitoring", { method: "PATCH", body });
     },
@@ -239,6 +243,15 @@ function MonitoringSettingsTab({ groupKey }: { groupKey: string }) {
                 checked={usageAlerts}
                 onChange={(e) => setUsageAlerts(e.target.checked)}
               />
+              <div className="mt-3">
+                <Checkbox
+                  label="Raise alerts when a camera is not recording"
+                  description="Warns when a camera reports it is not recording right now, and raises a critical alert for recording errors. Turn this off if cameras only record on motion or a schedule."
+                  disabled={!editable}
+                  checked={recordingAlerts}
+                  onChange={(e) => setRecordingAlerts(e.target.checked)}
+                />
+              </div>
             </div>
           )}
         </div>

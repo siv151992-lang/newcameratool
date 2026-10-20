@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, StorageReading } from "../types.js";
-import { parseAxisDeviceInfo, parseAxisError, parseAxisStorage } from "./parser.js";
+import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
+import { parseAxisDeviceInfo, parseAxisError, parseAxisRecording, parseAxisStorage } from "./parser.js";
 
 export const AXIS_STORAGE_PATH = "/axis-cgi/param.cgi?action=list&group=root.Storage";
 export const AXIS_DEVICE_INFO_PATH = "/axis-cgi/param.cgi?action=list&group=root.Brand,root.Properties";
@@ -14,7 +14,7 @@ export class AxisAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
     storageEndpoint: `GET ${AXIS_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -34,6 +34,10 @@ export class AxisAdapter implements CameraBrandAdapter {
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
     return parseAxisDeviceInfo(await this.getText(camera, AXIS_DEVICE_INFO_PATH));
+  }
+
+  async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
+    return parseAxisRecording(await this.getText(camera, AXIS_STORAGE_PATH));
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

@@ -8,28 +8,32 @@ import {
   type CameraConfig,
   type ConnectionResult,
   type DeviceInfo,
+  type RecordingReading,
   type StorageReading,
 } from "../types.js";
-import { parseOnvifDeviceInfo, parseOnvifFault, parseOnvifStorage, parseOnvifSystemTime } from "./parser.js";
+import { parseOnvifDeviceInfo, parseOnvifFault, parseOnvifRecording, parseOnvifStorage, parseOnvifSystemTime } from "./parser.js";
 import { NS, soapEnvelope } from "./soap.js";
 
 export const ONVIF_DEVICE_SERVICE_PATH = "/onvif/device_service";
+export const ONVIF_RECORDING_SERVICE_PATH = "/onvif/recording_service";
 
 /** Clock differences below this are within what cameras accept for a WS-Security timestamp. */
 const MAX_CLOCK_SKEW_MS = 5000;
 const MAX_CACHED_OFFSETS = 1000;
 
 interface SoapAction {
+  path: string;
   action: string;
   body: string;
   auth: boolean;
 }
 
 const ACTIONS = {
-  storage: { action: `${NS.tst}/GetStorageDevices`, body: "<tst:GetStorageDevices/>", auth: true },
-  deviceInfo: { action: `${NS.tds}/GetDeviceInformation`, body: "<tds:GetDeviceInformation/>", auth: true },
+  storage: { path: ONVIF_DEVICE_SERVICE_PATH, action: `${NS.tst}/GetStorageDevices`, body: "<tst:GetStorageDevices/>", auth: true },
+  deviceInfo: { path: ONVIF_DEVICE_SERVICE_PATH, action: `${NS.tds}/GetDeviceInformation`, body: "<tds:GetDeviceInformation/>", auth: true },
+  recording: { path: ONVIF_RECORDING_SERVICE_PATH, action: `${NS.trc}/GetRecordingJobs`, body: "<trc:GetRecordingJobs/>", auth: true },
   // ONVIF requires GetSystemDateAndTime to work without credentials.
-  systemTime: { action: `${NS.tds}/GetSystemDateAndTime`, body: "<tds:GetSystemDateAndTime/>", auth: false },
+  systemTime: { path: ONVIF_DEVICE_SERVICE_PATH, action: `${NS.tds}/GetSystemDateAndTime`, body: "<tds:GetSystemDateAndTime/>", auth: false },
 } satisfies Record<string, SoapAction>;
 
 export class OnvifAdapter implements CameraBrandAdapter {
@@ -39,7 +43,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["ws-security (UsernameToken digest)", "digest"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
     storageEndpoint: `POST ${ONVIF_DEVICE_SERVICE_PATH} (GetStorageDevices)`,
     defaultTimeoutMs: 10000,
     notes:
@@ -57,12 +61,12 @@ export class OnvifAdapter implements CameraBrandAdapter {
     const body = soapEnvelope(op.body, op.auth ? { username: camera.username, password: camera.password, now } : undefined);
     const res = await this.http.request(camera, {
       method: "POST",
-      path: ONVIF_DEVICE_SERVICE_PATH,
+      path: op.path,
       body,
       contentType: `application/soap+xml; charset=utf-8; action="${op.action}"`,
       accept: "application/soap+xml, text/xml, */*",
     });
-    return requireOk(res, ONVIF_DEVICE_SERVICE_PATH, parseOnvifFault);
+    return requireOk(res, op.path, parseOnvifFault);
   }
 
   /** Calls an authenticated action, retrying once with the camera's clock if the token was rejected. */
@@ -105,6 +109,10 @@ export class OnvifAdapter implements CameraBrandAdapter {
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
     return parseOnvifDeviceInfo(await this.authenticated(camera, ACTIONS.deviceInfo));
+  }
+
+  async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
+    return parseOnvifRecording(await this.authenticated(camera, ACTIONS.recording));
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

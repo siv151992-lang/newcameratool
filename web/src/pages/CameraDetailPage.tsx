@@ -7,7 +7,7 @@ import { api, toQuery } from "../api/client";
 import type { Alert, CameraDetail, CameraHistory, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
-import { ConnectionBadge, DeviceHealthBadge, HealthBadge, SeverityBadge, UsageMeter } from "../components/status";
+import { ConnectionBadge, DeviceHealthBadge, HealthBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
 import { UsageHistoryChart } from "../components/UsageHistoryChart";
 import { Button, Card, Dialog, EmptyState, ErrorMessage, Spinner } from "../components/ui";
 import { useAuth } from "../hooks/auth";
@@ -136,6 +136,7 @@ export function CameraDetailPage() {
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             <ConnectionBadge status={s.connection} monitoringEnabled={c.monitoringEnabled} />
+            <RecordingBadge state={s.recording.state} detail={s.recording.detail} />
             <HealthBadge health={s.storageHealth} />
           </div>
         </div>
@@ -241,6 +242,15 @@ export function CameraDetailPage() {
             <Info label="Next scheduled check">{c.monitoringEnabled ? relativeTime(s.nextCheckAt) : "Paused"}</Info>
             <Info label="Consecutive failures">{s.consecutiveFailures}</Info>
             <Info label="Open alerts">{s.openAlerts}</Info>
+            <div className="col-span-2">
+              <Info label="Recording">
+                <RecordingBadge state={s.recording.state} detail={s.recording.detail} />
+                {s.recording.detail && <span className="mt-1 block text-ink-secondary">{s.recording.detail}</span>}
+                {s.recording.checkedAt && (
+                  <span className="block text-xs text-ink-muted" title={absoluteTime(s.recording.checkedAt)}>Checked {relativeTime(s.recording.checkedAt)}</span>
+                )}
+              </Info>
+            </div>
             <div className="col-span-2">
               <Info label="Most recent error">
                 {s.lastErrorCode ? (

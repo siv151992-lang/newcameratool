@@ -3,6 +3,7 @@ import {
   AUTH_ERROR_CODES,
   NETWORK_ERROR_CODES,
   type CameraErrorCode,
+  type RecordingReading,
   type StorageHealth,
   type StorageReading,
 } from "../integrations/types.js";
@@ -16,6 +17,7 @@ export const ALERT_TYPES = [
   "disk_unhealthy",
   "disk_readonly",
   "no_storage_device",
+  "not_recording",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";
@@ -77,6 +79,8 @@ export interface EvaluationInput {
   connectionStatus: "online" | "offline" | "unknown";
   consecutiveFailures: number;
   consecutiveAuthFailures: number;
+  /** Recording status read in this check; absent when it was not read (storage failed). */
+  recording?: RecordingReading;
   /** Minutes since storage was last read successfully (or since the camera was added). */
   minutesWithoutStorage: number;
   thresholds: Thresholds;
@@ -185,6 +189,18 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
     } else if (usage >= t.warning || (open && usage >= t.warning - t.hysteresis)) {
       // Hysteresis: an open alert stays open until usage drops clearly below the warning level.
       active.push({ type: "storage_usage", severity: "warning", title: "Storage usage high", description: `Usage above ${t.warning}%: ${detail}`, context: { usage, level: "warning" } });
+    }
+  }
+
+  // An unknown recording state (unsupported brand, failed read) neither raises nor resolves the alert.
+  const rec = input.recording;
+  if (rec && rec.state !== "unknown") {
+    evaluated.push("not_recording");
+    const reported = rec.detail ? ` Camera reports ${rec.detail}.` : "";
+    if (settings.recordingAlertsEnabled && rec.state === "error") {
+      active.push({ type: "not_recording", severity: "critical", title: "Recording error", description: `The camera reports a recording error.${reported}`, context: { state: rec.state } });
+    } else if (settings.recordingAlertsEnabled && rec.state === "idle") {
+      active.push({ type: "not_recording", severity: "warning", title: "Camera not recording", description: `The camera is not recording right now.${reported}`, context: { state: rec.state } });
     }
   }
 

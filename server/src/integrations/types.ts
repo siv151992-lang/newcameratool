@@ -85,6 +85,25 @@ export interface StorageReading {
   usedPercentage?: number;
 }
 
+/** Whether the camera is recording right now, normalised across brands. */
+export type RecordingState = "recording" | "idle" | "error" | "unknown";
+
+export interface RecordingChannelStatus {
+  id: string;
+  state: RecordingState;
+  /** Status as reported by the camera, e.g. "NotRecording" or "0". */
+  rawStatus?: string;
+  /** Recording mode or trigger if reported, e.g. "Schedule" or "Continuous". */
+  mode?: string;
+}
+
+export interface RecordingReading {
+  state: RecordingState;
+  channels: RecordingChannelStatus[];
+  /** Short human-readable summary of what the camera reported. */
+  detail?: string;
+}
+
 export interface DeviceInfo {
   deviceName?: string;
   model?: string;
@@ -127,4 +146,6 @@ export interface CameraBrandAdapter {
   testConnection(camera: CameraConfig): Promise<ConnectionResult>;
   getStorageStatus(camera: CameraConfig): Promise<StorageReading>;
   getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo>;
+  /** Optional: brands without a recording-status API leave it out and report "unknown". */
+  getRecordingStatus?(camera: CameraConfig): Promise<RecordingReading>;
 }

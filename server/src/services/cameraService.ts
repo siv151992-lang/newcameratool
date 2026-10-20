@@ -114,6 +114,7 @@ const SELECT_CAMERA = `
          s.connection_status, s.storage_health, s.last_error_code, s.last_error_message,
          s.last_attempt_at, s.last_success_at, s.consecutive_failures, s.consecutive_auth_failures,
          s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
+         s.recording_state, s.recording_detail, s.recording_checked_at,
          s.device_model, s.device_serial, s.firmware_version, s.next_check_at,
          (s.check_lock_until IS NOT NULL AND s.check_lock_until > now()) AS check_in_progress,
          (SELECT count(*)::int FROM alerts a WHERE a.camera_id = c.id AND a.status <> 'resolved') AS open_alerts
@@ -177,6 +178,11 @@ export function toCameraView(r: CameraRow) {
       nextCheckAt: r.next_check_at ?? null,
       checkInProgress: r.check_in_progress ?? false,
       openAlerts: r.open_alerts ?? 0,
+      recording: {
+        state: (r.recording_state as string | null) ?? "unknown",
+        detail: r.recording_detail ?? null,
+        checkedAt: r.recording_checked_at ?? null,
+      },
     },
     device: {
       model: r.device_model ?? null,
@@ -194,7 +200,8 @@ export const listQuerySchema = z.object({
   location: z.string().trim().max(120).optional(),
   minUsage: z.coerce.number().min(0).max(100).optional(),
   maxUsage: z.coerce.number().min(0).max(100).optional(),
-  sort: z.enum(["name", "host", "brand", "location", "connection", "health", "usage", "lastSuccess"]).default("name"),
+  recording: z.enum(["recording", "idle", "error", "unknown"]).optional(),
+  sort: z.enum(["name", "host", "brand", "location", "connection", "health", "recording", "usage", "lastSuccess"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
@@ -208,6 +215,7 @@ const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
   location: "lower(c.location)",
   connection: "s.connection_status",
   health: "CASE s.storage_health WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'healthy' THEN 1 ELSE 0 END",
+  recording: "CASE s.recording_state WHEN 'error' THEN 3 WHEN 'idle' THEN 2 WHEN 'recording' THEN 1 ELSE 0 END",
   usage: "s.used_percentage",
   lastSuccess: "s.last_success_at",
 };
@@ -228,6 +236,7 @@ export async function listCameras(q: ListQuery) {
   } else if (q.status) where.push(`c.monitoring_enabled AND s.storage_health = ${p(q.status)}`);
   if (q.minUsage !== undefined) where.push(`s.used_percentage >= ${p(q.minUsage)}`);
   if (q.maxUsage !== undefined) where.push(`s.used_percentage <= ${p(q.maxUsage)}`);
+  if (q.recording) where.push(`c.monitoring_enabled AND s.recording_state = ${p(q.recording)}`);
 
   const clause = where.join(" AND ");
   const base = `FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause}`;
@@ -278,6 +287,8 @@ export async function getSummary() {
             count(*) FILTER (WHERE NOT c.monitoring_enabled)::int AS disabled,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.storage_health = 'warning')::int AS warning,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.storage_health = 'critical')::int AS critical,
+            count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
+            count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
             coalesce(sum(s.total_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS total_bytes,
             coalesce(sum(s.used_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS used_bytes,
             coalesce(sum(s.free_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS free_bytes,
@@ -301,6 +312,8 @@ export async function getSummary() {
     disabled: r.disabled,
     storageWarning: r.warning,
     storageCritical: r.critical,
+    recording: r.recording,
+    notRecording: r.not_recording,
     totalBytes: r.total_bytes,
     usedBytes: r.used_bytes,
     freeBytes: r.free_bytes,
@@ -508,7 +521,8 @@ export async function getHistory(id: string, opts: { hours: number; limit: numbe
   const checks = await pool.query(
     `SELECT checked_at AS "checkedAt", trigger, outcome, duration_ms AS "durationMs", attempts,
             storage_health AS "storageHealth", total_bytes AS "totalBytes", used_bytes AS "usedBytes",
-            free_bytes AS "freeBytes", used_percentage AS "usedPercentage", error_message AS "errorMessage"
+            free_bytes AS "freeBytes", used_percentage AS "usedPercentage", error_message AS "errorMessage",
+            recording_state AS "recordingState"
      FROM storage_checks WHERE camera_id = $1 AND checked_at >= now() - make_interval(hours => $2)
      ORDER BY checked_at DESC LIMIT $3`,
     [id, opts.hours, opts.limit],

@@ -42,6 +42,9 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
    - `getStorageStatus(camera)`: call the vendor's **verified** storage API through `CameraHttpClient` and
      return a `StorageReading` in bytes (use `aggregate()` from `storageMath.ts`).
    - `getDeviceInfo(camera)`: model / serial / firmware if the device exposes it.
+   - `getRecordingStatus(camera)` (optional): whether the camera records now, as a `RecordingReading`
+     (`recording` / `idle` / `error` / `unknown`; use `combineRecording()` from `recording.ts`). The monitor calls
+     it once per successful check without retries; a failure only makes the state `unknown`.
    - `testConnection(camera)`: usually `runDiagnostics(this, camera)`.
    - Throw `CameraApiError` with the right code (`AUTH_FAILED`, `API_UNAVAILABLE`, `INVALID_RESPONSE`, …)
      and `transient: true` only for retryable failures.

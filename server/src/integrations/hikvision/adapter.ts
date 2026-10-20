@@ -7,12 +7,14 @@ import {
   type CameraConfig,
   type ConnectionResult,
   type DeviceInfo,
+  type RecordingReading,
   type StorageReading,
 } from "../types.js";
-import { parseDeviceInfoXml, parseResponseStatus, parseStorageXml } from "./parser.js";
+import { parseDeviceInfoXml, parseRecordingStatusXml, parseResponseStatus, parseStorageXml } from "./parser.js";
 
 export const HIKVISION_STORAGE_PATH = "/ISAPI/ContentMgmt/Storage";
 export const HIKVISION_DEVICE_INFO_PATH = "/ISAPI/System/deviceInfo";
+export const HIKVISION_RECORDING_PATH = "/ISAPI/ContentMgmt/Recording/status";
 
 export class HikvisionAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
@@ -21,7 +23,7 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     supportStatus: "supported",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "device-info", "connection-test", "multiple-storage-devices", "nas"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices", "nas"],
     storageEndpoint: `GET ${HIKVISION_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -58,6 +60,10 @@ export class HikvisionAdapter implements CameraBrandAdapter {
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
     return parseDeviceInfoXml(await this.getXml(camera, HIKVISION_DEVICE_INFO_PATH));
+  }
+
+  async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
+    return parseRecordingStatusXml(await this.getXml(camera, HIKVISION_RECORDING_PATH));
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

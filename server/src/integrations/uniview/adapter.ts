@@ -1,11 +1,12 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, StorageReading } from "../types.js";
-import { parseUniviewDeviceInfo, parseUniviewError, parseUniviewStorage } from "./parser.js";
+import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
+import { parseUniviewDeviceInfo, parseUniviewError, parseUniviewRecording, parseUniviewStorage } from "./parser.js";
 
 export const UNIVIEW_STORAGE_PATH = "/LAPI/V1.0/Storage/Disks";
 export const UNIVIEW_DEVICE_INFO_PATH = "/LAPI/V1.0/System/DeviceInfo";
+export const UNIVIEW_RECORDING_PATH = "/LAPI/V1.0/Storage/Status";
 
 export class UniviewAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
@@ -14,7 +15,7 @@ export class UniviewAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
     storageEndpoint: `GET ${UNIVIEW_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -34,6 +35,10 @@ export class UniviewAdapter implements CameraBrandAdapter {
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
     return parseUniviewDeviceInfo(await this.getJson(camera, UNIVIEW_DEVICE_INFO_PATH));
+  }
+
+  async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
+    return parseUniviewRecording(await this.getJson(camera, UNIVIEW_RECORDING_PATH));
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

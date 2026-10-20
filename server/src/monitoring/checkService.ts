@@ -9,6 +9,7 @@ import {
   type CameraBrandAdapter,
   type CameraConfig,
   type DeviceInfo,
+  type RecordingReading,
   type StorageReading,
 } from "../integrations/types.js";
 import { sleep } from "../lib/concurrency.js";
@@ -111,6 +112,7 @@ export async function runCheck(
   let attempts = 1;
   let result: CheckResult;
   let deviceInfo: DeviceInfo | undefined;
+  let recording: RecordingReading | undefined;
   let config: CameraConfig | undefined;
   try {
     const cam = await pool.query("SELECT brand_key, monitoring_enabled, deleted_at FROM cameras WHERE id = $1", [cameraId]);
@@ -129,17 +131,34 @@ export async function runCheck(
       });
       attempts = n;
       result = { ok: true, reading: value };
+      recording = await readRecording(adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
     } catch (err) {
       attempts = (err as { attempts?: number }).attempts ?? attempts;
       result = toFailure(err, [config?.password]);
     }
 
-    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, settings);
+    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, recording, settings);
     deps.notifier.dispatch(events).catch((err) => logger.error({ err: (err as Error).message }, "Notification dispatch failed"));
     return { cameraId, status: "completed", result, attempts, durationMs: Date.now() - started };
   } finally {
     await releaseLease(cameraId, settings).catch((err) => logger.error({ err: err.message, cameraId }, "Failed to release lease"));
+  }
+}
+
+/**
+ * Reads whether the camera is recording now. Best effort: one attempt, no retries, and a failure
+ * only makes the state "unknown"; it never fails the storage check.
+ */
+export async function readRecording(adapter: CameraBrandAdapter, cfg: CameraConfig): Promise<RecordingReading> {
+  if (!adapter.getRecordingStatus) {
+    return { state: "unknown", channels: [], detail: "Recording status is not available for this brand" };
+  }
+  try {
+    return await adapter.getRecordingStatus(cfg);
+  } catch (err) {
+    const msg = err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : "unexpected error";
+    return { state: "unknown", channels: [], detail: `Recording status could not be read: ${msg}` };
   }
 }
 
@@ -169,6 +188,7 @@ async function persist(
   attempts: number,
   durationMs: number,
   deviceInfo: DeviceInfo | undefined,
+  recording: RecordingReading | undefined,
   settings: MonitoringSettings,
 ): Promise<NotificationEvent[]> {
   return withTransaction(async (db) => {
@@ -213,12 +233,12 @@ async function persist(
 
     await db.query(
       `INSERT INTO storage_checks (camera_id, trigger, outcome, duration_ms, attempts, storage_health,
-                                   total_bytes, used_bytes, free_bytes, used_percentage, devices, error_message)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+                                   total_bytes, used_bytes, free_bytes, used_percentage, devices, error_message, recording_state)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         cameraId, trigger, result.ok ? "success" : result.errorCode, durationMs, attempts, health ?? null,
         reading?.totalBytes ?? null, reading?.usedBytes ?? null, reading?.freeBytes ?? null, reading?.usedPercentage ?? null,
-        reading ? JSON.stringify(reading.devices) : null, result.ok ? null : result.errorMessage,
+        reading ? JSON.stringify(reading.devices) : null, result.ok ? null : result.errorMessage, recording?.state ?? null,
       ],
     );
 
@@ -227,9 +247,13 @@ async function persist(
         `UPDATE camera_status SET connection_status = 'online', storage_health = $2,
                 last_error_code = NULL, last_error_message = NULL, last_attempt_at = now(), last_success_at = now(),
                 consecutive_failures = 0, consecutive_auth_failures = 0,
-                total_bytes = $3, used_bytes = $4, free_bytes = $5, used_percentage = $6, updated_at = now()
+                total_bytes = $3, used_bytes = $4, free_bytes = $5, used_percentage = $6,
+                recording_state = $7, recording_detail = $8, recording_checked_at = now(), updated_at = now()
          WHERE camera_id = $1`,
-        [cameraId, health, reading!.totalBytes ?? null, reading!.usedBytes ?? null, reading!.freeBytes ?? null, reading!.usedPercentage ?? null],
+        [
+          cameraId, health, reading!.totalBytes ?? null, reading!.usedBytes ?? null, reading!.freeBytes ?? null,
+          reading!.usedPercentage ?? null, recording?.state ?? "unknown", recording?.detail ?? null,
+        ],
       );
       const ids = reading!.devices.map((d) => d.id);
       await db.query("DELETE FROM storage_devices WHERE camera_id = $1 AND NOT (vendor_id = ANY($2::text[]))", [cameraId, ids]);
@@ -255,7 +279,8 @@ async function persist(
       await db.query(
         `UPDATE camera_status SET connection_status = $2, last_error_code = $3, last_error_message = $4,
                 last_attempt_at = now(), consecutive_failures = $5, consecutive_auth_failures = $6,
-                storage_health = CASE WHEN $7 THEN 'unknown' ELSE storage_health END, updated_at = now()
+                storage_health = CASE WHEN $7 THEN 'unknown' ELSE storage_health END,
+                recording_state = CASE WHEN $7 THEN 'unknown' ELSE recording_state END, updated_at = now()
          WHERE camera_id = $1`,
         [cameraId, connection, result.errorCode, result.errorMessage, failures, authFailures, healthUnknown],
       );
@@ -282,6 +307,7 @@ async function persist(
       connectionStatus: connection,
       consecutiveFailures: failures,
       consecutiveAuthFailures: authFailures,
+      recording,
       minutesWithoutStorage,
       thresholds,
       settings,

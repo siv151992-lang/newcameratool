@@ -6,6 +6,7 @@ export const NS = {
   soap: "http://www.w3.org/2003/05/soap-envelope",
   tds: "http://www.onvif.org/ver10/device/wsdl",
   tst: "http://www.onvif.org/ver10/storage/wsdl",
+  trc: "http://www.onvif.org/ver10/recording/wsdl",
   wsse: "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd",
   wsu: "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd",
 } as const;
@@ -45,7 +46,7 @@ function securityHeader({ username, password, now, nonce = randomBytes(16) }: Se
 export function soapEnvelope(body: string, security?: SecurityToken): string {
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<soap:Envelope xmlns:soap="${NS.soap}" xmlns:tds="${NS.tds}" xmlns:tst="${NS.tst}">` +
+    `<soap:Envelope xmlns:soap="${NS.soap}" xmlns:tds="${NS.tds}" xmlns:tst="${NS.tst}" xmlns:trc="${NS.trc}">` +
     (security ? `<soap:Header>${securityHeader(security)}</soap:Header>` : "") +
     `<soap:Body>${body}</soap:Body></soap:Envelope>`
   );

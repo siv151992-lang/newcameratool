@@ -26,7 +26,7 @@ export function CamerasPage() {
           )
         }
       />
-      <CameraTable initialStatus={params.get("status") ?? ""} />
+      <CameraTable initialStatus={params.get("status") ?? ""} initialRecording={params.get("recording") ?? ""} />
     </>
   );
 }

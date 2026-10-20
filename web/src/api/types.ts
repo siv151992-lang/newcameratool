@@ -3,6 +3,7 @@
 export type ConnectionStatus = "online" | "offline" | "unknown";
 export type StorageHealth = "healthy" | "warning" | "critical" | "unknown";
 export type Severity = "info" | "warning" | "critical";
+export type RecordingState = "recording" | "idle" | "error" | "unknown";
 
 export interface User {
   id: string;
@@ -45,6 +46,7 @@ export interface Camera {
     nextCheckAt: string | null;
     checkInProgress: boolean;
     openAlerts: number;
+    recording: { state: RecordingState; detail: string | null; checkedAt: string | null };
   };
   device: { model: string | null; serialNumber: string | null; firmwareVersion: string | null };
 }
@@ -85,6 +87,8 @@ export interface Summary {
   disabled: number;
   storageWarning: number;
   storageCritical: number;
+  recording: number;
+  notRecording: number;
   totalBytes: number;
   usedBytes: number;
   freeBytes: number;
@@ -120,6 +124,7 @@ export interface HistoryCheck {
   freeBytes: number | null;
   usedPercentage: number | null;
   errorMessage: string | null;
+  recordingState: RecordingState | null;
 }
 
 export interface CameraHistory {
@@ -178,6 +183,7 @@ export interface MonitoringSettings {
   fullThresholdPercent: number;
   recoveryHysteresisPercent: number;
   storageUsageAlertsEnabled: boolean;
+  recordingAlertsEnabled: boolean;
   deviceInfoRefreshHours: number;
   historyRetentionDays: number;
   auditRetentionDays: number;

@@ -1,6 +1,14 @@
 import { XMLParser, XMLValidator } from "fast-xml-parser";
+import { combineRecording, recordingMapper } from "../recording.js";
 import { aggregate } from "../storageMath.js";
-import { CameraApiError, type DeviceHealth, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import {
+  CameraApiError,
+  type DeviceHealth,
+  type DeviceInfo,
+  type RecordingReading,
+  type StorageDeviceStatus,
+  type StorageReading,
+} from "../types.js";
 
 /**
  * Parsing for Hikvision ISAPI responses.
@@ -19,7 +27,7 @@ const parser = new XMLParser({
   removeNSPrefix: true,
   parseTagValue: false,   // keep raw strings; numbers are validated explicitly
   trimValues: true,
-  isArray: (name) => name === "hdd" || name === "nas",
+  isArray: (name) => name === "hdd" || name === "nas" || name === "TrackStatus",
 });
 
 // Status strings documented/observed for ISAPI <hdd><status>.
@@ -141,4 +149,26 @@ export function parseDeviceInfoXml(xml: string): DeviceInfo {
     firmwareVersion: [text(root, "firmwareVersion"), text(root, "firmwareReleasedDate")].filter(Boolean).join(" ") || undefined,
     macAddress: text(root, "macAddress"),
   };
+}
+
+export const mapHikvisionRecording = recordingMapper({
+  recording: ["recording", "record", "true"],
+  idle: ["idle", "stop", "stopped", "notrecording", "false"],
+  error: ["error", "exception", "abnormal", "fail", "failed"],
+});
+
+/**
+ * Parses GET /ISAPI/ContentMgmt/Recording/status:
+ *   <RecordingStatus><status>recording</status>
+ *     <TrackStatusList><TrackStatus><id>101</id><videoRecordStatus>recording</videoRecordStatus>…
+ * The top-level <status> wins; per-track video status is used when it is missing.
+ */
+export function parseRecordingStatusXml(xml: string): RecordingReading {
+  const root = findRoot(parseXml(xml), "RecordingStatus");
+  const overallRaw = text(root, "status");
+  const tracks = list(root, "TrackStatusList", "TrackStatus").map((t, i) => {
+    const rawStatus = text(t, "videoRecordStatus") ?? text(t, "status");
+    return { id: `track-${text(t, "id") ?? i + 1}`, state: mapHikvisionRecording(rawStatus), rawStatus };
+  });
+  return combineRecording(tracks, { state: mapHikvisionRecording(overallRaw), rawStatus: overallRaw });
 }

@@ -1,7 +1,8 @@
 import { XMLParser, XMLValidator } from "fast-xml-parser";
+import { combineRecording, recordingMapper } from "../recording.js";
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, isAbsentStatus, parseBoolean, parseByteCount, statusMapper } from "../parsing.js";
-import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type RecordingReading, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Parsing for ONVIF GetStorageDevices SOAP responses:
@@ -31,7 +32,7 @@ const parser = new XMLParser({
   removeNSPrefix: true,
   parseTagValue: false, // keep raw strings; numbers are validated explicitly
   trimValues: true,
-  isArray: (name) => name === "StorageDevice",
+  isArray: (name) => name === "StorageDevice" || name === "JobItem",
 });
 
 type XmlNode = Record<string, unknown>;
@@ -177,4 +178,33 @@ export function parseOnvifSystemTime(xml: string): number | undefined {
   const [y, mo, d, h, mi, sec] = parts as number[];
   const ms = Date.UTC(y!, mo! - 1, d!, h!, mi!, sec!);
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+export const mapOnvifRecording = recordingMapper({
+  recording: ["recording", "active"],
+  idle: ["stopped", "idle", "initiated", "inactive"],
+  error: ["error", "failed"],
+});
+
+/**
+ * Parses a trc:GetRecordingJobsResponse. Each <JobItem> is one recording job; its state comes from
+ * <RecordingStatus> (Recording | Stopped | Initiated) or, per the ONVIF schema, from
+ * <JobConfiguration><Mode> (Active | Idle). No jobs at all means the camera is not recording.
+ */
+export function parseOnvifRecording(xml: string): RecordingReading {
+  const response = soapResponse(xml, "GetRecordingJobsResponse");
+  const key = Object.keys(response).find((k) => k.toLowerCase() === "jobitem");
+  const items = key === undefined ? [] : (response[key] as unknown[]).filter(isNode);
+  if (items.length === 0) return { state: "idle", channels: [], detail: "No recording jobs configured" };
+  const channels = items.map((item, i) => {
+    const rawStatus = text(item, "RecordingStatus") ?? text(child(item, "JobConfiguration"), "Mode");
+    const recording = text(item, "RecordingToken") ?? text(child(item, "JobConfiguration"), "RecordingToken");
+    return {
+      id: text(item, "JobToken") ?? `job-${i + 1}`,
+      state: mapOnvifRecording(rawStatus),
+      rawStatus,
+      mode: recording ? `recording ${recording}` : undefined,
+    };
+  });
+  return combineRecording(channels);
 }
