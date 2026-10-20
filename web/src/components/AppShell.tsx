@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bell, Camera, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, Upload, Video, X } from "lucide-react";
+import { Bell, Camera, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, Video, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -54,7 +54,7 @@ function NavItem({ to, icon, children, badge, onClick, collapsed }: { to: string
 }
 
 export function AppShell() {
-  const { user, logout, can } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsed);
@@ -76,7 +76,6 @@ export function AppShell() {
       <NavItem to="/cameras" icon={<Camera className={icon} />} onClick={close} collapsed={collapsed}>Cameras</NavItem>
       <NavItem to="/alerts" icon={<Bell className={icon} />} badge={summary.data?.alerts.active} onClick={close} collapsed={collapsed}>Alerts</NavItem>
       {ai.data?.enabled && <NavItem to="/ai" icon={<Sparkles className={icon} />} onClick={close} collapsed={collapsed}>AI Mode</NavItem>}
-      {can("cameras:write") && <NavItem to="/cameras/import" icon={<Upload className={icon} />} onClick={close} collapsed={collapsed}>Import</NavItem>}
       <NavItem to="/integrations" icon={<Plug className={icon} />} onClick={close} collapsed={collapsed}>Integrations</NavItem>
       <NavItem to="/settings" icon={<Settings className={icon} />} onClick={close} collapsed={collapsed}>Settings</NavItem>
     </nav>
