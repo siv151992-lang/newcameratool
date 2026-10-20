@@ -162,7 +162,7 @@ export function CameraFormPage() {
                     {brands.data?.map((b) => (
                       <option key={b.key} value={b.key} disabled={b.supportStatus === "planned"}>
                         {b.displayName}
-                        {b.supportStatus === "planned" ? " (planned)" : ""}
+                        {b.supportStatus === "planned" ? " (planned)" : b.supportStatus === "unverified" ? " (unverified)" : ""}
                       </option>
                     ))}
                   </Select>

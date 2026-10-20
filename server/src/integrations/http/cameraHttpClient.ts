@@ -26,6 +26,14 @@ export interface CameraResponse {
   body: string;
 }
 
+export interface CameraRequest {
+  method?: "GET" | "POST";
+  path: string;
+  body?: string;
+  contentType?: string;
+  accept?: string;
+}
+
 interface RawResponse extends CameraResponse {
   challenges: string[];
 }
@@ -35,7 +43,13 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 export class CameraHttpClient {
   constructor(private readonly resolver: Resolver) {}
 
-  async get(camera: CameraConfig, path: string): Promise<CameraResponse> {
+  get(camera: CameraConfig, path: string): Promise<CameraResponse> {
+    return this.request(camera, { path });
+  }
+
+  async request(camera: CameraConfig, request: CameraRequest): Promise<CameraResponse> {
+    const { path } = request;
+    const method = request.method ?? "GET";
     let pinned: { address: string; family: 4 | 6 };
     try {
       pinned = await this.resolver.resolve(camera.host);
@@ -44,13 +58,13 @@ export class CameraHttpClient {
       throw err;
     }
     const deadline = Date.now() + camera.timeoutMs;
-    const send = (authorization?: string) => this.send(camera, pinned, path, deadline, authorization);
+    const send = (authorization?: string) => this.send(camera, pinned, { ...request, method }, deadline, authorization);
 
     let res = await send();
     if (res.status !== 401) return this.finish(res);
 
     for (let attempt = 0; attempt < 2; attempt++) {
-      const authorization = this.buildAuthorization(camera, path, res.challenges);
+      const authorization = this.buildAuthorization(camera, method, path, res.challenges);
       res = await send(authorization);
       if (res.status !== 401) return this.finish(res);
       // A stale nonce is not a credential failure: retry once with the fresh challenge.
@@ -67,13 +81,13 @@ export class CameraHttpClient {
     return { status: res.status, headers: res.headers, body: res.body };
   }
 
-  private buildAuthorization(camera: CameraConfig, path: string, challenges: string[]): string {
+  private buildAuthorization(camera: CameraConfig, method: string, path: string, challenges: string[]): string {
     const digests = challenges.filter((c) => /^digest\s/i.test(c)).map(parseChallenge);
     if (digests.length > 0) {
       // Prefer the strongest algorithm offered.
       const rank = (a?: string) => (a?.toUpperCase().startsWith("SHA-256") ? 2 : 1);
       digests.sort((a, b) => rank(b.algorithm) - rank(a.algorithm));
-      return digestAuthorization(digests[0]!, camera.username, camera.password, "GET", path);
+      return digestAuthorization(digests[0]!, camera.username, camera.password, method, path);
     }
     if (challenges.some((c) => /^basic/i.test(c))) {
       if (camera.protocol !== "https") {
@@ -90,24 +104,33 @@ export class CameraHttpClient {
   private send(
     camera: CameraConfig,
     pinned: { address: string; family: 4 | 6 },
-    path: string,
+    request: CameraRequest & { method: string },
     deadline: number,
     authorization?: string,
   ): Promise<RawResponse> {
+    const { path, method, body } = request;
     const remaining = deadline - Date.now();
     if (remaining <= 0) return Promise.reject(timeoutError(camera.timeoutMs));
     const isHttps = camera.protocol === "https";
     const hostHeader = (isIP(camera.host) === 6 ? `[${camera.host}]` : camera.host) +
       (camera.port === (isHttps ? 443 : 80) ? "" : `:${camera.port}`);
-    const headers: Record<string, string> = { Host: hostHeader, Accept: "application/xml, text/xml, */*", Connection: "close" };
+    const headers: Record<string, string> = {
+      Host: hostHeader,
+      Accept: request.accept ?? "application/xml, text/xml, */*",
+      Connection: "close",
+    };
     if (authorization) headers.Authorization = authorization;
+    if (body !== undefined) {
+      headers["Content-Type"] = request.contentType ?? "application/octet-stream";
+      headers["Content-Length"] = String(Buffer.byteLength(body, "utf8"));
+    }
 
     const options: https.RequestOptions = {
       host: pinned.address,
       family: pinned.family,
       port: camera.port,
       path,
-      method: "GET",
+      method,
       headers,
       agent: false,
     };
@@ -149,7 +172,7 @@ export class CameraHttpClient {
         clearTimeout(timer);
         reject(e instanceof CameraApiError ? e : classifyNetworkError(e));
       });
-      req.end();
+      req.end(body);
     });
   }
 }

@@ -5,8 +5,10 @@ regardless of manufacturer. The backend contacts each registered camera on a sch
 storage data, tracks history, and raises alerts when storage fills up, a disk reports a fault, a camera
 goes offline, or its credentials stop working.
 
-**Hikvision (ISAPI) is fully implemented.** Other brands (Dahua, Axis, Uniview, ONVIF) are listed as
-*planned* and can be added as separate adapter modules — see [Adding a brand](docs/architecture.md#adding-a-camera-brand).
+**Hikvision (ISAPI) is fully implemented.** Dahua / CP Plus / Amcrest (CGI), Axis (VAPIX), Uniview (LAPI) and
+generic ONVIF (SOAP, WS-Security) adapters are also available, marked *unverified* until they have been
+confirmed on real hardware — use Test Connection when adding such a camera. Further brands can be added as
+separate adapter modules — see [Adding a brand](docs/architecture.md#adding-a-camera-brand).
 
 | | |
 |---|---|

@@ -66,7 +66,8 @@ describe("parseAxisStorage", () => {
   });
 
   it("classifies error bodies and unrelated text", () => {
-    expect(errorCode(() => parseAxisStorage("# Error: Error -1 getting param in group 'Storage'\n"))).toBe("API_ERROR");
+    expect(errorCode(() => parseAxisStorage("# Error: Error -1 getting param in group 'Storage'\n"))).toBe("API_UNAVAILABLE");
+    expect(errorCode(() => parseAxisStorage("# Error: Request failed\n"))).toBe("API_ERROR");
     expect(errorCode(() => parseAxisStorage("<html>login</html>"))).toBe("INVALID_RESPONSE");
     expect(errorCode(() => parseAxisStorage(""))).toBe("INVALID_RESPONSE");
   });
@@ -238,7 +239,8 @@ describe("parseOnvifStorage", () => {
     const fault = (sub: string) => `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:ter="http://www.onvif.org/ver10/error">
       <s:Body><s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>${sub}</s:Value></s:Subcode></s:Code>
       <s:Reason><s:Text xml:lang="en">Something went wrong</s:Text></s:Reason></s:Fault></s:Body></s:Envelope>`;
-    expect(errorCode(() => parseOnvifStorage(fault("ter:NotAuthorized")))).toBe("PERMISSION_DENIED");
+    expect(errorCode(() => parseOnvifStorage(fault("ter:NotAuthorized")))).toBe("AUTH_FAILED");
+    expect(errorCode(() => parseOnvifStorage(fault("ter:OperationProhibited")))).toBe("PERMISSION_DENIED");
     expect(errorCode(() => parseOnvifStorage(fault("ter:ActionNotSupported")))).toBe("API_UNAVAILABLE");
     expect(errorCode(() => parseOnvifStorage(fault("ter:InvalidArgVal")))).toBe("API_ERROR");
     expect(errorCode(() => parseOnvifStorage("<not-closed>"))).toBe("INVALID_RESPONSE");

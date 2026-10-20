@@ -1,6 +1,6 @@
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, MIB, isAbsentStatus, parseByteCount, parseKeyValueLines, statusMapper } from "../parsing.js";
-import { CameraApiError, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Parsing for Axis plain-text CGI storage parameters:
@@ -9,6 +9,7 @@ import { CameraApiError, type StorageDeviceStatus, type StorageReading } from ".
  *   Storage.S0.TotalSize=122048
  *   Storage.S0.WearLevel=12
  *
+ * param.cgi prefixes every name with "root." (root.Storage.S0.DriveStatus); both forms are accepted.
  * Each `S<n>` group is one disk. Sizes are megabytes (MiB): a 128 GB card reports ≈ 122048.
  * TotalSize is the only size the reference payload carries, so usage is computed only when the
  * firmware also reports FreeSize or UsedSize; otherwise the disk is listed with its status and
@@ -21,7 +22,7 @@ export const mapAxisStatus = statusMapper({
   unhealthy: [...COMMON_STATUSES.unhealthy, "wornout", "nospace", "disconnected"],
 });
 
-const KEY = /^Storage\.S(\d+)\.(\w+)$/i;
+const KEY = /^(?:root\.)?Storage\.S(\d+)\.(\w+)$/i;
 
 interface AxisGroup {
   index: number;
@@ -39,9 +40,8 @@ export function parseAxisStorage(body: string): StorageReading {
     group.fields.set(m[2]!.toLowerCase(), value);
   }
   if (groups.size === 0) {
-    // VAPIX reports failures as a plain-text "# Error: ..." or "Error: ..." body.
-    const error = /^#?\s*error\b[:\s-]*(.*)$/im.exec(body);
-    if (error) throw new CameraApiError("API_ERROR", `Camera reported: ${error[1]?.trim() || "Error"}`);
+    const error = parseAxisError(body);
+    if (error) throw error;
     throw new CameraApiError("INVALID_RESPONSE", "The camera response contains no Storage.S<n> parameters");
   }
 
@@ -70,5 +70,34 @@ function toDevice({ index, fields }: AxisGroup): StorageDeviceStatus {
     totalBytes,
     freeBytes,
     formatType: fields.get("filesystem") || undefined,
+  };
+}
+
+/** VAPIX reports failures as a plain-text "# Error: ..." or "Error: ..." body. */
+export function parseAxisError(body: string): CameraApiError | undefined {
+  const error = /^#?\s*error\b[:\s-]*(.*)$/im.exec(body);
+  if (!error) return undefined;
+  const reason = error[1]?.trim() || "Error";
+  // e.g. "# Error: Error -1 getting param in group 'Storage'" when the device has no storage group.
+  const code = /getting param|not found|no such|not supported/i.test(reason) ? "API_UNAVAILABLE" : "API_ERROR";
+  return new CameraApiError(code, `Camera reported: ${reason}`);
+}
+
+/** Parses param.cgi?action=list&group=Brand,Properties. */
+export function parseAxisDeviceInfo(body: string): DeviceInfo {
+  const fields = new Map<string, string>();
+  for (const [key, value] of parseKeyValueLines(body)) fields.set(key.replace(/^root\./i, "").toLowerCase(), value);
+  if (fields.size === 0) {
+    throw parseAxisError(body) ?? new CameraApiError("INVALID_RESPONSE", "The camera response contains no parameters");
+  }
+  const get = (k: string) => fields.get(k.toLowerCase()) || undefined;
+  const serial = get("Properties.System.SerialNumber");
+  return {
+    deviceName: get("Brand.ProdFullName") ?? get("Brand.ProdShortName"),
+    model: get("Brand.ProdNbr"),
+    serialNumber: serial,
+    firmwareVersion: get("Properties.Firmware.Version"),
+    // Axis serial numbers are the device's MAC address.
+    macAddress: serial && /^[0-9a-f]{12}$/i.test(serial) ? serial.match(/../g)!.join(":").toUpperCase() : undefined,
   };
 }

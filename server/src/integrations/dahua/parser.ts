@@ -1,6 +1,6 @@
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, isAbsentStatus, parseBoolean, parseByteCount, parseKeyValueLines, statusMapper } from "../parsing.js";
-import { CameraApiError, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Parsing for Dahua (and OEM: CP Plus, Amcrest) storageDevice.cgi flat lists:
@@ -46,14 +46,20 @@ export function unescapeLineBreaks(body: string): string {
   return body.replace(/\\+r\\+n|\\+n|\\+r/g, "\n");
 }
 
-export function parseDahuaStorage(body: string): StorageReading {
+/** Dahua CGI errors look like "Error\r\nBad Request!" (or "Error: ..."). */
+export function parseDahuaError(body: string): CameraApiError | undefined {
   const text = unescapeLineBreaks(body).trim();
-  // Dahua CGI errors look like "Error\r\nBad Request!" (or "Error: ...").
-  if (/^error\b/i.test(text)) {
-    const reason = text.replace(/^error\b[:\s]*/i, "").split("\n")[0]?.trim();
-    const notFound = /not ?found|not ?support|bad request/i.test(reason ?? "");
-    throw new CameraApiError(notFound ? "API_UNAVAILABLE" : "API_ERROR", `Camera reported: ${reason || "Error"}`);
-  }
+  if (!/^error\b/i.test(text)) return undefined;
+  const reason = text.replace(/^error\b[:\s]*/i, "").split("\n")[0]?.trim();
+  // Firmware without the requested CGI action answers "Bad Request!".
+  const notFound = /not ?found|not ?support|bad request/i.test(reason ?? "");
+  return new CameraApiError(notFound ? "API_UNAVAILABLE" : "API_ERROR", `Camera reported: ${reason || "Error"}`);
+}
+
+export function parseDahuaStorage(body: string): StorageReading {
+  const error = parseDahuaError(body);
+  if (error) throw error;
+  const text = unescapeLineBreaks(body).trim();
 
   const disks = collectDisks(text);
   if (disks.length === 0) {
@@ -136,5 +142,21 @@ function toDevice(disk: Disk, index: number): StorageDeviceStatus {
     totalBytes,
     freeBytes,
     writable: readOnly ? false : undefined,
+  };
+}
+
+/** Parses magicBox.cgi?action=getSystemInfo (deviceType=..., serialNumber=..., ...). */
+export function parseDahuaDeviceInfo(body: string): DeviceInfo {
+  const error = parseDahuaError(body);
+  if (error) throw error;
+  const fields = new Map<string, string>();
+  for (const [key, value] of parseKeyValueLines(unescapeLineBreaks(body))) fields.set(key.toLowerCase(), value);
+  if (fields.size === 0) throw new CameraApiError("INVALID_RESPONSE", "The camera response contains no system information");
+  const get = (k: string) => fields.get(k.toLowerCase()) || undefined;
+  return {
+    deviceName: get("deviceName") ?? get("machineName"),
+    model: get("deviceType") ?? get("updateSerial"),
+    serialNumber: get("serialNumber"),
+    firmwareVersion: get("version") ?? get("softwareVersion"),
   };
 }

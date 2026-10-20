@@ -1,7 +1,7 @@
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, isAbsentStatus, parseBoolean, parseByteCount, statusMapper } from "../parsing.js";
-import { CameraApiError, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Parsing for ONVIF GetStorageDevices SOAP responses:
@@ -56,7 +56,8 @@ function text(node: unknown, name: string): string | undefined {
   return s === "" ? undefined : s;
 }
 
-export function parseOnvifStorage(xml: string): StorageReading {
+/** Parses a SOAP envelope and returns its Body, throwing the classified error for a Fault. */
+function soapBody(xml: string): XmlNode {
   const trimmed = xml.trim();
   if (!trimmed.startsWith("<") || XMLValidator.validate(trimmed) !== true) {
     throw new CameraApiError("INVALID_RESPONSE", "The camera did not return valid XML");
@@ -64,16 +65,31 @@ export function parseOnvifStorage(xml: string): StorageReading {
   const doc = parser.parse(trimmed) as XmlNode;
   const body = child(child(doc, "Envelope"), "Body");
   if (!body) throw new CameraApiError("INVALID_RESPONSE", "Unexpected XML response: expected a SOAP Envelope/Body");
-
   const fault = child(body, "Fault");
   if (fault) throw faultError(fault);
+  return body;
+}
 
-  const responseKey = Object.keys(body).find((k) => k.toLowerCase() === "getstoragedevicesresponse");
-  if (responseKey === undefined) {
-    throw new CameraApiError("INVALID_RESPONSE", "Unexpected SOAP response: expected <GetStorageDevicesResponse>");
+/** Returns the named response element. An empty element (parsed as "") becomes {}. */
+function soapResponse(xml: string, name: string): XmlNode {
+  const body = soapBody(xml);
+  const key = Object.keys(body).find((k) => k.toLowerCase() === name.toLowerCase());
+  if (key === undefined) throw new CameraApiError("INVALID_RESPONSE", `Unexpected SOAP response: expected <${name}>`);
+  return isNode(body[key]) ? (body[key] as XmlNode) : {};
+}
+
+/** Returns the classified error described by a SOAP Fault body, if it is one. */
+export function parseOnvifFault(xml: string): CameraApiError | undefined {
+  try {
+    soapBody(xml);
+    return undefined;
+  } catch (e) {
+    return e instanceof CameraApiError && e.code !== "INVALID_RESPONSE" ? e : undefined;
   }
-  // An empty <GetStorageDevicesResponse/> parses as "": the device has no storage.
-  const response = isNode(body[responseKey]) ? (body[responseKey] as XmlNode) : {};
+}
+
+export function parseOnvifStorage(xml: string): StorageReading {
+  const response = soapResponse(xml, "GetStorageDevicesResponse");
 
   const key = Object.keys(response).find((k) => k.toLowerCase() === "storagedevice");
   const items = key === undefined ? [] : (response[key] as unknown[]);
@@ -121,7 +137,44 @@ function faultError(fault: XmlNode): CameraApiError {
   if (legacy) codes.push(legacy.replace(/^.*:/, ""));
   const reason = text(child(fault, "Reason"), "Text") ?? text(fault, "faultstring") ?? codes.at(-1) ?? "SOAP Fault";
   const msg = `Camera reported: ${reason}`;
-  if (codes.some((c) => /^NotAuthorized$/i.test(c))) return new CameraApiError("PERMISSION_DENIED", msg);
+  // ONVIF answers wrong WS-Security credentials with ter:NotAuthorized (or wsse:FailedAuthentication).
+  if (codes.some((c) => /^(NotAuthorized|FailedAuthentication|InvalidSecurityToken)$/i.test(c))) {
+    return new CameraApiError("AUTH_FAILED", msg);
+  }
+  if (codes.some((c) => /^(OperationProhibited|AccessDenied)$/i.test(c))) return new CameraApiError("PERMISSION_DENIED", msg);
   if (codes.some((c) => /ActionNotSupported|NotSupported|NoSuchService/i.test(c))) return new CameraApiError("API_UNAVAILABLE", msg);
   return new CameraApiError("API_ERROR", msg);
+}
+
+/** Parses a tds:GetDeviceInformationResponse. */
+export function parseOnvifDeviceInfo(xml: string): DeviceInfo {
+  const r = soapResponse(xml, "GetDeviceInformationResponse");
+  const manufacturer = text(r, "Manufacturer");
+  const model = text(r, "Model");
+  return {
+    deviceName: [manufacturer, model].filter(Boolean).join(" ") || undefined,
+    model,
+    serialNumber: text(r, "SerialNumber"),
+    firmwareVersion: text(r, "FirmwareVersion"),
+  };
+}
+
+/**
+ * Parses a tds:GetSystemDateAndTimeResponse into the device's current UTC time (epoch ms).
+ * Used to correct the WS-Security timestamp for cameras whose clock differs from ours.
+ */
+export function parseOnvifSystemTime(xml: string): number | undefined {
+  const r = soapResponse(xml, "GetSystemDateAndTimeResponse");
+  const utc = child(child(r, "SystemDateAndTime"), "UTCDateTime");
+  const date = child(utc, "Date");
+  const time = child(utc, "Time");
+  const n = (node: XmlNode | undefined, k: string) => {
+    const v = text(node, k);
+    return v !== undefined && /^\d+$/.test(v) ? Number(v) : undefined;
+  };
+  const parts = [n(date, "Year"), n(date, "Month"), n(date, "Day"), n(time, "Hour"), n(time, "Minute"), n(time, "Second")];
+  if (parts.some((p) => p === undefined)) return undefined;
+  const [y, mo, d, h, mi, sec] = parts as number[];
+  const ms = Date.UTC(y!, mo! - 1, d!, h!, mi!, sec!);
+  return Number.isFinite(ms) ? ms : undefined;
 }

@@ -1,6 +1,6 @@
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, MIB, isAbsentStatus, parseByteCount, statusMapper } from "../parsing.js";
-import { CameraApiError, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Parsing for Uniview LAPI storage JSON:
@@ -39,7 +39,11 @@ function str(obj: JsonObject, ...names: string[]): string | undefined {
   return s === "" ? undefined : s;
 }
 
-export function parseUniviewStorage(body: string): StorageReading {
+/**
+ * Parses a LAPI body and returns its payload: Response.Data when wrapped, the document otherwise.
+ * A non-zero Response.StatusCode is raised as a classified error.
+ */
+function unwrapLapi(body: string): unknown {
   let doc: unknown;
   try {
     doc = JSON.parse(body);
@@ -54,11 +58,28 @@ export function parseUniviewStorage(body: string): StorageReading {
     const code = field(response, "StatusCode");
     if (code !== undefined && Number(code) !== 0) {
       const msg = str(response, "StatusString") ?? `status code ${String(code)}`;
-      throw new CameraApiError(/not ?support|not ?found/i.test(msg) ? "API_UNAVAILABLE" : "API_ERROR", `Camera reported: ${msg}`);
+      const errorCode = /not ?support|not ?found/i.test(msg) ? "API_UNAVAILABLE"
+        : /unauthori[sz]ed|not ?authori[sz]ed|no ?permission|forbidden/i.test(msg) ? "PERMISSION_DENIED"
+        : "API_ERROR";
+      throw new CameraApiError(errorCode, `Camera reported: ${msg}`);
     }
     data = field(response, "Data");
   }
+  return data;
+}
 
+/** Returns the classified error described by a LAPI error body, if it is one. */
+export function parseUniviewError(body: string): CameraApiError | undefined {
+  try {
+    unwrapLapi(body);
+    return undefined;
+  } catch (e) {
+    return e instanceof CameraApiError && e.code !== "INVALID_RESPONSE" ? e : undefined;
+  }
+}
+
+export function parseUniviewStorage(body: string): StorageReading {
+  const data = unwrapLapi(body);
   const disks = isObject(data) ? field(data, "Disks", "DiskList", "DiskInfoList") : undefined;
   if (!Array.isArray(disks)) {
     throw new CameraApiError("INVALID_RESPONSE", "Unexpected JSON response: no \"Disks\" list");
@@ -89,5 +110,18 @@ function toDevice(disk: JsonObject, index: number): StorageDeviceStatus {
     rawStatus,
     totalBytes,
     freeBytes,
+  };
+}
+
+/** Parses GET /LAPI/V1.0/System/DeviceInfo. */
+export function parseUniviewDeviceInfo(body: string): DeviceInfo {
+  const data = unwrapLapi(body);
+  if (!isObject(data)) throw new CameraApiError("INVALID_RESPONSE", "Unexpected JSON response: no device information");
+  return {
+    deviceName: str(data, "DeviceName", "Name"),
+    model: str(data, "DeviceModel", "Model"),
+    serialNumber: str(data, "SerialNumber", "SerialNo"),
+    firmwareVersion: str(data, "FirmwareVersion", "SoftwareVersion"),
+    macAddress: str(data, "MAC", "MacAddress"),
   };
 }
