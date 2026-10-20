@@ -148,4 +148,5 @@ Configured in **Settings → Retention**: monitoring history (default 90 days) a
 | Emails not sent | Check SMTP variables, then **Settings → Notifications → Send test**. Failures are listed with their error in `notification_deliveries` |
 | `CSRF` / 403 errors after a deploy | Reload the page to get a fresh session token |
 | `ports are not available: exposing port TCP 0.0.0.0:80` (or 443) | Another program or Windows already uses that port. Set `HTTP_PORT=8080` and `HTTPS_PORT=8443` in `.env`, run `docker compose up -d`, and open `https://localhost:8443` |
+| API/worker keep restarting with `password authentication failed for user "cctv"` | The database was created with a different password than `.env` now gives (Postgres keeps its first password). Put the original `POSTGRES_PASSWORD` back in `.env` and run `docker compose up -d`; or, if the database holds nothing you need, `docker compose down -v` and start again |
 | Logs | `docker compose logs -f api worker`. Logs never contain passwords or request bodies |

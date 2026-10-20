@@ -2,6 +2,7 @@ import { pool } from "./db/pool.js";
 import { migrate } from "./db/migrate.js";
 import { registry } from "./integrations/registry.js";
 import { logger } from "./lib/logger.js";
+import { startupHint } from "./lib/startupHint.js";
 import { INSTANCE_ID } from "./monitoring/checkService.js";
 import { Scheduler } from "./monitoring/scheduler.js";
 import { notifier } from "./notifications/notifier.js";
@@ -27,6 +28,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  logger.fatal({ err: err.message }, "Worker failed to start");
+  logger.fatal({ err: err.message, hint: startupHint(err) }, "Worker failed to start");
   process.exit(1);
 });

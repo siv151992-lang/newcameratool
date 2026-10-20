@@ -4,6 +4,7 @@ import { pool } from "./db/pool.js";
 import { migrate } from "./db/migrate.js";
 import { registry } from "./integrations/registry.js";
 import { logger } from "./lib/logger.js";
+import { startupHint } from "./lib/startupHint.js";
 import { getCipher } from "./security/cipher.js";
 import { syncBrands } from "./services/brandService.js";
 import { bootstrapAdmin } from "./services/bootstrap.js";
@@ -22,6 +23,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  logger.fatal({ err: err.message }, "API failed to start");
+  logger.fatal({ err: err.message, hint: startupHint(err) }, "API failed to start");
   process.exit(1);
 });
