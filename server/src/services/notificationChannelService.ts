@@ -85,7 +85,7 @@ export async function testChannel(notifier: Notifier, id: string) {
   try {
     await driver.send(c, {
       subject: "[CCTV] Test notification",
-      text: "This is a test notification from the CCTV Storage Monitor. If you received it, the channel works.",
+      text: "This is a test notification from Zoho IBMS CCTV Monitoring. If you received it, the channel works.",
     });
     return { ok: true, message: "Test notification sent" };
   } catch (err) {

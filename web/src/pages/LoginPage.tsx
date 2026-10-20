@@ -35,7 +35,7 @@ export function LoginPage() {
         <div className="mb-6 flex items-center gap-2">
           <Video className="h-6 w-6 text-accent" aria-hidden />
           <div>
-            <h1 className="text-lg font-semibold">CCTV Storage Monitor</h1>
+            <h1 className="text-lg font-semibold">Zoho IBMS CCTV Monitoring</h1>
             <p className="text-sm text-ink-secondary">Sign in to continue</p>
           </div>
         </div>

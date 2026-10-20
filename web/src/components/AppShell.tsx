@@ -63,8 +63,8 @@ export function AppShell() {
       {/* Desktop sidebar */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface p-4 lg:flex">
         <div className="mb-6 flex items-center gap-2 px-2">
-          <Video className="h-5 w-5 text-accent" aria-hidden />
-          <span className="font-semibold">CCTV Storage</span>
+          <Video className="h-5 w-5 shrink-0 text-accent" aria-hidden />
+          <span className="font-semibold leading-tight">Zoho IBMS CCTV Monitoring</span>
         </div>
         {nav}
       </aside>
@@ -75,7 +75,7 @@ export function AppShell() {
           <div className="absolute inset-0 bg-black/50" onClick={close} aria-hidden />
           <aside className="absolute inset-y-0 left-0 w-64 border-r border-line bg-surface p-4">
             <div className="mb-6 flex items-center justify-between px-2">
-              <span className="font-semibold">CCTV Storage</span>
+              <span className="font-semibold">Zoho IBMS CCTV Monitoring</span>
               <Button variant="ghost" size="sm" onClick={close} aria-label="Close menu" icon={<X className="h-4 w-4" />} />
             </div>
             {nav}
@@ -86,7 +86,7 @@ export function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-line bg-surface/95 px-4 backdrop-blur">
           <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setOpen(true)} aria-label="Open menu" icon={<Menu className="h-5 w-5" />} />
-          <span className="font-semibold lg:hidden">CCTV Storage</span>
+          <span className="font-semibold lg:hidden">Zoho IBMS CCTV Monitoring</span>
           <div className="flex-1" />
           <Button
             variant="ghost"

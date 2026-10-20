@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: CCTV Storage Monitor API
+  title: Zoho IBMS CCTV Monitoring API
   version: 1.0.0
   description: |
     Backend API for the multi-brand CCTV storage monitoring dashboard.
