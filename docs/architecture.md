@@ -23,6 +23,8 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 | `integrations/registry.ts` | Brand registry: implemented adapters + planned brands |
 | `integrations/http/cameraHttpClient.ts` | HTTP client with Digest (MD5/SHA-256, `-sess`) and Basic auth, timeouts, size limits |
 | `integrations/hikvision/` | Hikvision adapter and ISAPI XML parsing |
+| `integrations/{axis,uniview,dahua,onvif}/parser.ts` | Storage parsers for Axis CGI text, Uniview LAPI JSON, Dahua/CP Plus CGI lists and ONVIF SOAP (no adapters yet) |
+| `integrations/parsing.ts` | Shared parser helpers: strict byte counts, `key=value` lines, status mapping |
 | `integrations/diagnostics.ts` | Generic step-by-step Test Connection |
 | `monitoring/checkService.ts` | One check: lease → adapter call with retries → persist → evaluate alerts |
 | `monitoring/evaluate.ts` | Pure functions: storage health and alert conditions |
