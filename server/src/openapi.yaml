@@ -24,6 +24,7 @@ tags:
   - name: Alerts
   - name: Settings
   - name: Admin
+  - name: Integrations
 security:
   - session: []
     csrf: []
@@ -392,6 +393,137 @@ paths:
       responses:
         "200": { description: Updated settings }
         "400": { $ref: "#/components/responses/Error" }
+  /integrations:
+    get:
+      tags: [Integrations]
+      summary: Brand integrations with status, version, camera count and last test (settings:read)
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Integrations]
+      summary: Create a configurable API integration as a draft (settings:write)
+      description: Body { details, config, changeNote? }. The key is derived from the brand name; duplicate names are refused (409).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [details, config]
+              properties:
+                details: { $ref: "#/components/schemas/IntegrationDetails" }
+                config: { $ref: "#/components/schemas/IntegrationConfig" }
+                changeNote: { type: string }
+      responses:
+        "201": { description: Created integration }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /integrations/validate:
+    post:
+      tags: [Integrations]
+      summary: Validate a configuration without saving it (settings:write)
+      responses:
+        "200": { description: "{ valid, credentialMode?, issues: [{ field, message }] }" }
+  /integrations/preview:
+    post:
+      tags: [Integrations]
+      summary: Map a pasted sample response with a configuration; no network access (settings:write)
+      responses:
+        "200": { description: "{ ok, stage: config|format|mapping, mapping?: { devices, reading, errors, warnings, missing } }" }
+  /integrations/{key}:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    get:
+      tags: [Integrations]
+      summary: Integration details and configuration versions (settings:read)
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [Integrations]
+      summary: Edit details and/or configuration; a changed configuration becomes a new untested version (settings:write)
+      responses:
+        "200": { description: Updated integration }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [Integrations]
+      summary: Delete an unused configurable integration (settings:write)
+      responses:
+        "204": { description: Deleted }
+        "400": { description: Built-in adapters cannot be deleted }
+        "409": { description: Cameras still use it (IN_USE) }
+  /integrations/{key}/test:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    post:
+      tags: [Integrations]
+      summary: Test a configuration version against a camera on the server (settings:write, rate-limited)
+      description: >-
+        target is { cameraId } (a camera of this brand; its stored credentials are used) or
+        { host, port, protocol, username?, password? }. Returns ok, outcome (OK, CONFIG_INVALID,
+        DESTINATION_NOT_ALLOWED, NETWORK_FAILURE, AUTH_FAILURE, HTTP_FAILURE, INVALID_FORMAT,
+        MAPPING_FAILURE, NO_STORAGE_DATA), sanitised steps, the normalised storage result, the
+        mapping and a redacted sample response. Credentials are never returned or stored.
+      responses:
+        "200": { description: Test result }
+  /integrations/{key}/enable:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    post:
+      tags: [Integrations]
+      summary: Enable an integration, or activate / roll back to a tested configuration version (settings:write)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { versionId: { type: string, format: uuid } } }
+      responses:
+        "200": { description: Enabled }
+        "409": { description: The version has not passed a test (NOT_TESTED) }
+  /integrations/{key}/disable:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    post:
+      tags: [Integrations]
+      summary: Disable an integration; its cameras stop being checked and keep their history (settings:write)
+      responses:
+        "200": { description: "{ integration, impact: { cameras, monitored } }" }
+  /integrations/{key}/reassign:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    post:
+      tags: [Integrations]
+      summary: Move all cameras to another enabled integration (settings:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [toKey], properties: { toKey: { type: string } } }
+      responses:
+        "200": { description: "{ moved }" }
+  /integrations/{key}/impact:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    get:
+      tags: [Integrations]
+      summary: Cameras that depend on the integration (settings:read)
+      responses:
+        "200": { description: "{ cameras, monitored }" }
+  /integrations/{key}/cameras:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    get:
+      tags: [Integrations]
+      summary: Cameras using the integration, paginated (settings:read)
+      responses:
+        "200": { description: OK }
+  /integrations/{key}/tests:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    get:
+      tags: [Integrations]
+      summary: Test history, paginated (settings:read)
+      responses:
+        "200": { description: OK }
   /settings/networks:
     get:
       tags: [Settings]
@@ -787,6 +919,51 @@ components:
       type: object
       properties:
         note: { type: string, maxLength: 500 }
+    IntegrationDetails:
+      type: object
+      required: [displayName]
+      properties:
+        displayName: { type: string }
+        manufacturer: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        supportedModels: { type: array, items: { type: string } }
+        defaultProtocol: { type: string, enum: [http, https] }
+        defaultHttpPort: { type: integer }
+        defaultHttpsPort: { type: integer }
+        integrationVersion: { type: string, example: "1.0" }
+        compatibilityNotes: { type: string, nullable: true }
+    IntegrationConfig:
+      type: object
+      description: Declarative configuration of a configurable API integration. Holds no secrets. See docs/brand-integrations.md.
+      required: [request, auth, response]
+      properties:
+        request:
+          type: object
+          properties:
+            method: { type: string, enum: [GET, POST] }
+            path: { type: string, example: /api/v1/storage }
+            query: { type: array, items: { type: object, properties: { name: { type: string }, value: { type: string } } } }
+            headers: { type: array, items: { type: object, properties: { name: { type: string }, value: { type: string } } } }
+            body: { type: string, nullable: true }
+            contentType: { type: string, nullable: true }
+            timeoutMs: { type: integer, minimum: 1000, maximum: 60000 }
+        auth:
+          type: object
+          properties:
+            type: { type: string, enum: [none, basic, digest, api_key, bearer] }
+            apiKeyIn: { type: string, enum: [header, query] }
+            apiKeyName: { type: string }
+        pagination: { type: object, description: "{ type: none } or { type: page, pageParam, firstPage, pageSizeParam?, pageSize?, maxPages }" }
+        response:
+          type: object
+          properties:
+            format: { type: string, enum: [json, xml] }
+            devicesPath: { type: string, example: "data.disks[*]" }
+            fields: { type: object, description: "id?, name?, total { path, unit }, free?, used?, health?, readWrite?" }
+            healthValues: { type: object, description: "healthy, degraded, unhealthy, absent: string lists" }
+            readWriteValues: { type: object }
+        deviceInfo: { type: object, nullable: true }
+        maxConcurrency: { type: integer, minimum: 1, maximum: 20 }
     NetworkSettings:
       type: object
       properties:

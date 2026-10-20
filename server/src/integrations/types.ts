@@ -150,6 +150,8 @@ export interface BrandMeta {
   integrationType?: "builtin" | "configurable";
   /** Which camera credentials the integration uses. Built-in adapters use username + password. */
   credentials?: "user_password" | "secret" | "none";
+  /** Protocol a new camera of this brand starts with. */
+  defaultProtocol?: "http" | "https";
   /** Compatibility notes: models and firmware known to work. */
   compatibility?: string;
 }

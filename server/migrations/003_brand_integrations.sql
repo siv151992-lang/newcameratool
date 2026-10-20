@@ -19,6 +19,9 @@ ALTER TABLE camera_brands
   ADD COLUMN updated_by         uuid REFERENCES users(id) ON DELETE SET NULL,
   ADD COLUMN deleted_at         timestamptz;     -- configurable integrations still referenced by removed cameras
 
+-- Existing brands were created when they were first registered.
+UPDATE camera_brands SET created_at = updated_at;
+
 CREATE UNIQUE INDEX camera_brands_display_name_unique ON camera_brands (lower(display_name)) WHERE deleted_at IS NULL;
 
 -- Every saved configuration of a configurable integration. Configurations hold no secrets: camera

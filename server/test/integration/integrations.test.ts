@@ -54,6 +54,9 @@ describe("configurable brand integrations", () => {
 
     const created = await post("/api/integrations", { details, config: acmeConfig() }).expect(201);
     expect(created.body).toMatchObject({ key: "acme-vision", status: "draft", integrationType: "configurable", latestVersion: 1, activeVersion: null, credentials: "user_password" });
+    // Saving an unchanged configuration adds no version (stored jsonb reorders keys).
+    const same = await agent.patch("/api/integrations/acme-vision").set("X-CSRF-Token", csrf).send({ details, config: acmeConfig() }).expect(200);
+    expect(same.body.latestVersion).toBe(1);
 
     // Not usable until tested and enabled.
     expect((await agent.get("/api/brands").expect(200)).body.map((b: { key: string }) => b.key)).not.toContain("acme-vision");

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, ChevronRight, Clock, Gauge, Mail, Network, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, Boxes, ChevronRight, Clock, Gauge, Mail, Network, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, toQuery } from "../api/client";
@@ -11,6 +11,7 @@ import { useAiStatus } from "../hooks/ai";
 import { useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
 import { absoluteTime, relativeTime } from "../lib/format";
+import { BrandsSection } from "./brands/BrandsSection";
 
 interface Section {
   path: string;
@@ -28,6 +29,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "thresholds", label: "Thresholds", description: "Default warning, critical and full storage levels. Each camera can override them on its edit page.", icon: <Gauge className={icon} />, element: <MonitoringSettingsTab groupKey="thresholds" /> },
     can("settings:read") && { path: "detection", label: "Problem detection", description: "When a camera counts as offline and when alerts are raised.", icon: <Activity className={icon} />, element: <MonitoringSettingsTab groupKey="detection" /> },
     can("settings:read") && { path: "retention", label: "Retention", description: "How long history and audit records are kept.", icon: <Archive className={icon} />, element: <MonitoringSettingsTab groupKey="retention" /> },
+    can("settings:read") && { path: "brands", label: "Camera brands", description: "Brand integrations: built-in adapters and API integrations configured here.", icon: <Boxes className={icon} />, element: <BrandsSection /> },
     can("settings:read") && { path: "networks", label: "Camera networks", description: "The network ranges the monitor may contact cameras on.", icon: <Network className={icon} />, element: <NetworksTab /> },
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
@@ -44,7 +46,7 @@ export function SettingsPage() {
     <Routes>
       <Route index element={<SettingsOverview sections={sections} />} />
       {sections.map((s) => (
-        <Route key={s.path} path={s.path} element={<SectionLayout sections={sections} current={s} />} />
+        <Route key={s.path} path={`${s.path}/*`} element={<SectionLayout sections={sections} current={s} />} />
       ))}
       <Route path="*" element={<Navigate to="/settings" replace />} />
     </Routes>

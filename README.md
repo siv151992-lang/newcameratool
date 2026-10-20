@@ -7,8 +7,13 @@ goes offline, or its credentials stop working.
 
 **Hikvision (ISAPI) is fully implemented.** Dahua / CP Plus / Amcrest (CGI), Axis (VAPIX), Uniview (LAPI) and
 generic ONVIF (SOAP, WS-Security) adapters are also available, marked *unverified* until they have been
-confirmed on real hardware — use Test Connection when adding such a camera. Further brands can be added as
-separate adapter modules — see [Adding a brand](docs/architecture.md#adding-a-camera-brand).
+confirmed on real hardware — use Test Connection when adding such a camera.
+
+**New brands without code changes:** administrators can add a brand in **Settings → Camera brands** when its
+storage API is a single HTTP request returning JSON or XML (Basic, Digest, API key, bearer token or no
+authentication). A wizard maps the response onto the common storage model, tests it against a real camera on the
+server, and only a tested configuration can be enabled. Brands with other APIs need a custom adapter in code.
+See **[docs/brand-integrations.md](docs/brand-integrations.md)**.
 
 | | |
 |---|---|

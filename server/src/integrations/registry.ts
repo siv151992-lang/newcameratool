@@ -50,7 +50,7 @@ export class BrandRegistry {
   /** Reloads integration states and enabled configurable integrations from the database. */
   async refresh(db: Queryable = pool): Promise<void> {
     const { rows } = await db.query(
-      `SELECT b.key, b.display_name, b.status, b.integration_type, b.integration_version, b.notes,
+      `SELECT b.key, b.display_name, b.status, b.integration_type, b.integration_version, b.notes, b.default_protocol,
               b.default_http_port, b.default_https_port, v.config, v.version
        FROM camera_brands b LEFT JOIN brand_integration_versions v ON v.id = b.active_version_id
        WHERE b.deleted_at IS NULL`,
@@ -68,6 +68,7 @@ export class BrandRegistry {
           {
             key: r.key, displayName: r.display_name, version: r.integration_version, versionNumber: r.version, notes: r.notes,
             defaultPorts: { http: r.default_http_port ?? 80, https: r.default_https_port ?? 443 },
+            defaultProtocol: r.default_protocol,
           },
           parsed.data,
         ),
@@ -155,7 +156,7 @@ export class BrandRegistry {
 }
 
 function withDefaults(meta: BrandMeta): BrandMeta {
-  return { version: BUILTIN_VERSION, integrationType: "builtin", credentials: "user_password", ...meta };
+  return { version: BUILTIN_VERSION, integrationType: "builtin", credentials: "user_password", defaultProtocol: "http", ...meta };
 }
 
 export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandRegistry {

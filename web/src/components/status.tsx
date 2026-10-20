@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, WifiOff } from "lucide-react";
-import type { ConnectionStatus, RecordingState, Severity, StorageHealth } from "../api/types";
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, FilePen, FlaskConical, WifiOff } from "lucide-react";
+import type { ConnectionStatus, IntegrationStatus, RecordingState, Severity, StorageHealth } from "../api/types";
 
 /**
  * Status indicators always pair color with an icon and a text label, so meaning never
@@ -102,4 +102,12 @@ export function UsageMeter({
       <span className="tabular w-12 text-right text-sm text-ink">{percent.toFixed(1)}%</span>
     </div>
   );
+}
+
+/** Lifecycle of a brand integration: only "Enabled" integrations monitor cameras. */
+export function IntegrationStatusBadge({ status }: { status: IntegrationStatus }) {
+  if (status === "enabled") return <Pill tone="good" icon={CheckCircle2} label="Enabled" title="Used for monitoring and offered when adding cameras" />;
+  if (status === "tested") return <Pill tone="warn" icon={FlaskConical} label="Tested" title="Test passed; not used for monitoring until enabled" />;
+  if (status === "disabled") return <Pill tone="unknown" icon={CirclePause} label="Disabled" title="Not used for monitoring; cameras and history are kept" />;
+  return <Pill tone="unknown" icon={FilePen} label="Draft" title="Saved but not successfully tested yet" />;
 }

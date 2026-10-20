@@ -85,6 +85,13 @@ function requireValidConfig(input: unknown): IntegrationConfig {
   return v.config;
 }
 
+/** JSON with object keys sorted, so equal configurations compare equal whatever their key order. */
+export function canonical(v: unknown): string {
+  const sort = (x: unknown): unknown =>
+    Array.isArray(x) ? x.map(sort) : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort((x as Record<string, unknown>)[k])])) : x;
+  return JSON.stringify(sort(v));
+}
+
 const slug = (name: string) => name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "brand";
 
 async function uniqueKey(name: string, db: Queryable): Promise<string> {
@@ -320,7 +327,8 @@ export async function updateIntegration(key: string, input: z.infer<typeof updat
     let newVersion: number | undefined;
     if (config) {
       const latest = (await db.query("SELECT version, config FROM brand_integration_versions WHERE brand_key = $1 ORDER BY version DESC LIMIT 1", [key])).rows[0];
-      if (!latest || JSON.stringify(latest.config) !== JSON.stringify(config)) {
+      // jsonb does not keep key order, so compare canonical forms.
+      if (!latest || canonical(latest.config) !== canonical(config)) {
         newVersion = (latest?.version ?? 0) + 1;
         await db.query(
           "INSERT INTO brand_integration_versions (brand_key, version, config, change_note, created_by) VALUES ($1,$2,$3,$4,$5)",

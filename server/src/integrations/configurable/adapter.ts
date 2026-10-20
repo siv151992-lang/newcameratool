@@ -18,6 +18,7 @@ export interface ConfigurableMeta {
   version: string;
   versionNumber: number;
   defaultPorts: { http: number; https: number };
+  defaultProtocol?: "http" | "https";
   notes?: string | null;
 }
 
@@ -68,7 +69,8 @@ export class ConfigurableAdapter implements CameraBrandAdapter {
     this.meta = {
       key: info.key,
       displayName: info.displayName,
-      supportStatus: "unverified",
+      // Only a configuration that passed a test against a real camera can be enabled.
+      supportStatus: "supported",
       authMethods: [config.auth.type === "api_key" ? `api key (${config.auth.apiKeyIn})` : config.auth.type],
       defaultPorts: info.defaultPorts,
       capabilities,
@@ -78,6 +80,7 @@ export class ConfigurableAdapter implements CameraBrandAdapter {
       version: info.version,
       integrationType: "configurable",
       credentials: credentialModeFor(config.auth.type),
+      defaultProtocol: info.defaultProtocol ?? (config.auth.type === "none" || config.auth.type === "digest" ? "http" : "https"),
     };
     this.limit = new Semaphore(config.maxConcurrency);
   }

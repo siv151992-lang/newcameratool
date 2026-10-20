@@ -1,3 +1,13 @@
+const CAPABILITY_LABELS: Record<string, string> = {
+  "storage-status": "Storage",
+  "recording-status": "Recording",
+  "device-info": "Device info",
+  "connection-test": "Connection test",
+  "multiple-storage-devices": "Multiple disks",
+  nas: "NAS",
+};
+export const capabilityLabel = (c: string) => CAPABILITY_LABELS[c] ?? c;
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "—";
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];

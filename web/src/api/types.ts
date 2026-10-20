@@ -97,7 +97,7 @@ export interface Summary {
 }
 
 export interface DiagnosticStep {
-  key: "reachability" | "authentication" | "api" | "storage";
+  key: "config" | "reachability" | "authentication" | "api" | "storage";
   label: string;
   status: "passed" | "failed" | "warning" | "skipped";
   message: string;
@@ -167,6 +167,11 @@ export interface Brand {
   storageEndpoint?: string;
   notes: string;
   cameraCount: number;
+  version?: string;
+  integrationType?: "builtin" | "configurable";
+  /** Which credentials cameras of this brand need: username + password, one API key/token, or none. */
+  credentials?: "user_password" | "secret" | "none";
+  defaultProtocol?: "http" | "https";
 }
 
 export interface NetworkSettings {
@@ -364,4 +369,168 @@ export interface MonitoringReport {
   generatedAt: string;
   markdown: string;
   aiSummary?: string;
+}
+
+// ------------------------------------------------------------------ brand integrations
+
+export type IntegrationStatus = "draft" | "tested" | "enabled" | "disabled";
+export type CredentialMode = "user_password" | "secret" | "none";
+
+export interface IntegrationSummary {
+  key: string;
+  displayName: string;
+  manufacturer: string | null;
+  description: string | null;
+  integrationType: "builtin" | "configurable";
+  integrationVersion: string;
+  status: IntegrationStatus;
+  supportStatus: "supported" | "unverified" | "planned";
+  cameraCount: number;
+  authMethods: string[];
+  capabilities: string[];
+  credentials: CredentialMode;
+  defaultProtocol: "http" | "https";
+  defaultPorts: { http: number; https: number };
+  lastTestAt: string | null;
+  lastTestOk: boolean | null;
+  lastSuccessAt: string | null;
+  activeVersion: number | null;
+  latestVersion: number | null;
+  latestVersionStatus: "untested" | "passed" | "failed" | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationVersion {
+  id: string;
+  version: number;
+  testStatus: "untested" | "passed" | "failed";
+  testedAt: string | null;
+  changeNote: string | null;
+  createdAt: string;
+  createdBy: string | null;
+  isActive: boolean;
+}
+
+export interface IntegrationDetail extends IntegrationSummary {
+  supportedModels: string[];
+  compatibilityNotes: string | null;
+  storageEndpoint: string | null;
+  notes: string | null;
+  activeConfig: IntegrationConfig | null;
+  latestConfig: IntegrationConfig | null;
+  latestVersionId: string | null;
+  versions: IntegrationVersion[];
+}
+
+export type AuthType = "none" | "basic" | "digest" | "api_key" | "bearer";
+export type ByteUnit = "B" | "KB" | "MB" | "GB" | "TB" | "KiB" | "MiB" | "GiB" | "TiB";
+export interface NameValue {
+  name: string;
+  value: string;
+}
+
+/** Declarative configuration of a configurable API integration (validated on the server). */
+export interface IntegrationConfig {
+  request: { method: "GET" | "POST"; path: string; query: NameValue[]; headers: NameValue[]; body?: string | null; contentType?: string | null; timeoutMs: number };
+  auth: { type: AuthType; apiKeyIn?: "header" | "query"; apiKeyName?: string };
+  pagination: { type: "none" } | { type: "page"; pageParam: string; firstPage: 0 | 1; pageSizeParam?: string; pageSize?: number; maxPages: number };
+  response: {
+    format: "json" | "xml";
+    devicesPath: string;
+    fields: {
+      id?: string;
+      name?: string;
+      total: { path: string; unit: ByteUnit };
+      free?: { path: string; unit: ByteUnit };
+      used?: { path: string; unit: ByteUnit };
+      health?: string;
+      readWrite?: string;
+    };
+    healthValues: { healthy: string[]; degraded: string[]; unhealthy: string[]; absent: string[] };
+    readWriteValues: { readWrite: string[]; readOnly: string[] };
+  };
+  deviceInfo: { path: string; query: NameValue[]; format: "json" | "xml"; fields: { deviceName?: string; model?: string; serialNumber?: string; firmwareVersion?: string } } | null;
+  maxConcurrency: number;
+}
+
+export interface IntegrationDetails {
+  displayName: string;
+  manufacturer: string | null;
+  description: string | null;
+  supportedModels: string[];
+  defaultProtocol: "http" | "https";
+  defaultHttpPort: number;
+  defaultHttpsPort: number;
+  integrationVersion: string;
+  compatibilityNotes: string | null;
+}
+
+export interface MappingFieldValue {
+  field: string;
+  path: string;
+  raw?: string;
+  value?: string | number | boolean;
+  error?: string;
+}
+
+export interface MappingResult {
+  devices: { index: number; fields: MappingFieldValue[]; device?: StorageDevice; skipped?: string }[];
+  reading: { devices: StorageDevice[]; totalBytes?: number; freeBytes?: number; usedBytes?: number; usedPercentage?: number };
+  errors: string[];
+  warnings: string[];
+  missing: string[];
+}
+
+export interface PreviewResult {
+  ok: boolean;
+  stage: "config" | "format" | "mapping";
+  issues?: { field: string; message: string }[];
+  message?: string;
+  mapping?: MappingResult;
+}
+
+export type TestOutcome =
+  | "OK" | "CONFIG_INVALID" | "DESTINATION_NOT_ALLOWED" | "NETWORK_FAILURE" | "AUTH_FAILURE" | "HTTP_FAILURE"
+  | "INVALID_FORMAT" | "MAPPING_FAILURE" | "NO_STORAGE_DATA";
+
+export interface IntegrationTestResult {
+  ok: boolean;
+  outcome: TestOutcome;
+  outcomeLabel: string;
+  message: string;
+  steps: DiagnosticStep[];
+  deviceInfo?: ConnectionResult["deviceInfo"];
+  storage?: MappingResult["reading"];
+  mapping?: MappingResult;
+  sample?: string;
+  durationMs: number;
+  versionId: string | null;
+  version: number | null;
+}
+
+export interface IntegrationTestRecord {
+  id: string;
+  version: number | null;
+  targetHost: string;
+  targetPort: number;
+  ok: boolean;
+  outcome: TestOutcome;
+  message: string;
+  steps: DiagnosticStep[];
+  durationMs: number;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+export interface IntegrationCamera {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  location: string | null;
+  monitoringEnabled: boolean;
+  connectionStatus: ConnectionStatus;
+  storageHealth: StorageHealth;
+  lastSuccessAt: string | null;
 }

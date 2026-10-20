@@ -20,8 +20,10 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 | Path | Responsibility |
 |---|---|
 | `integrations/types.ts` | Vendor-neutral types: `CameraBrandAdapter`, `StorageReading`, error codes |
-| `integrations/registry.ts` | Brand registry: implemented adapters + planned brands |
-| `integrations/http/cameraHttpClient.ts` | HTTP client with Digest (MD5/SHA-256, `-sess`) and Basic auth, timeouts, size limits |
+| `integrations/registry.ts` | Brand registry: built-in adapters, enabled configurable integrations (reloaded from `camera_brands` every 30 s and after each change) and planned brands |
+| `integrations/configurable/` | Mode A configurable API integrations: `config.ts` (zod schema of the declarative configuration), `mapping.ts` (strict JSON/XML parsing, safe dotted paths, unit conversion, validation), `adapter.ts` (`ConfigurableAdapter` on the shared HTTP client) |
+| `services/integrationService.ts` | Integration lifecycle: versions, backend tests and their history, enable/disable, rollback, reassignment, deletion checks |
+| `integrations/http/cameraHttpClient.ts` | HTTP client with Digest (MD5/SHA-256, `-sess`) and Basic auth (or explicit modes for configurable integrations: Digest only, none, a pre-set Authorization header), extra headers that cannot override credentials or framing, timeouts, size limits |
 | `integrations/hikvision/` | Hikvision adapter and ISAPI XML parsing |
 | `integrations/{axis,uniview,dahua,onvif}/` | Adapters and parsers for Axis VAPIX text, Uniview LAPI JSON, Dahua/CP Plus CGI lists and ONVIF SOAP (`onvif/soap.ts`: WS-Security envelopes) |
 | `integrations/http/responses.ts` | Shared classification of non-2xx camera responses |
@@ -40,6 +42,10 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 
 ## Adding a camera brand
 
+Brands whose storage API is one HTTP request returning JSON or XML can be added **without code** as a
+configurable API integration in **Settings → Camera brands** — see [brand-integrations.md](brand-integrations.md),
+which also lists what needs a custom adapter. Otherwise, add a custom adapter (Mode B):
+
 1. Create `server/src/integrations/<brand>/adapter.ts` implementing `CameraBrandAdapter`:
    - `meta`: display name, `supportStatus`, auth methods, default ports, capabilities, storage endpoint,
      timeout, notes.
@@ -55,6 +61,11 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 2. Register it in `createRegistry()` and remove the brand from the `PLANNED` list.
 3. Add parser and adapter tests with recorded responses (see `test/unit/hikvisionParser.test.ts`).
 4. Mark it `supported` only after testing on real devices; use `unverified` until then.
+5. Optionally set `meta.version` (default `1.0.0`; recorded on each storage check) and `meta.compatibility`
+   (models / firmware known to work, shown in Settings → Camera brands).
+
+Adapters are compiled into the application. There is deliberately no mechanism to install plugins,
+upload scripts or evaluate expressions at run time.
 
 No other part of the application contains brand-specific logic. ONVIF has no universal storage-capacity
 API: the ONVIF adapter calls `GetStorageDevices` on the device service, which only some devices implement.

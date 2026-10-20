@@ -8,6 +8,7 @@ import { Diagnostics } from "../components/Diagnostics";
 import { Button, Card, Checkbox, ConfirmDialog, ErrorMessage, Field, Input, PageHeader, Select, Spinner, Textarea } from "../components/ui";
 import { useToast } from "../components/toast";
 import { useInvalidateCameras } from "../hooks/cameras";
+import { capabilityLabel } from "../lib/format";
 
 interface FormState {
   name: string;
@@ -80,11 +81,24 @@ export function CameraFormPage() {
   }, [camera.data, original]);
 
   const brand = brands.data?.find((b) => b.key === form.brand);
+  const credentials = brand?.credentials ?? "user_password";
+  // Choosing a brand applies its default protocol (the port placeholder follows) for a new camera.
+  const chooseBrand = (key: string) => {
+    const b = brands.data?.find((x) => x.key === key);
+    setForm((f) => ({ ...f, brand: key, ...(!editing && b?.defaultProtocol ? { protocol: b.defaultProtocol, port: "" } : {}) }));
+    setErrors((e) => ({ ...e, brand: "" }));
+  };
   const defaultPort = brand ? (form.protocol === "https" ? brand.defaultPorts.https : brand.defaultPorts.http) : form.protocol === "https" ? 443 : 80;
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
     setErrors((e) => ({ ...e, [k]: "" }));
   };
+  useEffect(() => {
+    // The default brand may be disabled: start a new camera on the first available one instead.
+    const usable = brands.data?.filter((b) => b.supportStatus !== "planned") ?? [];
+    if (!editing && usable.length && !usable.some((b) => b.key === form.brand)) chooseBrand(usable[0]!.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brands.data, editing]);
   const snapshot = useMemo(() => JSON.stringify(toPayload(form)), [form]);
   const testIsCurrent = test && testedSnapshot === snapshot;
 
@@ -156,9 +170,25 @@ export function CameraFormPage() {
               <Field label="Camera name" required error={errors.name}>
                 {(fid, d) => <Input id={fid} aria-describedby={d} value={form.name} onChange={(e) => set("name", e.target.value)} invalid={!!errors.name} required maxLength={120} />}
               </Field>
-              <Field label="Brand / manufacturer" required error={errors.brand} hint={brand?.notes}>
+              <Field
+                label="Brand / manufacturer"
+                required
+                error={errors.brand}
+                hint={
+                  brand ? (
+                    <>
+                      {brand.notes}
+                      {brand.capabilities.length > 0 && <span className="mt-1 block text-ink-muted">Capabilities: {brand.capabilities.map(capabilityLabel).join(", ")}</span>}
+                    </>
+                  ) : editing ? (
+                    "This camera's integration is disabled. An administrator can enable it in Settings → Camera brands, or choose another brand."
+                  ) : undefined
+                }
+              >
                 {(fid, d) => (
-                  <Select id={fid} aria-describedby={d} value={form.brand} onChange={(e) => set("brand", e.target.value)}>
+                  <Select id={fid} aria-describedby={d} value={form.brand} onChange={(e) => chooseBrand(e.target.value)}>
+                    {/* Only enabled integrations are listed; keep a disabled one visible when editing its camera. */}
+                    {editing && brands.data && !brand && <option value={form.brand}>{camera.data?.brandName ?? form.brand} (disabled)</option>}
                     {brands.data?.map((b) => (
                       <option key={b.key} value={b.key} disabled={b.supportStatus === "planned"}>
                         {b.displayName}
@@ -199,19 +229,26 @@ export function CameraFormPage() {
           </Card>
 
           <Card title="Credentials">
-            <div className="grid gap-4 p-4 sm:grid-cols-2">
-              <Field label="Username" required error={errors.username}>
-                {(fid, d) => <Input id={fid} aria-describedby={d} value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" invalid={!!errors.username} required />}
-              </Field>
-              <Field
-                label={editing ? "New password" : "Password"}
-                required={!editing}
-                error={errors.password}
-                hint={editing ? "Leave blank to keep the stored password." : "Stored encrypted on the server. Never shown again."}
-              >
-                {(fid, d) => <Input id={fid} aria-describedby={d} type="password" value={form.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" invalid={!!errors.password} required={!editing} />}
-              </Field>
-            </div>
+            {credentials === "none" ? (
+              <p className="p-4 text-sm text-ink-secondary">This integration does not use credentials. Make sure the camera is only reachable from trusted networks.</p>
+            ) : (
+              <div className="grid gap-4 p-4 sm:grid-cols-2">
+                {credentials === "user_password" && (
+                  <Field label="Username" required error={errors.username}>
+                    {(fid, d) => <Input id={fid} aria-describedby={d} value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" invalid={!!errors.username} required />}
+                  </Field>
+                )}
+                <Field
+                  label={credentials === "secret" ? (editing ? "New API key or token" : "API key or token") : editing ? "New password" : "Password"}
+                  required={!editing}
+                  error={errors.password}
+                  hint={editing ? "Leave blank to keep the stored value." : "Stored encrypted on the server. Never shown again."}
+                  className={credentials === "secret" ? "sm:col-span-2" : undefined}
+                >
+                  {(fid, d) => <Input id={fid} aria-describedby={d} type="password" value={form.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" invalid={!!errors.password} required={!editing} />}
+                </Field>
+              </div>
+            )}
             {form.protocol === "https" && (
               <div className="border-t border-line p-4">
                 <Field
