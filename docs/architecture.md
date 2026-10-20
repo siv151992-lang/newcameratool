@@ -23,6 +23,9 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 | `integrations/registry.ts` | Brand registry: implemented adapters + planned brands |
 | `integrations/http/cameraHttpClient.ts` | HTTP client with Digest (MD5/SHA-256, `-sess`) and Basic auth, timeouts, size limits |
 | `integrations/hikvision/` | Hikvision adapter and ISAPI XML parsing |
+| `integrations/{axis,uniview,dahua,onvif}/` | Adapters and parsers for Axis VAPIX text, Uniview LAPI JSON, Dahua/CP Plus CGI lists and ONVIF SOAP (`onvif/soap.ts`: WS-Security envelopes) |
+| `integrations/http/responses.ts` | Shared classification of non-2xx camera responses |
+| `integrations/parsing.ts` | Shared parser helpers: strict byte counts, `key=value` lines, status mapping |
 | `integrations/diagnostics.ts` | Generic step-by-step Test Connection |
 | `monitoring/checkService.ts` | One check: lease → adapter call with retries → persist → evaluate alerts |
 | `monitoring/evaluate.ts` | Pure functions: storage health and alert conditions |
@@ -47,7 +50,9 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 4. Mark it `supported` only after testing on real devices; use `unverified` until then.
 
 No other part of the application contains brand-specific logic. ONVIF has no universal storage-capacity
-API, so an ONVIF adapter would need per-profile support.
+API: the ONVIF adapter calls `GetStorageDevices` on the device service, which only some devices implement.
+It authenticates with a WS-Security UsernameToken and, if the token is rejected, reads the camera's clock
+(`GetSystemDateAndTime`) and retries once with a corrected timestamp.
 
 ## Monitoring model
 

@@ -1,52 +1,18 @@
 import { hostGuard } from "../security/hostGuardInstance.js";
+import { AxisAdapter } from "./axis/adapter.js";
+import { DahuaAdapter } from "./dahua/adapter.js";
 import { HikvisionAdapter } from "./hikvision/adapter.js";
 import { CameraHttpClient } from "./http/cameraHttpClient.js";
+import { OnvifAdapter } from "./onvif/adapter.js";
+import { UniviewAdapter } from "./uniview/adapter.js";
 import { CameraApiError, type BrandMeta, type CameraBrandAdapter } from "./types.js";
 
 /**
  * Brand registry. Implemented adapters are registered here; brands that are only planned are
  * listed with metadata but cannot be selected for monitoring until an adapter exists and is tested.
+ * Adapters marked "unverified" can be selected but have not yet been confirmed on real hardware.
  */
-const PLANNED: BrandMeta[] = [
-  {
-    key: "dahua",
-    displayName: "Dahua (incl. CP Plus, Amcrest)",
-    supportStatus: "planned",
-    authMethods: ["digest"],
-    defaultPorts: { http: 80, https: 443 },
-    capabilities: [],
-    storageEndpoint: "GET /cgi-bin/storageDevice.cgi?action=getDeviceAllInfo (to be verified)",
-    notes: "Planned. Not implemented or tested yet.",
-  },
-  {
-    key: "axis",
-    displayName: "Axis",
-    supportStatus: "planned",
-    authMethods: ["digest"],
-    defaultPorts: { http: 80, https: 443 },
-    capabilities: [],
-    storageEndpoint: "GET /axis-cgi/disks/list.cgi (VAPIX, to be verified)",
-    notes: "Planned. Not implemented or tested yet.",
-  },
-  {
-    key: "uniview",
-    displayName: "Uniview",
-    supportStatus: "planned",
-    authMethods: ["digest"],
-    defaultPorts: { http: 80, https: 443 },
-    capabilities: [],
-    notes: "Planned. Storage API documentation still needs to be confirmed.",
-  },
-  {
-    key: "onvif",
-    displayName: "Generic ONVIF",
-    supportStatus: "planned",
-    authMethods: ["ws-security"],
-    defaultPorts: { http: 80, https: 443 },
-    capabilities: [],
-    notes: "Planned. ONVIF has no universal storage-capacity API; support would be per device profile.",
-  },
-];
+const PLANNED: BrandMeta[] = [];
 
 export class BrandRegistry {
   private readonly adapters = new Map<string, CameraBrandAdapter>();
@@ -78,7 +44,15 @@ export class BrandRegistry {
   /** Resolves a user-entered brand name ("Hikvision", "HIK", ...) to a registry key. */
   resolveKey(input: string): string | undefined {
     const s = input.trim().toLowerCase().replace(/[\s_-]+/g, "");
-    const aliases: Record<string, string> = { hik: "hikvision", hikvision: "hikvision", cpplus: "dahua", amcrest: "dahua" };
+    const aliases: Record<string, string> = {
+      hik: "hikvision",
+      hikvision: "hikvision",
+      cpplus: "dahua",
+      amcrest: "dahua",
+      axiscommunications: "axis",
+      unv: "uniview",
+      genericonvif: "onvif",
+    };
     const key = aliases[s] ?? s;
     return this.adapters.has(key) || this.planned.has(key) ? key : undefined;
   }
@@ -91,6 +65,10 @@ export class BrandRegistry {
 export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandRegistry {
   const registry = new BrandRegistry();
   registry.register(new HikvisionAdapter(http));
+  registry.register(new DahuaAdapter(http));
+  registry.register(new AxisAdapter(http));
+  registry.register(new UniviewAdapter(http));
+  registry.register(new OnvifAdapter(http));
   for (const p of PLANNED) registry.registerPlanned(p);
   return registry;
 }

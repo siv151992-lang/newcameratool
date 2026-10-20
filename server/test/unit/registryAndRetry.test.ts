@@ -13,12 +13,15 @@ describe("brand registry", () => {
     expect(registry.resolveKey("Hik")).toBe("hikvision");
   });
 
-  it("lists planned brands without claiming support", () => {
-    const dahua = registry.list().find((b) => b.key === "dahua");
-    expect(dahua?.supportStatus).toBe("planned");
-    expect(registry.isSupported("dahua")).toBe(false);
-    expect(() => registry.get("dahua")).toThrow(/planned/);
-    expect(() => registry.get("acme")).toThrow(CameraApiError);
+  it("refuses planned and unknown brands", () => {
+    registry.registerPlanned({
+      key: "acme", displayName: "Acme", supportStatus: "planned", authMethods: [], defaultPorts: { http: 80, https: 443 },
+      capabilities: [], notes: "",
+    });
+    expect(registry.isSupported("acme")).toBe(false);
+    expect(registry.resolveKey("ACME")).toBe("acme");
+    expect(() => registry.get("acme")).toThrow(/planned/);
+    expect(() => registry.get("nonexistent")).toThrow(CameraApiError);
   });
 });
 

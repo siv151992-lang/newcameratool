@@ -134,8 +134,8 @@ describe("cameras", () => {
     expect(bad.body.error.code).toBe("VALIDATION_ERROR");
     const fields = bad.body.error.details.map((d: { field: string }) => d.field);
     expect(fields).toContain("host");
-    const planned = await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), brand: "Dahua" }).expect(400);
-    expect(planned.body.error.message).toMatch(/planned/);
+    const unknown = await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), brand: "Acme" }).expect(400);
+    expect(unknown.body.error.message).toMatch(/Unknown brand/);
   });
 
   it("tests connections with diagnostics, including SSRF refusal", async () => {
@@ -167,7 +167,7 @@ describe("CSV import", () => {
     { row: 3, name: "", ip: "not a host!", brand: "Hikvision", username: "admin", password: "x", port: "99999", protocol: "ftp" },
     { row: 4, name: "Cam A again", ip: "127.0.0.1", brand: "hikvision", username: "admin", password: "Cam-Pass-123", port: String(port), protocol: "http" },
     { row: 5, name: "Cam C", ip: "127.0.0.3", brand: "Hikvision", username: "", password: "", port: String(port), protocol: "" },
-    { row: 6, name: "Cam D", ip: "127.0.0.4", brand: "Axis", username: "root", password: "pw", port: "", protocol: "" },
+    { row: 6, name: "Cam D", ip: "127.0.0.4", brand: "Acme", username: "root", password: "pw", port: "", protocol: "" },
   ];
 
   it("serves a template", async () => {
@@ -187,7 +187,7 @@ describe("CSV import", () => {
     expect(byRow[3].errors.map((e: { field: string }) => e.field).sort()).toEqual(["ip", "name", "port", "protocol"]);
     expect(byRow[4]).toMatchObject({ status: "duplicate" });
     expect(byRow[5]).toMatchObject({ status: "valid", camera: { username: "shared", usesSharedCredentials: true, protocol: "http" } });
-    expect(byRow[6].errors[0].message).toMatch(/planned/);
+    expect(byRow[6].errors[0].message).toMatch(/Unknown brand/);
     expect(res.body.summary).toEqual({ total: 5, valid: 2, invalid: 2, duplicate: 1 });
     const dump = JSON.stringify(res.body);
     expect(dump).not.toContain("Cam-Pass-123");
@@ -237,7 +237,7 @@ describe("alerts and settings", () => {
     const { agent } = await signIn("viewer");
     const res = await agent.get("/api/brands").expect(200);
     expect(res.body.find((b: { key: string }) => b.key === "hikvision").supportStatus).toBe("supported");
-    expect(res.body.find((b: { key: string }) => b.key === "axis").supportStatus).toBe("planned");
+    expect(res.body.find((b: { key: string }) => b.key === "axis").supportStatus).toBe("unverified");
   });
 
   it("protects the last administrator", async () => {
