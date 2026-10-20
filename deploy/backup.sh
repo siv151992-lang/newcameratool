@@ -1,7 +1,8 @@
 #!/bin/sh
 # Nightly database backup for the Docker Compose deployment.
 # Usage: deploy/backup.sh [backup-dir]   (keeps 14 days)
-# The encryption key (CREDENTIAL_ENCRYPTION_KEY) is NOT in the dump: back it up separately and securely.
+# The encryption key (CREDENTIAL_ENCRYPTION_KEY, or the generated key file in the app-data volume) is NOT
+# in the dump: back it up separately and securely.
 set -eu
 DIR="${1:-./backups}"
 mkdir -p "$DIR"

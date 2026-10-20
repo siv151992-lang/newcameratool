@@ -41,7 +41,11 @@ export class CredentialCipher {
   }
 }
 
-export function parseKeyConfig(single: string | undefined, multi: string | undefined, version: number) {
+/**
+ * Builds the key map from CREDENTIAL_ENCRYPTION_KEY(S). When neither is set, `fallback` supplies the
+ * key (the generated key file); without a fallback a missing key is an error.
+ */
+export function parseKeyConfig(single: string | undefined, multi: string | undefined, version: number, fallback?: () => string) {
   const keys: Record<number, string> = {};
   if (multi) {
     for (const part of multi.split(",").map((s) => s.trim()).filter(Boolean)) {
@@ -51,6 +55,7 @@ export function parseKeyConfig(single: string | undefined, multi: string | undef
     }
   }
   if (single) keys[version] = single;
+  if (Object.keys(keys).length === 0 && fallback) keys[version] = fallback();
   if (Object.keys(keys).length === 0) {
     throw new Error("CREDENTIAL_ENCRYPTION_KEY is required. Generate one with: openssl rand -base64 32");
   }

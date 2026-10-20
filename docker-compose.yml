@@ -1,17 +1,44 @@
 # Production-style deployment: PostgreSQL, API (+ web UI), monitoring worker, and Caddy for HTTPS.
-# 1. cp .env.example .env and fill in the secrets
+# 1. cp .env.example .env and set CAMERA_ALLOWED_NETWORKS (secrets are generated if left empty)
 # 2. docker compose up -d --build
 # 3. docker compose exec api node dist/cli/createAdmin.js --username admin
 services:
+  # One-off step: writes the database password to a shared volume. Uses POSTGRES_PASSWORD from .env
+  # when it is set; otherwise generates a random one on the first start and keeps it.
+  init-secrets:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - secrets:/secrets
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        f=/secrets/db_password
+        if [ -n "$${POSTGRES_PASSWORD:-}" ]; then
+          printf '%s' "$$POSTGRES_PASSWORD" > "$$f"
+        elif [ ! -s "$$f" ]; then
+          head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$$f"
+          echo "Generated a database password"
+        fi
+        chmod 644 "$$f"
+
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cctv}
       POSTGRES_USER: ${POSTGRES_USER:-cctv}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD_FILE: /run/cctv-secrets/db_password
     volumes:
       - db-data:/var/lib/postgresql/data
+      - secrets:/run/cctv-secrets:ro
+    depends_on:
+      init-secrets:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cctv} -d ${POSTGRES_DB:-cctv}"]
       interval: 5s
@@ -24,9 +51,14 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-cctv}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cctv}
+      DATABASE_URL: postgres://${POSTGRES_USER:-cctv}@db:5432/${POSTGRES_DB:-cctv}
+      DATABASE_PASSWORD_FILE: /run/cctv-secrets/db_password
       TRUST_PROXY: uniquelocal
       COOKIE_SECURE: "true"
+    volumes:
+      - secrets:/run/cctv-secrets:ro
+      # Generated credential encryption key (used when CREDENTIAL_ENCRYPTION_KEY is not set). Back it up.
+      - app-data:/app/server/data
     depends_on:
       db:
         condition: service_healthy
@@ -41,8 +73,12 @@ services:
     restart: unless-stopped
     command: ["node", "dist/worker.js"]
     env_file: .env
+    volumes:
+      - secrets:/run/cctv-secrets:ro
+      - app-data:/app/server/data
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-cctv}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cctv}
+      DATABASE_URL: postgres://${POSTGRES_USER:-cctv}@db:5432/${POSTGRES_DB:-cctv}
+      DATABASE_PASSWORD_FILE: /run/cctv-secrets/db_password
     depends_on:
       db:
         condition: service_healthy
@@ -71,3 +107,5 @@ services:
 volumes:
   db-data:
   caddy-data:
+  secrets:
+  app-data:

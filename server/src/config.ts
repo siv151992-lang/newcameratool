@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import dotenv from "dotenv";
 import { z } from "zod";
 
@@ -14,10 +15,14 @@ const schema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().int().default(4000),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  // File holding the database password (Docker Compose generates one); added to DATABASE_URL.
+  DATABASE_PASSWORD_FILE: z.string().optional(),
   // base64-encoded 32-byte keys. CREDENTIAL_ENCRYPTION_KEYS allows rotation: "2:<key>,1:<oldkey>".
   CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
   CREDENTIAL_ENCRYPTION_KEYS: z.string().optional(),
   CREDENTIAL_KEY_VERSION: z.coerce.number().int().positive().default(1),
+  // Used when no key is set above: read from here, or generated here on first start.
+  CREDENTIAL_KEY_FILE: z.string().default("data/credential.key"),
   SESSION_TTL_HOURS: z.coerce.number().positive().default(12),
   COOKIE_SECURE: bool(true),
   TRUST_PROXY: z.string().default("loopback"),
@@ -40,6 +45,15 @@ const schema = z.object({
 
 export type AppConfig = z.infer<typeof schema>;
 
+/** Returns `url` with the password replaced by the (trimmed) contents of `file`. */
+export function withPasswordFromFile(url: string, file: string): string {
+  const password = readFileSync(file, "utf8").trim();
+  if (!password) throw new Error(`DATABASE_PASSWORD_FILE ${file} is empty`);
+  const parsed = new URL(url);
+  parsed.password = encodeURIComponent(password);
+  return parsed.toString();
+}
+
 function load(): AppConfig {
   const parsed = schema.safeParse(process.env);
   if (!parsed.success) {
@@ -48,6 +62,9 @@ function load(): AppConfig {
   }
   if (parsed.data.CAMERA_ALLOW_LOOPBACK && parsed.data.NODE_ENV === "production") {
     throw new Error("CAMERA_ALLOW_LOOPBACK must not be enabled in production");
+  }
+  if (parsed.data.DATABASE_PASSWORD_FILE) {
+    parsed.data.DATABASE_URL = withPasswordFromFile(parsed.data.DATABASE_URL, parsed.data.DATABASE_PASSWORD_FILE);
   }
   return parsed.data;
 }

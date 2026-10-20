@@ -8,3 +8,5 @@ coverage/
 *.csv
 !server/test/fixtures/*.csv
 *.tsbuildinfo
+# Generated credential encryption key (local development)
+server/data/

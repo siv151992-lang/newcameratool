@@ -54,8 +54,8 @@ Prerequisites: Node.js 20+ and PostgreSQL 14+.
 npm install
 cp .env.example .env
 # Edit .env:
-#   CREDENTIAL_ENCRYPTION_KEY=$(openssl rand -base64 32)
 #   DATABASE_URL=postgres://cctv:cctv@localhost:5432/cctv
+#   (CREDENTIAL_ENCRYPTION_KEY may stay empty: a key is generated in server/data/credential.key)
 #   COOKIE_SECURE=false            # plain HTTP during development only
 createdb cctv                      # or create it with psql
 
@@ -83,16 +83,22 @@ The four simulate a healthy card, a nearly full card, a disk error and a two-dis
 ## Production deployment (Docker Compose)
 
 ```bash
-cp .env.example .env     # set CREDENTIAL_ENCRYPTION_KEY, POSTGRES_PASSWORD, SITE_ADDRESS, CAMERA_ALLOWED_NETWORKS
+cp .env.example .env     # set SITE_ADDRESS and CAMERA_ALLOWED_NETWORKS
 docker compose up -d --build
 docker compose exec api node dist/cli/createAdmin.js --username admin
 ```
 
+The secrets are generated on the first start when `.env` leaves them empty: a random database password
+(in the `secrets` volume) and the camera-password encryption key (in the `app-data` volume,
+`/app/server/data/credential.key`). Values you set in `.env` always take priority.
+
 Open `https://<SITE_ADDRESS>`. Caddy terminates HTTPS (its own local CA by default — see
 `deploy/Caddyfile`). Details, backups, upgrades and troubleshooting: **[docs/operations.md](docs/operations.md)**.
 
-> **Keep `CREDENTIAL_ENCRYPTION_KEY` safe and backed up separately from the database.** Without it, the
-> stored camera passwords cannot be decrypted and must be re-entered.
+> **Back up the encryption key separately from the database.** Without it, the stored camera passwords
+> cannot be decrypted and must be re-entered. If it was generated, copy it out with
+> `docker compose cp api:/app/server/data/credential.key ./credential.key` and store that file somewhere
+> safe (or put its contents in `CREDENTIAL_ENCRYPTION_KEY`).
 
 ## Testing against a real Hikvision camera
 

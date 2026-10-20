@@ -19,6 +19,8 @@ COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/migrations ./server/migrations
 COPY --from=build /app/web/dist ./web/dist
 WORKDIR /app/server
+# Holds the generated credential encryption key; mounted as a volume so it survives rebuilds.
+RUN mkdir -p /app/server/data && chown node:node /app/server/data
 USER node
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:4000/api/health || exit 1

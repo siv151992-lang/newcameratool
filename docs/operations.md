@@ -5,11 +5,13 @@
 1. Copy and edit the environment file:
    ```bash
    cp .env.example .env
-   openssl rand -base64 32        # → CREDENTIAL_ENCRYPTION_KEY
-   openssl rand -hex 24           # → POSTGRES_PASSWORD (hex: no characters that break the database URL)
    ```
    Set `SITE_ADDRESS` (e.g. `cctv.estancia.local`) and narrow `CAMERA_ALLOWED_NETWORKS` to your camera
-   subnet(s).
+   subnet(s). `CREDENTIAL_ENCRYPTION_KEY` and `POSTGRES_PASSWORD` can stay empty: on the first start the
+   `init-secrets` step generates a database password (kept in the `secrets` volume) and the API generates
+   the encryption key (kept in the `app-data` volume). To choose them yourself instead:
+   `openssl rand -base64 32` for the key, `openssl rand -hex 24` for the password. If a database already
+   exists, keep its `POSTGRES_PASSWORD` in `.env`: changing it does not change the existing database.
 2. Start everything:
    ```bash
    docker compose up -d --build
@@ -55,12 +57,7 @@ Both ways work from Command Prompt or PowerShell.
 
 **Docker Desktop:** install Docker Desktop and Git, then use the Docker Compose steps above
 (`copy .env.example .env`, edit it in Notepad, `docker compose build`, `docker compose up -d`).
-Without OpenSSL, generate the keys in PowerShell:
-
-```powershell
-[Convert]::ToBase64String((1..32 | % { Get-Random -Max 256 }))           # CREDENTIAL_ENCRYPTION_KEY
--join ((48..57)+(97..102) | Get-Random -Count 32 | % { [char]$_ })      # POSTGRES_PASSWORD
-```
+Leave `CREDENTIAL_ENCRYPTION_KEY` and `POSTGRES_PASSWORD` empty to have them generated.
 
 **Without Docker:** install Node.js 22 LTS and PostgreSQL 16, then:
 
@@ -69,7 +66,7 @@ psql -U postgres -c "CREATE USER cctv WITH PASSWORD 'ChooseAPassword123';"
 psql -U postgres -c "CREATE DATABASE cctv OWNER cctv;"
 copy .env.example .env
 :: In .env set DATABASE_URL=postgres://cctv:ChooseAPassword123@localhost:5432/cctv,
-:: CREDENTIAL_ENCRYPTION_KEY, CAMERA_ALLOWED_NETWORKS, WEB_DIST_DIR=../web/dist
+:: CAMERA_ALLOWED_NETWORKS, WEB_DIST_DIR=../web/dist (the encryption key is generated in server\data)
 :: and COOKIE_SECURE=false if you browse over plain http://
 npm install
 npm run build
@@ -97,7 +94,7 @@ Take a backup first.
 | Item | Why | How |
 |---|---|---|
 | PostgreSQL database | Cameras, history, alerts, users, audit | `deploy/backup.sh` (pg_dump, custom format, keeps 14 days) |
-| `CREDENTIAL_ENCRYPTION_KEY` (and old keys during rotation) | Needed to decrypt camera passwords | Password manager / secrets vault, **separate from the database backups** |
+| `CREDENTIAL_ENCRYPTION_KEY`, or the generated key file (and old keys during rotation) | Needed to decrypt camera passwords | Password manager / secrets vault, **separate from the database backups**. Copy a generated key out with `docker compose cp api:/app/server/data/credential.key ./credential.key` |
 | `.env` | Configuration | Secrets vault |
 
 Schedule the backup, e.g. with cron on the Docker host:
@@ -115,7 +112,9 @@ docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB
 docker compose start api worker
 ```
 
-Make sure `.env` holds the same `CREDENTIAL_ENCRYPTION_KEY` that was in use when the backup was taken.
+Make sure the same encryption key is in use as when the backup was taken: either in
+`CREDENTIAL_ENCRYPTION_KEY`, or as the key file in the `app-data` volume
+(`docker compose cp ./credential.key api:/app/server/data/credential.key`, then restart).
 If the key is lost, the restored cameras show *Credentials unavailable*: edit each camera and re-enter its
 password.
 

@@ -76,7 +76,7 @@ It authenticates with a WS-Security UsernameToken and, if the token is rejected,
 
 | Concern | Implementation |
 |---|---|
-| Camera passwords at rest | AES-256-GCM with a random IV per secret; key from `CREDENTIAL_ENCRYPTION_KEY`; key versions allow rotation |
+| Camera passwords at rest | AES-256-GCM with a random IV per secret; key from `CREDENTIAL_ENCRYPTION_KEY`, or generated on first start into `CREDENTIAL_KEY_FILE` (never in the database); key versions allow rotation |
 | Passwords in transit to cameras | HTTP Digest (never in URLs). Basic auth is refused over plain HTTP. HTTPS supported with certificate verification always on; a per-camera CA certificate can be trusted for self-signed cameras |
 | Exposure | Passwords are write-only in the API, never logged, redacted from error messages, absent from history and audit tables. Removing a camera deletes its credentials |
 | SSRF | Camera hosts must be IPs or hostnames (no URLs); every resolved address must be inside `CAMERA_ALLOWED_NETWORKS`; loopback, link-local/metadata (169.254.0.0/16), multicast and reserved ranges are always blocked; the connection is pinned to the checked address (no DNS rebinding); redirects are not followed; response size is capped |
