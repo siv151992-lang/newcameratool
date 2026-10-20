@@ -125,3 +125,35 @@ describe("CameraHttpClient + HikvisionAdapter against a simulated camera", () =>
     expect(down.steps.map((s) => s.status)).toEqual(["failed", "skipped", "skipped", "skipped"]);
   });
 });
+
+describe("CameraHttpClient authentication modes", () => {
+  const cam = new MockHikvisionCamera("admin", "S3cret-pass");
+  const client = new CameraHttpClient(new HostGuard({ allowedNetworks: "10.0.0.0/8", allowLoopback: true }));
+  let config: CameraConfig;
+  beforeAll(async () => {
+    config = { host: "127.0.0.1", port: await cam.start(), protocol: "http", username: "admin", password: "S3cret-pass", timeoutMs: 1500 };
+  });
+  afterAll(() => cam.stop());
+  beforeEach(() => {
+    cam.mode = "ok";
+  });
+  const path = "/ISAPI/ContentMgmt/Storage";
+
+  it("digest mode answers Digest challenges and refuses a Basic-only camera", async () => {
+    expect((await client.request(config, { path, auth: "digest" })).status).toBe(200);
+    cam.mode = "basic-only";
+    await expect(client.request(config, { path, auth: "digest" })).rejects.toMatchObject({ code: "AUTH_FAILED", message: expect.stringMatching(/did not offer Digest/) });
+  });
+
+  it("none and pre-set credentials treat a 401 as an authentication failure without retrying", async () => {
+    await expect(client.request(config, { path, auth: "none" })).rejects.toMatchObject({ code: "AUTH_FAILED" });
+    await expect(client.request(config, { path, auth: { authorization: "Bearer nope" } })).rejects.toMatchObject({ code: "AUTH_FAILED" });
+  });
+
+  it("extra headers cannot override credentials, host or framing", async () => {
+    cam.requests = [];
+    const res = await client.request(config, { path, headers: { Authorization: "Basic x", Host: "evil", "X-Trace": "1" } });
+    expect(res.status).toBe(200);
+    expect(cam.requests[0]).toMatchObject({ authorized: false });
+  });
+});

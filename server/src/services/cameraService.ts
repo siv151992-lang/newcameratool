@@ -45,7 +45,13 @@ const brandSchema = z
       return z.NEVER;
     }
     if (!registry.isSupported(key)) {
-      ctx.addIssue({ code: "custom", message: `${v} support is planned but not available yet` });
+      let message = `${v} support is planned but not available yet`;
+      try {
+        registry.get(key);
+      } catch (err) {
+        if (err instanceof Error) message = err.message;
+      }
+      ctx.addIssue({ code: "custom", message });
       return z.NEVER;
     }
     return key;
@@ -70,8 +76,9 @@ const baseFields = {
   brand: brandSchema,
   model: optionalText(120),
   location: optionalText(120),
-  username: z.string().trim().min(1, "Username is required").max(64),
-  password: z.string().min(1, "Password is required").max(128),
+  // Which of these are required depends on the brand's integration (see credentialIssues).
+  username: z.string().trim().max(64).default(""),
+  password: z.string().max(256).default(""),
   monitoringEnabled: z.boolean().default(true),
   warningThreshold: threshold,
   criticalThreshold: threshold,
@@ -83,19 +90,43 @@ function thresholdsOk(v: { warningThreshold?: number | null; criticalThreshold?:
 }
 const thresholdMessage = { message: "Warning threshold must be lower than the critical threshold", path: ["warningThreshold"] };
 
-export const cameraInputSchema = z.object(baseFields).strict().refine(thresholdsOk, thresholdMessage);
+/** Username + password, a single secret (API key or token) or nothing, as the brand's integration requires. */
+export function credentialsFor(brandKey: string): "user_password" | "secret" | "none" {
+  try {
+    return registry.get(brandKey).meta.credentials ?? "user_password";
+  } catch {
+    return "user_password";
+  }
+}
+
+function credentialIssues(v: { brand?: string; username?: string; password?: string }, ctx: z.RefinementCtx, creating: boolean) {
+  if (!v.brand) return;
+  const mode = credentialsFor(v.brand);
+  if (mode === "user_password" && creating && !v.username) ctx.addIssue({ code: "custom", path: ["username"], message: "Username is required" });
+  if (mode === "user_password" && !creating && v.username === "") ctx.addIssue({ code: "custom", path: ["username"], message: "Username is required" });
+  if (mode !== "none" && creating && !v.password) {
+    ctx.addIssue({ code: "custom", path: ["password"], message: mode === "secret" ? "API key or token is required" : "Password is required" });
+  }
+}
+
+export const cameraInputSchema = z
+  .object(baseFields)
+  .strict()
+  .refine(thresholdsOk, thresholdMessage)
+  .superRefine((v, ctx) => credentialIssues(v, ctx, true));
 export type CameraInput = z.infer<typeof cameraInputSchema>;
 
 export const cameraUpdateSchema = z
   .object({
     ...baseFields,
     // On update the password is optional: omit it to keep the stored one.
-    password: z.string().min(1).max(128).optional(),
-    username: baseFields.username.optional(),
+    password: z.string().min(1).max(256).optional(),
+    username: z.string().trim().max(64).optional(),
   })
   .partial()
   .strict()
-  .refine(thresholdsOk, thresholdMessage);
+  .refine(thresholdsOk, thresholdMessage)
+  .superRefine((v, ctx) => credentialIssues(v, ctx, false));
 export type CameraUpdate = z.infer<typeof cameraUpdateSchema>;
 
 export function defaultPort(brandKey: string, protocol: "http" | "https") {

@@ -5,18 +5,34 @@ import { HikvisionAdapter } from "./hikvision/adapter.js";
 import { CameraHttpClient } from "./http/cameraHttpClient.js";
 import { OnvifAdapter } from "./onvif/adapter.js";
 import { UniviewAdapter } from "./uniview/adapter.js";
+import { pool, type Queryable } from "../db/pool.js";
+import { ConfigurableAdapter, type ConfigurableMeta } from "./configurable/adapter.js";
+import { integrationConfigSchema, type IntegrationConfig } from "./configurable/config.js";
 import { CameraApiError, type BrandMeta, type CameraBrandAdapter } from "./types.js";
 
 /**
- * Brand registry. Implemented adapters are registered here; brands that are only planned are
- * listed with metadata but cannot be selected for monitoring until an adapter exists and is tested.
- * Adapters marked "unverified" can be selected but have not yet been confirmed on real hardware.
+ * Brand registry. Built-in adapters (Mode B: trusted code in this repository) are registered in
+ * code; configurable API integrations (Mode A) are loaded from camera_brands by refresh(). Only
+ * enabled integrations can be selected for cameras or used for monitoring; a disabled one keeps
+ * its cameras, history and alerts but is not checked. Planned brands are listed but unusable.
  */
 const PLANNED: BrandMeta[] = [];
+const BUILTIN_VERSION = "1.0.0";
+
+interface BrandState {
+  status: "draft" | "tested" | "enabled" | "disabled";
+  displayName: string;
+  type: "builtin" | "configurable";
+}
 
 export class BrandRegistry {
   private readonly adapters = new Map<string, CameraBrandAdapter>();
   private readonly planned = new Map<string, BrandMeta>();
+  private configured = new Map<string, ConfigurableAdapter>();
+  private states = new Map<string, BrandState>();
+  private refreshedAt = 0;
+
+  constructor(readonly http?: CameraHttpClient) {}
 
   register(adapter: CameraBrandAdapter) {
     this.adapters.set(adapter.meta.key, adapter);
@@ -25,20 +41,91 @@ export class BrandRegistry {
     this.planned.set(meta.key, meta);
   }
 
-  get(key: string): CameraBrandAdapter {
-    const adapter = this.adapters.get(key);
-    if (!adapter) {
-      const planned = this.planned.get(key);
-      throw new CameraApiError(
-        "UNSUPPORTED_BRAND",
-        planned ? `${planned.displayName} support is planned but not implemented yet` : `Unknown camera brand "${key}"`,
-      );
-    }
-    return adapter;
+  /** Builds an adapter for a configuration without registering it (used to test drafts). */
+  createConfigurable(info: ConfigurableMeta, config: IntegrationConfig): ConfigurableAdapter {
+    if (!this.http) throw new Error("This registry has no HTTP client");
+    return new ConfigurableAdapter(this.http, info, config);
   }
 
+  /** Reloads integration states and enabled configurable integrations from the database. */
+  async refresh(db: Queryable = pool): Promise<void> {
+    const { rows } = await db.query(
+      `SELECT b.key, b.display_name, b.status, b.integration_type, b.integration_version, b.notes,
+              b.default_http_port, b.default_https_port, v.config, v.version
+       FROM camera_brands b LEFT JOIN brand_integration_versions v ON v.id = b.active_version_id
+       WHERE b.deleted_at IS NULL`,
+    );
+    const states = new Map<string, BrandState>();
+    const configured = new Map<string, ConfigurableAdapter>();
+    for (const r of rows) {
+      states.set(r.key, { status: r.status, displayName: r.display_name, type: r.integration_type });
+      if (r.integration_type !== "configurable" || r.status !== "enabled" || !r.config || !this.http) continue;
+      const parsed = integrationConfigSchema.safeParse(r.config);
+      if (!parsed.success) continue; // never monitor with a configuration that no longer validates
+      configured.set(
+        r.key,
+        this.createConfigurable(
+          {
+            key: r.key, displayName: r.display_name, version: r.integration_version, versionNumber: r.version, notes: r.notes,
+            defaultPorts: { http: r.default_http_port ?? 80, https: r.default_https_port ?? 443 },
+          },
+          parsed.data,
+        ),
+      );
+    }
+    this.states = states;
+    this.configured = configured;
+    this.refreshedAt = Date.now();
+  }
+
+  /** Refreshes when the last load is older than maxAgeMs (the worker calls this every tick). */
+  async refreshIfStale(maxAgeMs = 30_000): Promise<void> {
+    if (Date.now() - this.refreshedAt >= maxAgeMs) await this.refresh();
+  }
+
+  get(key: string): CameraBrandAdapter {
+    const state = this.states.get(key);
+    const adapter = this.configured.get(key) ?? this.adapters.get(key);
+    if (adapter && (!state || state.status === "enabled")) return adapter;
+    if (state && state.status !== "enabled") {
+      throw new CameraApiError(
+        "UNSUPPORTED_BRAND",
+        state.status === "disabled"
+          ? `The ${state.displayName} integration is disabled. An administrator can enable it in Settings → Camera brands.`
+          : `The ${state.displayName} integration is not enabled yet (${state.status}).`,
+      );
+    }
+    const planned = this.planned.get(key);
+    throw new CameraApiError(
+      "UNSUPPORTED_BRAND",
+      planned ? `${planned.displayName} support is planned but not implemented yet` : `Unknown camera brand "${key}"`,
+    );
+  }
+
+  /** Enabled for new cameras and monitoring. */
   isSupported(key: string) {
+    const state = this.states.get(key);
+    if (state && state.status !== "enabled") return false;
+    return this.adapters.has(key) || this.configured.has(key);
+  }
+
+  /** A built-in adapter whatever its status (tests run even while it is disabled). */
+  builtinAdapter(key: string): CameraBrandAdapter | undefined {
+    return this.adapters.get(key);
+  }
+
+  isBuiltin(key: string) {
     return this.adapters.has(key);
+  }
+
+  /** Metadata of a built-in adapter whatever its status (for the Camera brands page). */
+  builtinMeta(key: string): BrandMeta | undefined {
+    const a = this.adapters.get(key);
+    return a ? withDefaults(a.meta) : undefined;
+  }
+
+  builtins(): BrandMeta[] {
+    return [...this.adapters.values()].map((a) => withDefaults(a.meta));
   }
 
   /** Resolves a user-entered brand name ("Hikvision", "HIK", ...) to a registry key. */
@@ -54,16 +141,25 @@ export class BrandRegistry {
       genericonvif: "onvif",
     };
     const key = aliases[s] ?? s;
-    return this.adapters.has(key) || this.planned.has(key) ? key : undefined;
+    if (this.adapters.has(key) || this.planned.has(key) || this.states.has(key)) return key;
+    // Configured integrations can also be named by their display name.
+    for (const [k, st] of this.states) if (st.displayName.toLowerCase().replace(/[\s_-]+/g, "") === s) return k;
+    return undefined;
   }
 
+  /** Integrations that can be selected for cameras now, plus planned ones. */
   list(): BrandMeta[] {
-    return [...[...this.adapters.values()].map((a) => a.meta), ...this.planned.values()];
+    const builtin = [...this.adapters.values()].filter((a) => this.isSupported(a.meta.key)).map((a) => withDefaults(a.meta));
+    return [...builtin, ...[...this.configured.values()].map((a) => a.meta), ...this.planned.values()];
   }
 }
 
+function withDefaults(meta: BrandMeta): BrandMeta {
+  return { version: BUILTIN_VERSION, integrationType: "builtin", credentials: "user_password", ...meta };
+}
+
 export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandRegistry {
-  const registry = new BrandRegistry();
+  const registry = new BrandRegistry(http);
   registry.register(new HikvisionAdapter(http));
   registry.register(new DahuaAdapter(http));
   registry.register(new AxisAdapter(http));

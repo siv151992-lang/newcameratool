@@ -30,10 +30,13 @@ export class Scheduler {
     const settings = await getMonitoringSettings();
     const capacity = settings.concurrency - this.inflight.size;
     if (capacity <= 0) return [];
+    // Picks up integrations enabled, disabled or changed in the dashboard (another process).
+    await this.deps.registry.refreshIfStale().catch((err) => logger.warn({ err: (err as Error).message }, "Could not reload brand integrations"));
     const { rows } = await pool.query<{ camera_id: string }>(
       `WITH due AS (
          SELECT s.camera_id FROM camera_status s JOIN cameras c ON c.id = s.camera_id
-         WHERE c.deleted_at IS NULL AND c.monitoring_enabled
+         JOIN camera_brands b ON b.key = c.brand_key
+         WHERE c.deleted_at IS NULL AND c.monitoring_enabled AND b.status = 'enabled' AND b.deleted_at IS NULL
            AND (s.next_check_at IS NULL OR s.next_check_at <= now())
            AND (s.check_lock_until IS NULL OR s.check_lock_until < now())
          ORDER BY s.next_check_at NULLS FIRST

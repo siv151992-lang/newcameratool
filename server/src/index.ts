@@ -16,6 +16,8 @@ async function main() {
   await bootstrapAdmin();
   if (config.CAMERA_ALLOW_LOOPBACK) logger.warn("CAMERA_ALLOW_LOOPBACK is enabled: loopback camera addresses are allowed (development only)");
   if (!config.COOKIE_SECURE) logger.warn("COOKIE_SECURE=false: session cookies will be sent over plain HTTP. Use HTTPS in production.");
+  // Other API instances or the worker may change integrations: reload them periodically too.
+  setInterval(() => void registry.refresh().catch((err) => logger.warn({ err: (err as Error).message }, "Could not reload brand integrations")), 30_000).unref();
   const server = createApp().listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));
   const shutdown = () => server.close(() => pool.end().then(() => process.exit(0)));
   process.on("SIGTERM", shutdown);

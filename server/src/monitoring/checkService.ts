@@ -114,6 +114,7 @@ export async function runCheck(
   let deviceInfo: DeviceInfo | undefined;
   let recording: RecordingReading | undefined;
   let config: CameraConfig | undefined;
+  let integrationVersion: string | undefined;
   try {
     const cam = await pool.query("SELECT brand_key, monitoring_enabled, deleted_at FROM cameras WHERE id = $1", [cameraId]);
     const row = cam.rows[0];
@@ -122,6 +123,7 @@ export async function runCheck(
     }
     try {
       const adapter: CameraBrandAdapter = deps.registry.get(row.brand_key);
+      integrationVersion = adapter.meta.version ?? "1.0.0";
       config = await getCameraConfig(cameraId, settings.requestTimeoutMs);
       const cfg = config;
       const { value, attempts: n } = await withRetry(() => adapter.getStorageStatus(cfg), {
@@ -138,7 +140,7 @@ export async function runCheck(
       result = toFailure(err, [config?.password]);
     }
 
-    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, recording, settings);
+    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, recording, settings, integrationVersion);
     deps.notifier.dispatch(events).catch((err) => logger.error({ err: (err as Error).message }, "Notification dispatch failed"));
     return { cameraId, status: "completed", result, attempts, durationMs: Date.now() - started };
   } finally {
@@ -190,6 +192,7 @@ async function persist(
   deviceInfo: DeviceInfo | undefined,
   recording: RecordingReading | undefined,
   settings: MonitoringSettings,
+  integrationVersion?: string,
 ): Promise<NotificationEvent[]> {
   return withTransaction(async (db) => {
     const { rows } = await db.query(
@@ -233,14 +236,19 @@ async function persist(
 
     await db.query(
       `INSERT INTO storage_checks (camera_id, trigger, outcome, duration_ms, attempts, storage_health,
-                                   total_bytes, used_bytes, free_bytes, used_percentage, devices, error_message, recording_state)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                                   total_bytes, used_bytes, free_bytes, used_percentage, devices, error_message, recording_state, integration_version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         cameraId, trigger, result.ok ? "success" : result.errorCode, durationMs, attempts, health ?? null,
         reading?.totalBytes ?? null, reading?.usedBytes ?? null, reading?.freeBytes ?? null, reading?.usedPercentage ?? null,
         reading ? JSON.stringify(reading.devices) : null, result.ok ? null : result.errorMessage, recording?.state ?? null,
+        integrationVersion ?? null,
       ],
     );
+    if (result.ok) {
+      await db.query(`UPDATE camera_brands SET last_success_at = now()
+         WHERE key = (SELECT brand_key FROM cameras WHERE id = $1) AND (last_success_at IS NULL OR last_success_at < now() - interval '1 minute')`, [cameraId]);
+    }
 
     if (result.ok) {
       await db.query(

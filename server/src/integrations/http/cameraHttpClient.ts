@@ -32,7 +32,19 @@ export interface CameraRequest {
   body?: string;
   contentType?: string;
   accept?: string;
+  /** Extra request headers (validated by the caller); framing and credential headers are ignored. */
+  headers?: Record<string, string>;
+  /**
+   * "auto" (default): answer a Digest or Basic challenge. "digest": answer Digest challenges only.
+   * "none": send no credentials. { authorization }: send this header up front (Basic, Bearer).
+   * Any 401 after that is an authentication failure.
+   */
+  auth?: "auto" | "digest" | "none" | { authorization: string };
+  /** The path as it may appear in error messages (e.g. with an API key in the query redacted). */
+  displayPath?: string;
 }
+
+const RESERVED_HEADERS = new Set(["host", "authorization", "proxy-authorization", "cookie", "content-length", "transfer-encoding", "connection"]);
 
 interface RawResponse extends CameraResponse {
   challenges: string[];
@@ -59,11 +71,17 @@ export class CameraHttpClient {
     }
     const deadline = Date.now() + camera.timeoutMs;
     const send = (authorization?: string) => this.send(camera, pinned, { ...request, method }, deadline, authorization);
+    const auth = request.auth ?? "auto";
+    const rejected = () => new CameraApiError("AUTH_FAILED", "The camera rejected the credentials", { httpStatus: 401 });
 
-    let res = await send();
+    let res = await send(typeof auth === "object" ? auth.authorization : undefined);
     if (res.status !== 401) return this.finish(res);
+    if (auth === "none" || typeof auth === "object") throw rejected();
 
     for (let attempt = 0; attempt < 2; attempt++) {
+      if (auth === "digest" && !res.challenges.some((c) => /^digest\s/i.test(c))) {
+        throw new CameraApiError("AUTH_FAILED", "The camera did not offer Digest authentication", { httpStatus: 401 });
+      }
       const authorization = this.buildAuthorization(camera, method, path, res.challenges);
       res = await send(authorization);
       if (res.status !== 401) return this.finish(res);
@@ -114,11 +132,15 @@ export class CameraHttpClient {
     const isHttps = camera.protocol === "https";
     const hostHeader = (isIP(camera.host) === 6 ? `[${camera.host}]` : camera.host) +
       (camera.port === (isHttps ? 443 : 80) ? "" : `:${camera.port}`);
-    const headers: Record<string, string> = {
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(request.headers ?? {})) {
+      if (!RESERVED_HEADERS.has(k.toLowerCase()) && !/[\r\n]/.test(k + v)) headers[k] = v;
+    }
+    Object.assign(headers, {
       Host: hostHeader,
       Accept: request.accept ?? "application/xml, text/xml, */*",
       Connection: "close",
-    };
+    });
     if (authorization) headers.Authorization = authorization;
     if (body !== undefined) {
       headers["Content-Type"] = request.contentType ?? "application/octet-stream";

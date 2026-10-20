@@ -19,6 +19,7 @@ import { aiRouter } from "./routes/ai.js";
 import { alertsRouter } from "./routes/alerts.js";
 import { authRouter } from "./routes/auth.js";
 import { camerasRouter } from "./routes/cameras.js";
+import { integrationsRouter } from "./routes/integrations.js";
 import { apiLimiter } from "./routes/limits.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -72,6 +73,7 @@ export function createApp() {
   protectedApi.use("/cameras", camerasRouter);
   protectedApi.use("/alerts", alertsRouter);
   protectedApi.use("/brands", brandsRouter);
+  protectedApi.use("/integrations", integrationsRouter);
   protectedApi.use("/settings", settingsRouter);
   protectedApi.use("/users", usersRouter);
   protectedApi.use("/audit", auditRouter);

@@ -10,11 +10,14 @@ export async function prepareDb() {
   await syncBrands(registry);
 }
 
-/** Empties all data tables between tests (roles and brands are kept). */
+/** Empties all data tables between tests (roles are kept; built-in brands are restored). */
 export async function resetData() {
   await pool.query(`TRUNCATE users, sessions, cameras, camera_credentials, camera_status, storage_devices,
     storage_checks, connection_events, alerts, alert_events, notification_channels, notification_deliveries,
     audit_logs, app_settings CASCADE`);
+  // TRUNCATE users CASCADE also empties camera_brands (created_by): restore the built-in brands.
+  await pool.query("TRUNCATE camera_brands CASCADE");
+  await syncBrands(registry);
   // Fast, deterministic monitoring for tests.
   await updateMonitoringSettings({ requestTimeoutMs: 1500, retryBaseDelayMs: 100, maxRetries: 1 }, null);
 }

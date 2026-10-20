@@ -41,7 +41,12 @@ export class CameraApiError extends Error {
   constructor(
     public readonly code: CameraErrorCode,
     message: string,
-    public readonly options: { transient?: boolean; httpStatus?: number } = {},
+    public readonly options: {
+      transient?: boolean;
+      httpStatus?: number;
+      /** For INVALID_RESPONSE from configurable integrations: unparseable body, mapping failure or no storage data. */
+      kind?: "format" | "mapping" | "no_storage";
+    } = {},
   ) {
     super(message);
     this.name = "CameraApiError";
@@ -139,6 +144,14 @@ export interface BrandMeta {
   storageEndpoint?: string;
   defaultTimeoutMs?: number;
   notes: string;
+  /** Integration version, e.g. "1.0.0" for a built-in adapter or "3" for a configuration version. */
+  version?: string;
+  /** "builtin": a trusted adapter in this code base (Mode B). "configurable": defined in the UI (Mode A). */
+  integrationType?: "builtin" | "configurable";
+  /** Which camera credentials the integration uses. Built-in adapters use username + password. */
+  credentials?: "user_password" | "secret" | "none";
+  /** Compatibility notes: models and firmware known to work. */
+  compatibility?: string;
 }
 
 export interface CameraBrandAdapter {
