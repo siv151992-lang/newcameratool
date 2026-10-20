@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, HardDrive, Plus, Upload, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, HardDrive, Plus, WifiOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { Alert, Page, Summary } from "../api/types";
-import { CameraTable } from "../components/CameraTable";
 import { SeverityBadge } from "../components/status";
-import { Button, Card, ErrorMessage, PageHeader } from "../components/ui";
+import { Button, Card, EmptyState, ErrorMessage, PageHeader } from "../components/ui";
 import { useAuth } from "../hooks/auth";
 import { formatBytes, relativeTime } from "../lib/format";
 
@@ -45,30 +44,16 @@ export function DashboardPage() {
 
   return (
     <>
-      <PageHeader
-        title="Dashboard"
-        description="Storage health across all registered cameras. Data refreshes automatically."
-        actions={
-          can("cameras:write") && (
-            <>
-              <Button icon={<Upload className={icon} />} onClick={() => navigate("/cameras/import")}>
-                Import
-              </Button>
-              <Button variant="primary" icon={<Plus className={icon} />} onClick={() => navigate("/cameras/new")}>
-                Add camera
-              </Button>
-            </>
-          )
-        }
-      />
+      {/* Adding, importing and listing cameras live on the Cameras page; each tile opens it filtered. */}
+      <PageHeader title="Dashboard" description="Storage health across all registered cameras. Select a tile to see those cameras." />
       <ErrorMessage error={summary.error} className="mb-4" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <StatTile label="Registered cameras" value={s?.totalCameras ?? "—"} icon={<Camera className={icon} />} hint={s && s.disabled > 0 ? `${s.disabled} with monitoring disabled` : "All monitored"} to="/cameras" />
-        <StatTile label="Online" value={s?.online ?? "—"} icon={<CheckCircle2 className={`${icon} text-good`} />} hint={s && s.unknown > 0 ? `${s.unknown} not yet checked` : undefined} />
-        <StatTile label="Offline" value={s?.offline ?? "—"} icon={<WifiOff className={`${icon} text-bad`} />} hint="After repeated failed checks" />
-        <StatTile label="Storage warnings" value={s?.storageWarning ?? "—"} icon={<AlertTriangle className={`${icon} text-warn`} />} />
-        <StatTile label="Critical storage" value={s?.storageCritical ?? "—"} icon={<AlertOctagon className={`${icon} text-bad`} />} />
+        <StatTile label="Online" value={s?.online ?? "—"} icon={<CheckCircle2 className={`${icon} text-good`} />} hint={s && s.unknown > 0 ? `${s.unknown} not yet checked` : undefined} to="/cameras?status=online" />
+        <StatTile label="Offline" value={s?.offline ?? "—"} icon={<WifiOff className={`${icon} text-bad`} />} hint="After repeated failed checks" to="/cameras?status=offline" />
+        <StatTile label="Storage warnings" value={s?.storageWarning ?? "—"} icon={<AlertTriangle className={`${icon} text-warn`} />} to="/cameras?status=warning" />
+        <StatTile label="Critical storage" value={s?.storageCritical ?? "—"} icon={<AlertOctagon className={`${icon} text-bad`} />} to="/cameras?status=critical" />
         <StatTile
           label="Not recording"
           value={s?.notRecording ?? "—"}
@@ -86,11 +71,24 @@ export function DashboardPage() {
         <StatTile label="Available" value={s ? formatBytes(s.freeBytes) : "—"} icon={<HardDrive className={icon} />} />
       </div>
 
-      <div className="mt-5">
-        <CameraTable title="Cameras" />
-      </div>
+      {s && s.totalCameras === 0 && (
+        <Card className="mt-5">
+          <EmptyState
+            icon={<Camera className="h-6 w-6" />}
+            title="No cameras yet"
+            description="Add your cameras to start monitoring their storage and recording."
+            action={
+              can("cameras:write") ? (
+                <Button variant="primary" icon={<Plus className={icon} />} onClick={() => navigate("/cameras/new")}>
+                  Add camera
+                </Button>
+              ) : undefined
+            }
+          />
+        </Card>
+      )}
 
-      {/* Below the camera table; only shown when there is something to act on. */}
+      {/* Only shown when there is something to act on. */}
       {alerts.data && alerts.data.items.length > 0 && (
         <Card
           className="mt-5"

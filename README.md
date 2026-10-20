@@ -25,8 +25,9 @@ The five priority features are implemented end to end and covered by automated t
 1. **Add a Hikvision camera** by IP/hostname and credentials (validated, password encrypted at rest).
 2. **Test Connection** — step-by-step diagnostics (reachability → authentication → device API → storage)
    using the real ISAPI endpoint `GET /ISAPI/ContentMgmt/Storage` with HTTP Digest authentication.
-3. **Dashboard** — summary cards (cameras, online/offline, warnings, critical, total/used/free capacity) and a
-   camera table with search, sorting, pagination and filters (brand, status, location, usage).
+3. **Dashboard** — summary cards (cameras, online/offline, warnings, critical, total/used/free capacity) that
+   open the camera list filtered to those cameras, plus open alerts. The **Cameras** page has the camera table
+   with search, sorting, pagination and filters (brand, status, location, usage).
 4. **Automatic checks and alerts** — every 5 minutes by default, with concurrency limits, timeouts, bounded
    retries, offline detection after 3 consecutive failures, threshold alerts (80% / 90% / full), disk-health
    and read-only alerts, de-duplication, escalation and auto-resolve.
