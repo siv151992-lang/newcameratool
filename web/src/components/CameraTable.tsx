@@ -7,7 +7,9 @@ import { api, toQuery } from "../api/client";
 import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
 import { useCheckNow, useRemoveCameras, useSetMonitoring } from "../hooks/cameras";
+import { useColumnVisibility } from "../hooks/columns";
 import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, relativeTime } from "../lib/format";
+import { ColumnsMenu } from "./ColumnsMenu";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
 import { ConnectionBadge, HealthBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
@@ -21,6 +23,85 @@ const USAGE_FILTERS: Record<string, { minUsage?: number; maxUsage?: number; labe
   gte80: { minUsage: 80, label: "80% or more" },
   gte90: { minUsage: 90, label: "90% or more" },
 };
+
+/**
+ * Optional columns, in display order. Camera (name), the selection checkbox and Actions are always
+ * shown; these can be hidden from the Columns menu.
+ */
+interface ColumnDef {
+  key: string;
+  label: string;
+  sortKey?: SortKey;
+  align?: "right";
+  cellClassName: string;
+  render: (c: Camera) => ReactNode;
+}
+
+const COLUMNS: ColumnDef[] = [
+  {
+    key: "host",
+    label: "IP address",
+    sortKey: "host",
+    cellClassName: "tabular whitespace-nowrap text-ink-secondary",
+    render: (c) => (
+      <>
+        {c.host}
+        {c.port !== (c.protocol === "https" ? 443 : 80) && `:${c.port}`}
+      </>
+    ),
+  },
+  { key: "brand", label: "Brand", sortKey: "brand", cellClassName: "whitespace-nowrap text-ink-secondary", render: (c) => c.brandName },
+  { key: "location", label: "Location", sortKey: "location", cellClassName: "min-w-[110px] text-ink-secondary", render: (c) => c.location ?? "—" },
+  {
+    key: "connection",
+    label: "Connection",
+    sortKey: "connection",
+    cellClassName: "",
+    render: (c) => <ConnectionBadge status={c.status.connection} monitoringEnabled={c.monitoringEnabled} />,
+  },
+  {
+    key: "recording",
+    label: "Recording",
+    sortKey: "recording",
+    cellClassName: "",
+    render: (c) => <RecordingBadge state={c.status.recording.state} detail={c.status.recording.detail} />,
+  },
+  { key: "health", label: "Storage health", sortKey: "health", cellClassName: "", render: (c) => <HealthBadge health={c.status.storageHealth} /> },
+  {
+    key: "usage",
+    label: "Usage",
+    sortKey: "usage",
+    cellClassName: "",
+    render: (c) => (
+      <UsageMeter percent={c.status.usedPercentage} warning={c.warningThreshold ?? undefined} critical={c.criticalThreshold ?? undefined} compact />
+    ),
+  },
+  { key: "total", label: "Total", align: "right", cellClassName: "tabular whitespace-nowrap", render: (c) => formatBytes(c.status.totalBytes) },
+  { key: "used", label: "Used", align: "right", cellClassName: "tabular whitespace-nowrap", render: (c) => formatBytes(c.status.usedBytes) },
+  { key: "available", label: "Available", align: "right", cellClassName: "tabular whitespace-nowrap", render: (c) => formatBytes(c.status.freeBytes) },
+  {
+    key: "lastSuccess",
+    label: "Last success",
+    sortKey: "lastSuccess",
+    cellClassName: "whitespace-nowrap text-ink-secondary",
+    render: (c) => <span title={absoluteTime(c.status.lastSuccessAt)}>{relativeTime(c.status.lastSuccessAt)}</span>,
+  },
+  {
+    key: "lastError",
+    label: "Last error",
+    cellClassName: "max-w-[220px]",
+    render: ({ status: s }) =>
+      s.lastErrorCode ? (
+        <span title={s.lastErrorMessage ?? undefined} className="block truncate text-xs">
+          <span className="font-medium text-ink">{errorCategory(s.lastErrorCode)}:</span>{" "}
+          <span className="text-ink-secondary">{ERROR_LABELS[s.lastErrorCode] ?? s.lastErrorCode}</span>
+        </span>
+      ) : (
+        <span className="text-ink-muted">—</span>
+      ),
+  },
+];
+const COLUMN_KEYS = COLUMNS.map((c) => c.key);
 
 function useDebounced<T>(value: T, ms = 300) {
   const [v, setV] = useState(value);
@@ -74,6 +155,8 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [removing, setRemoving] = useState<Camera[] | null>(null);
   const debouncedSearch = useDebounced(search);
+  const columnVisibility = useColumnVisibility("cctv-camera-columns", COLUMN_KEYS);
+  const visibleColumns = COLUMNS.filter((col) => columnVisibility.isVisible(col.key));
   const pageSize = 25;
 
   useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording]);
@@ -176,6 +259,9 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
             </option>
           ))}
         </Select>
+        <div className="ml-auto">
+          <ColumnsMenu columns={COLUMNS} {...columnVisibility} />
+        </div>
         {canWrite && selected.size > 0 && (
           <Button
             variant="danger"
@@ -225,18 +311,15 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
                   </th>
                 )}
                 <SortHeader label="Camera" k="name" sort={sort} order={order} onSort={onSort} />
-                <SortHeader label="IP address" k="host" sort={sort} order={order} onSort={onSort} />
-                <SortHeader label="Brand" k="brand" sort={sort} order={order} onSort={onSort} />
-                <SortHeader label="Location" k="location" sort={sort} order={order} onSort={onSort} />
-                <SortHeader label="Connection" k="connection" sort={sort} order={order} onSort={onSort} />
-                <SortHeader label="Recording" k="recording" sort={sort} order={order} onSort={onSort} />
-                <SortHeader label="Storage health" k="health" sort={sort} order={order} onSort={onSort} />
-                <SortHeader label="Usage" k="usage" sort={sort} order={order} onSort={onSort} />
-                <th scope="col" className="px-3 py-2 text-right font-medium">Total</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium">Used</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium">Available</th>
-                <SortHeader label="Last success" k="lastSuccess" sort={sort} order={order} onSort={onSort} />
-                <th scope="col" className="px-3 py-2 font-medium">Last error</th>
+                {visibleColumns.map((col) =>
+                  col.sortKey ? (
+                    <SortHeader key={col.key} label={col.label} k={col.sortKey} sort={sort} order={order} onSort={onSort} className={col.align === "right" ? "text-right" : undefined} />
+                  ) : (
+                    <th key={col.key} scope="col" className={clsx("whitespace-nowrap px-3 py-2 font-medium", col.align === "right" && "text-right")}>
+                      {col.label}
+                    </th>
+                  ),
+                )}
                 <th scope="col" className="px-3 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
@@ -256,40 +339,11 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
                       </Link>
                       <div className="text-xs text-ink-muted">{c.model ?? "Model unknown"}</div>
                     </td>
-                    <td className="tabular whitespace-nowrap px-3 py-2 text-ink-secondary">
-                      {c.host}
-                      {c.port !== (c.protocol === "https" ? 443 : 80) && `:${c.port}`}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-ink-secondary">{c.brandName}</td>
-                    <td className="min-w-[110px] px-3 py-2 text-ink-secondary">{c.location ?? "—"}</td>
-                    <td className="px-3 py-2">
-                      <ConnectionBadge status={s.connection} monitoringEnabled={c.monitoringEnabled} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <RecordingBadge state={s.recording.state} detail={s.recording.detail} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <HealthBadge health={s.storageHealth} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <UsageMeter percent={s.usedPercentage} warning={c.warningThreshold ?? undefined} critical={c.criticalThreshold ?? undefined} compact />
-                    </td>
-                    <td className="tabular whitespace-nowrap px-3 py-2 text-right">{formatBytes(s.totalBytes)}</td>
-                    <td className="tabular whitespace-nowrap px-3 py-2 text-right">{formatBytes(s.usedBytes)}</td>
-                    <td className="tabular whitespace-nowrap px-3 py-2 text-right">{formatBytes(s.freeBytes)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-ink-secondary" title={absoluteTime(s.lastSuccessAt)}>
-                      {relativeTime(s.lastSuccessAt)}
-                    </td>
-                    <td className="max-w-[220px] px-3 py-2">
-                      {s.lastErrorCode ? (
-                        <span title={s.lastErrorMessage ?? undefined} className="block truncate text-xs">
-                          <span className="font-medium text-ink">{errorCategory(s.lastErrorCode)}:</span>{" "}
-                          <span className="text-ink-secondary">{ERROR_LABELS[s.lastErrorCode] ?? s.lastErrorCode}</span>
-                        </span>
-                      ) : (
-                        <span className="text-ink-muted">—</span>
-                      )}
-                    </td>
+                    {visibleColumns.map((col) => (
+                      <td key={col.key} className={clsx("px-3 py-2", col.align === "right" && "text-right", col.cellClassName)}>
+                        {col.render(c)}
+                      </td>
+                    ))}
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       <IconAction label={`View ${c.name}`} to={`/cameras/${c.id}`}>
                         <Eye className="h-4 w-4" />
