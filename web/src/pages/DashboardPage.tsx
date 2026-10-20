@@ -86,7 +86,11 @@ export function DashboardPage() {
         <StatTile label="Available" value={s ? formatBytes(s.freeBytes) : "—"} icon={<HardDrive className={icon} />} />
       </div>
 
-      {/* Only shown when there is something to act on; otherwise the camera table moves up. */}
+      <div className="mt-5">
+        <CameraTable title="Cameras" />
+      </div>
+
+      {/* Below the camera table; only shown when there is something to act on. */}
       {alerts.data && alerts.data.items.length > 0 && (
         <Card
           className="mt-5"
@@ -113,10 +117,6 @@ export function DashboardPage() {
           </ul>
         </Card>
       )}
-
-      <div className="mt-5">
-        <CameraTable title="Cameras" />
-      </div>
     </>
   );
 }
