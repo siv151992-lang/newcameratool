@@ -77,7 +77,10 @@ export function BrandDetailPage() {
   if (detail.error || !d) return <ErrorMessage error={detail.error} />;
   const configurable = d.integrationType === "configurable";
   const latest = d.versions[0];
-  const canEnable = !configurable || latest?.testStatus === "passed";
+  const active = d.versions.find((v) => v.isActive);
+  // Enable the latest configuration if it passed a test, else the tested one that was in use before.
+  const enableVersion = !configurable ? undefined : latest?.testStatus === "passed" ? latest : active?.testStatus === "passed" ? active : undefined;
+  const canEnable = !configurable || !!enableVersion;
   const pendingDraft = configurable && d.status === "enabled" && latest && !latest.isActive;
 
   return (
@@ -100,12 +103,12 @@ export function BrandDetailPage() {
               <Button
                 variant="primary"
                 icon={<Power className="h-4 w-4" />}
-                onClick={() => enable.mutate(undefined)}
+                onClick={() => enable.mutate(enableVersion?.id)}
                 loading={enable.isPending}
                 disabled={!canEnable}
                 title={canEnable ? undefined : "Run Test API successfully on the latest configuration first"}
               >
-                Enable
+                {configurable && enableVersion && enableVersion !== latest ? `Enable with configuration ${enableVersion.version}` : "Enable"}
               </Button>
             ) : (
               <Button icon={<PowerOff className="h-4 w-4" />} onClick={() => setDialog("disable")}>Disable</Button>
@@ -171,9 +174,9 @@ export function BrandDetailPage() {
                   <td className="px-3 py-2 text-xs text-ink-secondary">{absoluteTime(v.createdAt)}{v.createdBy && ` by ${v.createdBy}`}</td>
                   <td className="px-3 py-2 text-xs text-ink-secondary">{v.changeNote ?? "—"}</td>
                   <td className="px-3 py-2 text-right">
-                    {admin && !v.isActive && v.testStatus === "passed" && (
+                    {admin && (!v.isActive || d.status !== "enabled") && v.testStatus === "passed" && (
                       <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => enable.mutate(v.id)} loading={enable.isPending && enable.variables === v.id}>
-                        {d.activeVersion !== null && v.version < d.activeVersion ? "Roll back to this" : "Activate"}
+                        {v.isActive ? "Enable this" : d.activeVersion !== null && v.version < d.activeVersion ? "Roll back to this" : "Activate"}
                       </Button>
                     )}
                   </td>

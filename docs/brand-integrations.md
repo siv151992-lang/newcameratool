@@ -32,7 +32,13 @@ memory card or disk installed, on a network listed in **Settings → Camera netw
    - Authentication: none, HTTP Basic, HTTP Digest, API key (header or query parameter) or bearer
      token. Basic, API key and bearer credentials are only ever sent over HTTPS; Digest also works
      over HTTP. The credentials themselves are entered **per camera** and stored encrypted.
-   - Pagination, if the API returns devices in pages (`?page=1`, `?page=2`, … up to 20 pages).
+   - Pagination, if the API returns devices in pages (`?page=1`, `?page=2`, … up to 20 pages). Paging
+     stops at an empty page, a page identical to the previous one (cameras that ignore or clamp the
+     parameter), a page that only repeats device IDs already seen, a short page (when a page size is
+     set) or a 4xx answer after the first page — so a disk is never counted twice.
+   - Header and query parameter **names** that look like secrets (token, key, auth, session,
+     password, …) are refused: a secret belongs to each camera (API key or bearer authentication),
+     where it is stored encrypted.
 4. **Response mapping.** Tell the application where the values are:
    - **Storage device list**: path to the list of disks, e.g. `data.disks[*]` (JSON) or
      `StorageInfo.Disks.Disk` (XML). One element is treated as a one-disk list.
@@ -88,9 +94,15 @@ only when the camera reports both.
   everything else. Built-in adapters can be disabled too.
 - **Delete** is only possible for configurable brands with no cameras. Use **Reassign cameras** to
   move cameras to another enabled integration first. Built-in adapters cannot be deleted.
+- **Re-enabling** a disabled brand uses its newest configuration if that passed a test, otherwise the
+  tested configuration that was in use before.
+- Moving cameras to a brand with a different kind of login (username + password, API key/token,
+  none) is refused by **Reassign cameras**; edit such cameras one by one and enter the new
+  credentials (the camera form asks for them). Reassigning HTTP cameras to an integration that only
+  sends credentials over HTTPS is refused too.
 - Every create, change, test, enable, disable, rollback, reassignment and deletion is in the audit
   log. Test history is kept per brand; storage checks record the integration version that produced
-  them.
+  them (e.g. `1.0 (config 3)`).
 
 ## Security
 
@@ -107,7 +119,8 @@ only when the camera reports both.
   the camera, never returned to the browser, and redacted from test results, logs and the stored
   test history. Sample responses shown in the UI have values of password/token/key/secret/session
   fields replaced with `[REDACTED]`.
-- Tests are rate-limited (20 per minute) and each integration limits concurrent requests
+- Test results are scrubbed of the camera's secret in every form (as is, URL-encoded, Basic-encoded)
+  and of values mapped from sensitive-looking paths, wherever they appear. Tests are rate-limited (20 per minute) and each integration limits concurrent requests
   (`maxConcurrency`, default 5).
 
 ## What needs a custom adapter

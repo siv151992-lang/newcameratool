@@ -103,7 +103,7 @@ describe("configurable brand integrations", () => {
     expect(status.body.status).toMatchObject({ connection: "online", storageHealth: "healthy" });
     expect(status.body.status.usedPercentage).toBeCloseTo(75, 0);
     const check = await pool.query("SELECT integration_version, devices FROM storage_checks WHERE camera_id = $1", [cam.body.id]);
-    expect(check.rows[0].integration_version).toBe("1.0");
+    expect(check.rows[0].integration_version).toBe("1.0 (config 1)");
     expect(vendor.requests.some((r) => r.path === "/api/v1/storage?page=1" && r.authorized)).toBe(true);
 
     // Editing creates a new draft version; the tested one keeps monitoring.
@@ -120,6 +120,10 @@ describe("configurable brand integrations", () => {
     await pool.query("UPDATE camera_status SET next_check_at = now() - interval '1 minute'");
     expect(await new Scheduler(deps, { owner: "t" }).tick()).toEqual([]);
     expect((await pool.query("SELECT count(*)::int AS n FROM storage_checks WHERE camera_id = $1", [cam.body.id])).rows[0].n).toBe(2);
+
+    // Re-enabling uses the tested configuration that was in use, not the newer untested draft.
+    const reenabled = await post("/api/integrations/acme-vision/enable").expect(200);
+    expect(reenabled.body).toMatchObject({ status: "enabled", activeVersion: 1, latestVersion: 2 });
 
     // Deleting needs the cameras moved first.
     expect((await agent.delete("/api/integrations/acme-vision").set("X-CSRF-Token", csrf).expect(409)).body.error.code).toBe("IN_USE");
@@ -185,5 +189,54 @@ describe("configurable brand integrations", () => {
     await operator.agent.post("/api/integrations/acme-vision/test").set("X-CSRF-Token", operator.csrf).send({ target: target() }).expect(403);
     const viewer = await signIn("viewer");
     await viewer.agent.get("/api/integrations").expect(403);
+  });
+});
+
+describe("integration safety checks", () => {
+  /** Inserts an enabled configurable integration directly (as if it had passed a test). */
+  async function enabledBrand(key: string, auth: object) {
+    await pool.query(
+      `INSERT INTO camera_brands (key, display_name, support_status, integration_type, status) VALUES ($1, $1, 'supported', 'configurable', 'enabled')`,
+      [key],
+    );
+    const v = await pool.query(
+      "INSERT INTO brand_integration_versions (brand_key, version, config, test_status) VALUES ($1, 1, $2, 'passed') RETURNING id",
+      [key, JSON.stringify({ ...acmeConfig(), auth })],
+    );
+    await pool.query("UPDATE camera_brands SET active_version_id = $2 WHERE key = $1", [key, v.rows[0].id]);
+    await registry.refresh();
+  }
+
+  it("redacts values mapped from sensitive fields wherever they appear in a test result", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const post = (url: string, body: unknown = {}) => agent.post(url).set("X-CSRF-Token", csrf).send(body as object);
+    const cfg = acmeConfig();
+    const leaky = { ...cfg, pagination: { type: "none" }, response: { ...cfg.response, devicesPath: "", fields: { ...cfg.response.fields, id: undefined, name: "apiToken", total: { path: "storage.devices[0].sizeMiB", unit: "MiB" }, free: { path: "storage.devices[0].freeMiB", unit: "MiB" }, health: undefined, readWrite: undefined } } };
+    await post("/api/integrations", { details, config: leaky }).expect(201);
+    const r = await post("/api/integrations/acme-vision/test", { target: target() }).expect(200);
+    expect(r.body.ok).toBe(true);
+    const text = JSON.stringify(r.body);
+    expect(text).not.toContain("do-not-show-this");
+    expect(r.body.mapping.devices[0].fields.find((f: { field: string }) => f.field === "Device name").raw).toBe("[REDACTED]");
+    const stored = await pool.query("SELECT message, steps, storage FROM brand_integration_tests");
+    expect(JSON.stringify(stored.rows)).not.toContain("do-not-show-this");
+  });
+
+  it("asks for new credentials when a camera moves to a brand with a different login, and refuses such reassignments", async () => {
+    const { agent, csrf } = await signIn("admin");
+    await enabledBrand("open-cam", { type: "none" });
+    await enabledBrand("token-cam", { type: "bearer" });
+    expect((await agent.get("/api/brands").expect(200)).body.find((b: { key: string }) => b.key === "open-cam")).toMatchObject({ credentials: "none" });
+
+    // No credentials needed for an unauthenticated integration.
+    const open = await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ name: "Open", host: "10.10.15.20", brand: "open-cam" }).expect(201);
+    const toHik = await agent.patch(`/api/cameras/${open.body.id}`).set("X-CSRF-Token", csrf).send({ brand: "hikvision" }).expect(400);
+    expect(toHik.body.error.details.map((d: { field: string }) => d.field)).toEqual(["username", "password"]);
+    await agent.patch(`/api/cameras/${open.body.id}`).set("X-CSRF-Token", csrf).send({ brand: "hikvision", username: "admin", password: "New-Pass-123" }).expect(200);
+    const tokenless = await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ name: "Tok", host: "10.10.15.21", brand: "token-cam" }).expect(400);
+    expect(tokenless.body.error.message).toMatch(/API key or token is required/);
+
+    await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ name: "Open 2", host: "10.10.15.22", brand: "open-cam" }).expect(201);
+    expect((await agent.post("/api/integrations/open-cam/reassign").set("X-CSRF-Token", csrf).send({ toKey: "hikvision" }).expect(409)).body.error.code).toBe("CREDENTIALS_MISMATCH");
   });
 });

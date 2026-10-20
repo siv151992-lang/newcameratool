@@ -92,11 +92,7 @@ const thresholdMessage = { message: "Warning threshold must be lower than the cr
 
 /** Username + password, a single secret (API key or token) or nothing, as the brand's integration requires. */
 export function credentialsFor(brandKey: string): "user_password" | "secret" | "none" {
-  try {
-    return registry.get(brandKey).meta.credentials ?? "user_password";
-  } catch {
-    return "user_password";
-  }
+  return registry.credentialsOf(brandKey);
 }
 
 function credentialIssues(v: { brand?: string; username?: string; password?: string }, ctx: z.RefinementCtx, creating: boolean) {
@@ -402,6 +398,16 @@ export async function updateCamera(id: string, patch: CameraUpdate, actor: Actor
   return withTransaction(async (client) => {
     const current = await getCameraRow(id, client);
     const brand = patch.brand ?? current.brand_key;
+    if (brand !== current.brand_key && credentialsFor(brand) !== credentialsFor(current.brand_key)) {
+      // The stored credentials were for a different kind of login: ask for the new ones.
+      const mode = credentialsFor(brand);
+      const missing: { field: string; message: string }[] = [];
+      if (mode === "user_password" && !patch.username) missing.push({ field: "username", message: "Enter the username for the new brand" });
+      if (mode !== "none" && !patch.password) {
+        missing.push({ field: "password", message: mode === "secret" ? "Enter the API key or token for the new brand" : "Enter the password for the new brand" });
+      }
+      if (missing.length) throw new HttpError(400, "VALIDATION_ERROR", `${missing[0]!.field}: ${missing[0]!.message}`, missing);
+    }
     const protocol = patch.protocol ?? current.protocol;
     let port = patch.port === undefined ? current.port : patch.port;
     // Switching protocol without choosing a port moves to that protocol's default port.

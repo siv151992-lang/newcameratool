@@ -203,3 +203,42 @@ describe("configurable adapter authentication", () => {
     await expect(adapter(empty, { type: "digest" }).getStorageStatus(camera("http"))).rejects.toMatchObject({ options: { kind: "no_storage" } });
   });
 });
+
+describe("configurable adapter pagination", () => {
+  const camera = { host: "10.10.15.5", port: 80, protocol: "http" as const, username: "u", password: "p", timeoutMs: 5000 };
+  const page = (ids: string[]) => JSON.stringify({ data: { disks: ids.map((id) => ({ id, capacityMB: 1000, freeMB: 500, state: "ok" })) } });
+  const paged = (respond: (n: number) => { status: number; body: string }) => {
+    const calls: string[] = [];
+    const http = { request: async (_c: unknown, req: CameraRequest) => (calls.push(req.path), { headers: {}, ...respond(Number(/page=(\d+)/.exec(req.path)![1])) }) } as unknown as CameraHttpClient;
+    const a = new ConfigurableAdapter(http, { key: "x", displayName: "X", version: "1", versionNumber: 1, defaultPorts: { http: 80, https: 443 } },
+      parse(jsonConfig({ pagination: { type: "page", pageParam: "page", firstPage: 1, maxPages: 5 } })));
+    return { a, calls };
+  };
+
+  it("does not count a disk twice when the camera ignores the page parameter", async () => {
+    const { a, calls } = paged(() => ({ status: 200, body: page(["sd1"]) }));
+    const r = await a.getStorageStatus(camera);
+    expect(r.devices).toHaveLength(1);
+    expect(r.totalBytes).toBe(1000 * 1024 ** 2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("treats a 4xx after the first page as the end and drops repeated device IDs", async () => {
+    const end = paged((n) => (n === 1 ? { status: 200, body: page(["a", "b"]) } : { status: 404, body: "{}" }));
+    expect((await end.a.getStorageStatus(camera)).devices.map((d) => d.id)).toEqual(["a", "b"]);
+    const clamped = paged((n) => ({ status: 200, body: n === 1 ? page(["a", "b"]) : n === 2 ? page(["c"]) : page(["c"]).replace("500", "499") }));
+    expect((await clamped.a.getStorageStatus(camera)).devices.map((d) => d.id)).toEqual(["a", "b", "c"]);
+    const first = paged(() => ({ status: 404, body: "{}" }));
+    await expect(first.a.getStorageStatus(camera)).rejects.toMatchObject({ code: "API_UNAVAILABLE" });
+  });
+});
+
+describe("secrets never belong in a configuration", () => {
+  it("refuses header and query names that look like secrets", () => {
+    for (const name of ["X-Auth-Token", "api_key", "Session-Id", "password"]) {
+      const viaHeader = integrationConfigSchema.safeParse(jsonConfig({ request: { method: "GET", path: "/x", query: [], headers: [{ name, value: "v" }], timeoutMs: 5000 } }));
+      const viaQuery = integrationConfigSchema.safeParse(jsonConfig({ request: { method: "GET", path: "/x", query: [{ name, value: "v" }], headers: [], timeoutMs: 5000 } }));
+      expect(viaHeader.success || viaQuery.success, name).toBe(false);
+    }
+  });
+});

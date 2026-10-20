@@ -7,7 +7,7 @@ import { OnvifAdapter } from "./onvif/adapter.js";
 import { UniviewAdapter } from "./uniview/adapter.js";
 import { pool, type Queryable } from "../db/pool.js";
 import { ConfigurableAdapter, type ConfigurableMeta } from "./configurable/adapter.js";
-import { integrationConfigSchema, type IntegrationConfig } from "./configurable/config.js";
+import { credentialModeFor, integrationConfigSchema, type IntegrationConfig } from "./configurable/config.js";
 import { CameraApiError, type BrandMeta, type CameraBrandAdapter } from "./types.js";
 
 /**
@@ -23,6 +23,9 @@ interface BrandState {
   status: "draft" | "tested" | "enabled" | "disabled";
   displayName: string;
   type: "builtin" | "configurable";
+  /** Credentials cameras need and whether they must use HTTPS, from the active configuration. */
+  credentials: "user_password" | "secret" | "none";
+  httpsOnly: boolean;
 }
 
 export class BrandRegistry {
@@ -58,7 +61,12 @@ export class BrandRegistry {
     const states = new Map<string, BrandState>();
     const configured = new Map<string, ConfigurableAdapter>();
     for (const r of rows) {
-      states.set(r.key, { status: r.status, displayName: r.display_name, type: r.integration_type });
+      const auth = r.config?.auth?.type as string | undefined;
+      states.set(r.key, {
+        status: r.status, displayName: r.display_name, type: r.integration_type,
+        credentials: auth ? credentialModeFor(auth as IntegrationConfig["auth"]["type"]) : "user_password",
+        httpsOnly: auth === "basic" || auth === "bearer" || auth === "api_key",
+      });
       if (r.integration_type !== "configurable" || r.status !== "enabled" || !r.config || !this.http) continue;
       const parsed = integrationConfigSchema.safeParse(r.config);
       if (!parsed.success) continue; // never monitor with a configuration that no longer validates
@@ -113,6 +121,16 @@ export class BrandRegistry {
   /** A built-in adapter whatever its status (tests run even while it is disabled). */
   builtinAdapter(key: string): CameraBrandAdapter | undefined {
     return this.adapters.get(key);
+  }
+
+  /** Credentials a camera of this brand needs, whatever the integration's status. */
+  credentialsOf(key: string): "user_password" | "secret" | "none" {
+    return this.adapters.has(key) ? "user_password" : (this.states.get(key)?.credentials ?? "user_password");
+  }
+
+  /** True when the brand's credentials are only ever sent over HTTPS. */
+  requiresHttps(key: string): boolean {
+    return !this.adapters.has(key) && (this.states.get(key)?.httpsOnly ?? false);
   }
 
   isBuiltin(key: string) {

@@ -138,13 +138,36 @@ export function redactSample(body: string, format: "json" | "xml", secrets: stri
       out = body
         .replace(/<((?:\w+:)?(\w+))(\s[^>]*)?>([^<]*)<\/\1>/g, (m, tag: string, local: string, attrs = "", inner: string) =>
           SENSITIVE.test(local) && inner.trim() ? `<${tag}${attrs}>[REDACTED]</${tag}>` : m)
-        .replace(/(\s([\w:-]+)\s*=\s*")([^"]*)"/g, (m, pre: string, name: string) => (SENSITIVE.test(name) ? `${pre}[REDACTED]"` : m));
+        .replace(/(\s([\w:-]+)\s*=\s*)(["'])([^"']*)\3/g, (m, pre: string, name: string, q: string) => (SENSITIVE.test(name) ? `${pre}${q}[REDACTED]${q}` : m));
     }
   } catch {
     // Not parseable: still redact secrets below.
   }
   out = redactSecrets(out, secrets);
   return out.length > 20_000 ? `${out.slice(0, 20_000)}\n… (truncated)` : out;
+}
+
+/** Every form a camera secret can take in a reply: as is, URL-encoded, JSON-escaped, Basic-encoded. */
+function secretVariants(camera: CameraConfig): string[] {
+  if (!camera.password) return [];
+  return [
+    camera.password,
+    encodeURIComponent(camera.password),
+    JSON.stringify(camera.password).slice(1, -1),
+    Buffer.from(`${camera.username}:${camera.password}`, "utf8").toString("base64"),
+  ];
+}
+
+/**
+ * Removes secrets from everything a test returns or stores: the camera secret in any form, and
+ * values the mapping read from sensitive-looking paths (e.g. a "Device name" mapped to apiToken),
+ * wherever they reappear (mapping, normalised storage, device info, messages).
+ */
+function sanitizeResult<T>(value: T, secrets: string[]): T {
+  const mapping = (value as { mapping?: MappingResult }).mapping;
+  const sensitiveValues = (mapping?.devices ?? []).flatMap((d) => d.fields.filter((f) => SENSITIVE.test(f.path) && f.raw).map((f) => f.raw!));
+  const escaped = [...secrets, ...sensitiveValues].map((v) => JSON.stringify(v).slice(1, -1));
+  return JSON.parse(redactSecrets(JSON.stringify(value), [...escaped, ...secrets, ...sensitiveValues])) as T;
 }
 
 // ------------------------------------------------------------------ queries
@@ -313,6 +336,8 @@ export async function updateIntegration(key: string, input: z.infer<typeof updat
   }
   const config = input.config !== undefined ? requireValidConfig(input.config) : undefined;
   await withTransaction(async (db) => {
+    // Serialises concurrent saves of one integration (version numbers are allocated below).
+    await db.query("SELECT 1 FROM camera_brands WHERE key = $1 FOR UPDATE", [key]);
     if (d.displayName && d.displayName !== row.display_name) await assertNameFree(d.displayName, key, db);
     const map: Record<string, string> = {
       displayName: "display_name", manufacturer: "manufacturer", description: "description", supportedModels: "supported_models",
@@ -477,7 +502,7 @@ export async function testIntegration(key: string, input: z.infer<typeof testInt
   const row = await brandRow(key);
   const started = Date.now();
   const { camera, cameraId } = await resolveTarget(input.target, key);
-  const secrets = [camera.password];
+  const secrets = secretVariants(camera);
   let result: Omit<IntegrationTestResult, "durationMs" | "versionId" | "version" | "outcomeLabel">;
   let version: { id: string; version: number } | null = null;
 
@@ -516,9 +541,8 @@ export async function testIntegration(key: string, input: z.infer<typeof testInt
     }
   }
 
-  // Sanitise every message before it is returned or stored.
-  result.message = redactSecrets(result.message, secrets);
-  result.steps = result.steps.map((s) => ({ ...s, message: redactSecrets(s.message, secrets) }));
+  // Sanitise everything before it is returned or stored.
+  result = sanitizeResult(result, secrets);
   const durationMs = Date.now() - started;
 
   await withTransaction(async (db) => {
@@ -567,9 +591,15 @@ export async function enableIntegration(key: string, versionId: string | undefin
   let version: number | null = null;
   await withTransaction(async (db) => {
     if (row.integration_type === "configurable") {
-      const v = versionId
-        ? (await db.query("SELECT id, version, config, test_status FROM brand_integration_versions WHERE id = $1 AND brand_key = $2", [versionId, key])).rows[0]
-        : (await db.query("SELECT id, version, config, test_status FROM brand_integration_versions WHERE brand_key = $1 ORDER BY version DESC LIMIT 1", [key])).rows[0];
+      const cols = "SELECT id, version, config, test_status FROM brand_integration_versions";
+      let v = versionId
+        ? (await db.query(`${cols} WHERE id = $1 AND brand_key = $2`, [versionId, key])).rows[0]
+        : (await db.query(`${cols} WHERE brand_key = $1 ORDER BY version DESC LIMIT 1`, [key])).rows[0];
+      if (!versionId && v?.test_status !== "passed" && row.active_version_id) {
+        // Re-enabling with a newer untested draft: fall back to the tested version that was in use.
+        const active = (await db.query(`${cols} WHERE id = $1`, [row.active_version_id])).rows[0];
+        if (active?.test_status === "passed") v = active;
+      }
       if (!v) throw notFound("Configuration version");
       if (v.test_status !== "passed") {
         throw new HttpError(409, "NOT_TESTED", `Version ${v.version} has not passed an API test. Run Test API successfully before enabling it.`);
@@ -606,6 +636,16 @@ export async function reassignCameras(key: string, toKey: string, actor: Actor, 
   await brandRow(key);
   if (toKey === key) throw new HttpError(400, "VALIDATION_ERROR", "Choose a different integration");
   if (!registry.isSupported(toKey)) throw new HttpError(400, "VALIDATION_ERROR", "Cameras can only be moved to an enabled integration");
+  if (registry.credentialsOf(key) !== registry.credentialsOf(toKey)) {
+    throw new HttpError(
+      409, "CREDENTIALS_MISMATCH",
+      "The target integration uses a different kind of login, so the cameras' stored credentials would not work. Edit the cameras individually and enter the new credentials.",
+    );
+  }
+  if (registry.requiresHttps(toKey)) {
+    const http = (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM cameras WHERE brand_key = $1 AND deleted_at IS NULL AND protocol = 'http'", [key])).rows[0]!.n;
+    if (http > 0) throw new HttpError(409, "HTTPS_REQUIRED", `${http} camera(s) use HTTP, but the target integration only sends credentials over HTTPS. Switch them to HTTPS first.`);
+  }
   const moved = await withTransaction(async (db) => {
     const clash = await db.query(
       `SELECT a.name FROM cameras a JOIN cameras b ON b.host = a.host AND b.port = a.port AND b.brand_key = $2 AND b.deleted_at IS NULL

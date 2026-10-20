@@ -146,6 +146,8 @@ export interface BrandMeta {
   notes: string;
   /** Integration version, e.g. "1.0.0" for a built-in adapter or "3" for a configuration version. */
   version?: string;
+  /** For configurable integrations: the configuration version number in use. */
+  configVersion?: number;
   /** "builtin": a trusted adapter in this code base (Mode B). "configurable": defined in the UI (Mode A). */
   integrationType?: "builtin" | "configurable";
   /** Which camera credentials the integration uses. Built-in adapters use username + password. */

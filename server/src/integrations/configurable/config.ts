@@ -28,6 +28,9 @@ const FORBIDDEN_HEADERS = new Set([
 ]);
 const TOKEN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/;
 const SAFE_VALUE = /^[\x20-\x7E]{0,256}$/;
+/** Names that suggest a secret: those belong to each camera (API key / bearer authentication), not to the configuration. */
+const SECRET_NAME = /(pass(word|wd)?|secret|token|api[-_]?key|auth|cookie|session|credential|signature)/i;
+const SECRET_HINT = "looks like it carries a secret. Use API key or bearer authentication so the value is stored encrypted with each camera";
 
 const PATH_SEGMENT = /^[A-Za-z_@#$][A-Za-z0-9_\-@#:$]*(\[(\d{1,4}|\*)\])?$/;
 const BLOCKED_KEYS = new Set(["__proto__", "prototype", "constructor"]);
@@ -86,6 +89,7 @@ const queryList = z
   .superRefine((list, ctx) => {
     list.forEach((q, i) => {
       if (!/^[A-Za-z0-9_.\-[\]]{1,64}$/.test(q.name)) ctx.addIssue({ code: "custom", path: [i, "name"], message: `Query parameter name "${q.name}" is not valid` });
+      else if (SECRET_NAME.test(q.name)) ctx.addIssue({ code: "custom", path: [i, "name"], message: `"${q.name}" ${SECRET_HINT}` });
       if (!SAFE_VALUE.test(q.value)) ctx.addIssue({ code: "custom", path: [i, "value"], message: "Query values must be printable text (256 characters at most)" });
     });
   });
@@ -104,7 +108,7 @@ const requestSchema = z
           if (!TOKEN.test(h.name)) ctx.addIssue({ code: "custom", path: [i, "name"], message: `Header name "${h.name}" is not valid` });
           else if (FORBIDDEN_HEADERS.has(h.name.toLowerCase()) || /^(proxy-|x-forwarded-)/i.test(h.name)) {
             ctx.addIssue({ code: "custom", path: [i, "name"], message: `The ${h.name} header cannot be configured (credentials come from the camera, framing from the client)` });
-          }
+          } else if (SECRET_NAME.test(h.name)) ctx.addIssue({ code: "custom", path: [i, "name"], message: `"${h.name}" ${SECRET_HINT}` });
           if (!SAFE_VALUE.test(h.value)) ctx.addIssue({ code: "custom", path: [i, "value"], message: "Header values must be printable text (256 characters at most)" });
         });
       }),

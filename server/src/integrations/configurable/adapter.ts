@@ -78,6 +78,7 @@ export class ConfigurableAdapter implements CameraBrandAdapter {
       defaultTimeoutMs: config.request.timeoutMs,
       notes: info.notes || "Configurable API integration.",
       version: info.version,
+      configVersion: info.versionNumber,
       integrationType: "configurable",
       credentials: credentialModeFor(config.auth.type),
       defaultProtocol: info.defaultProtocol ?? (config.auth.type === "none" || config.auth.type === "digest" ? "http" : "https"),
@@ -131,6 +132,7 @@ export class ConfigurableAdapter implements CameraBrandAdapter {
     let firstStatus = 0;
     const parsedPages: unknown[] = [];
     let mapping: MappingResult | undefined;
+    let previousBody = "";
     for (let i = 0; i < pages; i++) {
       const query = [...request.query];
       if (pagination.type === "page") {
@@ -142,16 +144,31 @@ export class ConfigurableAdapter implements CameraBrandAdapter {
         body: request.body ?? undefined,
         contentType: request.contentType ?? (request.body ? (response.format === "json" ? "application/json" : "application/xml") : undefined),
       });
-      const { body, status } = await this.fetch(camera, req);
+      let fetched: { body: string; status: number };
+      try {
+        fetched = await this.fetch(camera, req);
+      } catch (err) {
+        // Many cameras answer a page past the end with 400/404: that ends the list.
+        const status = err instanceof CameraApiError ? err.options.httpStatus : undefined;
+        if (i > 0 && status !== undefined && status >= 400 && status < 500 && status !== 401 && status !== 403) break;
+        throw err;
+      }
+      const { body, status } = fetched;
       if (i === 0) {
         firstBody = body;
         firstStatus = status;
+      } else if (body === previousBody) {
+        break; // the camera ignores or clamps the page parameter
       }
+      previousBody = body;
       const parsed = parseBody(body, response.format);
       const pageMap = mapStorage(parsed, response);
       parsedPages.push(parsed);
       if (i > 0 && pageMap.devices.length === 0) break;
-      mapping = mergeMappings(mapping, pageMap);
+      const before = mapping?.devices.length ?? 0;
+      mapping = mergeMappings(mapping, pageMap, !!response.fields.id);
+      // A page that only repeats devices already seen ends the list as well.
+      if (i > 0 && mapping.devices.length === before) break;
       if (pagination.type === "page" && pagination.pageSize && pageMap.devices.length < pagination.pageSize) break;
     }
     return { body: firstBody, status: firstStatus, pages: parsedPages.length, mapping: mapping! };
@@ -181,10 +198,13 @@ export class ConfigurableAdapter implements CameraBrandAdapter {
   }
 }
 
-function mergeMappings(a: MappingResult | undefined, b: MappingResult): MappingResult {
+/** Appends a page; with a mapped device ID, devices already seen on an earlier page are dropped. */
+function mergeMappings(a: MappingResult | undefined, b: MappingResult, dedupeById: boolean): MappingResult {
   if (!a) return b;
+  const seen = new Set(a.devices.flatMap((d) => (d.device ? [d.device.id] : [])));
+  const fresh = dedupeById ? b.devices.filter((d) => !d.device || !seen.has(d.device.id)) : b.devices;
   const offset = a.devices.length;
-  const devices = [...a.devices, ...b.devices.map((d) => ({ ...d, index: d.index + offset }))];
+  const devices = [...a.devices, ...fresh.map((d, i) => ({ ...d, index: offset + i }))];
   const real = devices.flatMap((d) => (d.device ? [d.device] : []));
   return {
     devices,

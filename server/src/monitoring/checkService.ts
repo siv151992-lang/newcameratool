@@ -122,8 +122,17 @@ export async function runCheck(
       return { cameraId, status: "skipped" };
     }
     try {
-      const adapter: CameraBrandAdapter = deps.registry.get(row.brand_key);
-      integrationVersion = adapter.meta.version ?? "1.0.0";
+      let adapter: CameraBrandAdapter;
+      try {
+        adapter = deps.registry.get(row.brand_key);
+      } catch (err) {
+        // The integration may have been enabled in another process since the last reload.
+        if (!(err instanceof CameraApiError) || err.code !== "UNSUPPORTED_BRAND") throw err;
+        await deps.registry.refresh();
+        adapter = deps.registry.get(row.brand_key);
+      }
+      const meta = adapter.meta;
+      integrationVersion = meta.configVersion ? `${meta.version ?? "1.0.0"} (config ${meta.configVersion})` : (meta.version ?? "1.0.0");
       config = await getCameraConfig(cameraId, settings.requestTimeoutMs);
       const cfg = config;
       const { value, attempts: n } = await withRetry(() => adapter.getStorageStatus(cfg), {
