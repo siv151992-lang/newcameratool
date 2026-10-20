@@ -98,18 +98,23 @@ describe("cameras", () => {
     const checked = await agent.post(`/api/cameras/${id}/check-storage`).set("X-CSRF-Token", csrf).expect(200);
     expect(checked.body.camera.status).toMatchObject({ connection: "online", storageHealth: "healthy", usedPercentage: 53.78 });
     expect(checked.body.camera.devices).toHaveLength(1);
+    expect(checked.body.camera.status.recording).toMatchObject({ state: "recording", detail: expect.stringContaining("recording") });
 
     const list = await agent.get("/api/cameras?search=entr&sort=usage&order=desc").expect(200);
     expect(list.body.total).toBe(1);
     expect(JSON.stringify(list.body)).not.toContain("Cam-Pass-123");
     expect((await agent.get("/api/cameras?status=offline")).body.total).toBe(0);
     expect((await agent.get("/api/cameras?minUsage=60")).body.total).toBe(0);
+    expect((await agent.get("/api/cameras?recording=recording&sort=recording&order=desc")).body.total).toBe(1);
+    expect((await agent.get("/api/cameras?recording=idle")).body.total).toBe(0);
+    await agent.get("/api/cameras?recording=maybe").expect(400);
 
     const summary = await agent.get("/api/cameras/summary").expect(200);
-    expect(summary.body).toMatchObject({ totalCameras: 1, online: 1, offline: 0, storageWarning: 0 });
+    expect(summary.body).toMatchObject({ totalCameras: 1, online: 1, offline: 0, storageWarning: 0, recording: 1, notRecording: 0 });
 
     const history = await agent.get(`/api/cameras/${id}/history`).expect(200);
     expect(history.body.checks).toHaveLength(1);
+    expect(history.body.checks[0].recordingState).toBe("recording");
 
     // Rotate credentials: blank password keeps the stored one; a new one replaces it.
     await agent.patch(`/api/cameras/${id}`).set("X-CSRF-Token", csrf).send({ name: "Main Entrance" }).expect(200);

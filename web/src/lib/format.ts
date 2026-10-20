@@ -55,6 +55,7 @@ export const ALERT_TYPE_LABELS: Record<string, string> = {
   disk_unhealthy: "Disk unhealthy",
   disk_readonly: "Read-only storage",
   no_storage_device: "No storage device",
+  not_recording: "Not recording",
 };
 
 /** Category of the last error, so users can tell unreachable vs auth vs API vs disk problems apart. */

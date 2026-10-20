@@ -32,6 +32,14 @@ The five priority features are implemented end to end and covered by automated t
    and read-only alerts, de-duplication, escalation and auto-resolve.
 5. **Add, edit, enable/disable and remove cameras** (single and bulk), with **dark and light themes**.
 
+**Recording status:** each check also asks the camera whether it is recording right now. The camera table
+and detail page show *Recording*, *Not recording*, *Recording error* or *Unknown*; the dashboard counts cameras
+that are not recording, and an alert is raised when a camera stops (turn it off in **Settings → Thresholds**
+for cameras that only record on motion or a schedule). Endpoints: Hikvision `/ISAPI/ContentMgmt/Recording/status`,
+Axis `Storage.S<n>.RecordingStatus` parameters, Uniview `/LAPI/V1.0/Storage/Status`, Dahua
+`/cgi-bin/record.cgi?action=getRecordStatus`, ONVIF `GetRecordingJobs` on `/onvif/recording_service`. A failed
+recording read never fails the storage check; the state just shows as *Unknown*.
+
 Also included: CSV bulk import (parsed in the browser; preview, per-row validation, duplicate detection,
 shared credentials, optional rate-limited connectivity tests), camera detail page with usage history chart,
 alert center (acknowledge / resolve, history), brand integrations page, monitoring settings, email

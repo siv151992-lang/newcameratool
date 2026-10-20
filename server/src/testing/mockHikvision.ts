@@ -46,6 +46,14 @@ export function storageXml(disks: MockDisk[]): string {
 </storage>`;
 }
 
+export function recordingXml(status: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<RecordingStatus version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<status>${status}</status>
+<TrackStatusList><TrackStatus><id>101</id><videoRecordStatus>${status}</videoRecordStatus><audioRecordStatus>${status}</audioRecordStatus></TrackStatus></TrackStatusList>
+</RecordingStatus>`;
+}
+
 export const DEFAULT_DEVICE_INFO = `<?xml version="1.0" encoding="UTF-8"?>
 <DeviceInfo version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
 <deviceName>Simulated Camera</deviceName><deviceID>00000000-0000</deviceID>
@@ -60,6 +68,8 @@ export class MockHikvisionCamera {
   mode: MockMode = "ok";
   storage: string;
   deviceInfo = DEFAULT_DEVICE_INFO;
+  /** Value of <status> in the recording-status response: recording | idle | error. */
+  recording = "recording";
   requests: { path: string; authorized: boolean }[] = [];
   private server?: http.Server;
   private readonly nonces = new Set<string>();
@@ -112,13 +122,18 @@ export class MockHikvisionCamera {
       return res.end("Internal error");
     }
     if (this.mode === "garbage") return res.end("<storage><hddList><hdd>broken");
-    if (this.mode === "not-found" || !["/ISAPI/ContentMgmt/Storage", "/ISAPI/System/deviceInfo"].includes(path)) {
+    const routes: Record<string, () => string> = {
+      "/ISAPI/ContentMgmt/Storage": () => this.storage,
+      "/ISAPI/System/deviceInfo": () => this.deviceInfo,
+      "/ISAPI/ContentMgmt/Recording/status": () => recordingXml(this.recording),
+    };
+    if (this.mode === "not-found" || !routes[path]) {
       res.statusCode = 404;
       return res.end(
         `<?xml version="1.0" encoding="UTF-8"?><ResponseStatus version="1.0" xmlns="http://www.hikvision.com/ver10/XMLSchema"><requestURL>${path}</requestURL><statusCode>4</statusCode><statusString>Invalid Operation</statusString><subStatusCode>notSupport</subStatusCode></ResponseStatus>`,
       );
     }
-    res.end(path === "/ISAPI/ContentMgmt/Storage" ? this.storage : this.deviceInfo);
+    res.end(routes[path]!());
   }
 
   async start(port = 0, host = "127.0.0.1"): Promise<number> {

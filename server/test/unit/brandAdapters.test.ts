@@ -1,13 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AXIS_DEVICE_INFO_PATH, AXIS_STORAGE_PATH, AxisAdapter } from "../../src/integrations/axis/adapter.js";
-import { DAHUA_DEVICE_INFO_PATH, DAHUA_STORAGE_PATH, DahuaAdapter } from "../../src/integrations/dahua/adapter.js";
+import { DAHUA_DEVICE_INFO_PATH, DAHUA_RECORDING_PATH, DAHUA_STORAGE_PATH, DahuaAdapter } from "../../src/integrations/dahua/adapter.js";
+import { HikvisionAdapter } from "../../src/integrations/hikvision/adapter.js";
 import { CameraHttpClient } from "../../src/integrations/http/cameraHttpClient.js";
 import { requireOk } from "../../src/integrations/http/responses.js";
-import { ONVIF_DEVICE_SERVICE_PATH, OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
+import { ONVIF_DEVICE_SERVICE_PATH, ONVIF_RECORDING_SERVICE_PATH, OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { MIB } from "../../src/integrations/parsing.js";
 import { createRegistry } from "../../src/integrations/registry.js";
 import { CameraApiError, type CameraConfig } from "../../src/integrations/types.js";
-import { UNIVIEW_DEVICE_INFO_PATH, UNIVIEW_STORAGE_PATH, UniviewAdapter } from "../../src/integrations/uniview/adapter.js";
+import { UNIVIEW_DEVICE_INFO_PATH, UNIVIEW_RECORDING_PATH, UNIVIEW_STORAGE_PATH, UniviewAdapter } from "../../src/integrations/uniview/adapter.js";
+import { readRecording } from "../../src/monitoring/checkService.js";
 import { HostGuard } from "../../src/security/hostGuard.js";
 import { MockBrandCamera, type MockRequest } from "../mockBrandCamera.js";
 
@@ -249,5 +251,55 @@ describe("OnvifAdapter", () => {
     expect(r.steps.map((s) => s.status)).toEqual(["passed", "passed", "passed", "passed"]);
     const bad = await new OnvifAdapter(http).testConnection({ ...ctx.config, password: "wrong" });
     expect(bad.steps.find((s) => s.key === "authentication")?.status).toBe("failed");
+  });
+});
+
+describe("getRecordingStatus over HTTP", () => {
+  const cam = new MockBrandCamera()
+    .route("/ISAPI/ContentMgmt/Recording/status", { body: "<RecordingStatus><status>idle</status></RecordingStatus>" })
+    .route(AXIS_STORAGE_PATH, { body: "root.Storage.S0.DriveStatus=Normal\nroot.Storage.S0.RecordingStatus=Recording\n" })
+    .route(DAHUA_RECORDING_PATH, { body: "status.Channels[0].RecordStatus=0\r\nstatus.Channels[0].Mode=Schedule\r\n" })
+    .route(UNIVIEW_RECORDING_PATH, { contentType: "application/json", body: JSON.stringify({ Response: { RecordingStatus: "True" } }) });
+  const ctx = useCamera(cam);
+
+  it("reads each brand's endpoint through Digest auth", async () => {
+    expect((await new HikvisionAdapter(http).getRecordingStatus(ctx.config)).state).toBe("idle");
+    expect((await new AxisAdapter(http).getRecordingStatus(ctx.config)).state).toBe("recording");
+    expect((await new DahuaAdapter(http).getRecordingStatus(ctx.config)).state).toBe("idle");
+    expect((await new UniviewAdapter(http).getRecordingStatus(ctx.config)).state).toBe("recording");
+    expect(cam.requests.filter((r) => r.headers.authorization).map((r) => r.path)).toEqual([
+      "/ISAPI/ContentMgmt/Recording/status", AXIS_STORAGE_PATH, DAHUA_RECORDING_PATH, UNIVIEW_RECORDING_PATH,
+    ]);
+  });
+
+  it("is reported as unknown by the monitor when the endpoint is missing, without failing", async () => {
+    cam.routes.delete(DAHUA_RECORDING_PATH);
+    const r = await readRecording(new DahuaAdapter(http), ctx.config);
+    expect(r).toMatchObject({ state: "unknown", channels: [] });
+    expect(r.detail).toMatch(/could not be read/);
+    const unsupported = { meta: {} } as unknown as Parameters<typeof readRecording>[0];
+    expect((await readRecording(unsupported, ctx.config)).detail).toMatch(/not available for this brand/);
+  });
+});
+
+describe("OnvifAdapter recording jobs", () => {
+  const cam = new MockBrandCamera();
+  cam.auth = "ws-security";
+  cam.route(ONVIF_RECORDING_SERVICE_PATH, (req: MockRequest) => {
+    if (!cam.verifyToken(req.body)) return { status: 400, body: "<bad/>" };
+    return {
+      contentType: "application/soap+xml",
+      body: `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:trc="http://www.onvif.org/ver10/recording/wsdl"><s:Body>` +
+        `<trc:GetRecordingJobsResponse><trc:JobItem><trc:JobToken>JobToken_01</trc:JobToken><trc:RecordingToken>RecordingToken_01</trc:RecordingToken>` +
+        `<trc:RecordingStatus>Recording</trc:RecordingStatus></trc:JobItem></trc:GetRecordingJobsResponse></s:Body></s:Envelope>`,
+    };
+  });
+  const ctx = useCamera(cam);
+
+  it("posts GetRecordingJobs to the recording service", async () => {
+    expect((await new OnvifAdapter(http).getRecordingStatus(ctx.config)).state).toBe("recording");
+    const req = cam.requests[0]!;
+    expect(req.path).toBe(ONVIF_RECORDING_SERVICE_PATH);
+    expect(req.headers["content-type"]).toContain('action="http://www.onvif.org/ver10/recording/wsdl/GetRecordingJobs"');
   });
 });

@@ -1,6 +1,7 @@
+import { combineRecording, recordingMapper } from "../recording.js";
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, MIB, isAbsentStatus, parseByteCount, parseKeyValueLines, statusMapper } from "../parsing.js";
-import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type RecordingReading, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Parsing for Axis plain-text CGI storage parameters:
@@ -29,7 +30,8 @@ interface AxisGroup {
   fields: Map<string, string>; // lower-cased property name -> value (last one wins)
 }
 
-export function parseAxisStorage(body: string): StorageReading {
+/** Groups Storage.S<n>.* parameters by disk; throws for error bodies and unrelated text. */
+function storageGroups(body: string): AxisGroup[] {
   const groups = new Map<number, AxisGroup>();
   for (const [key, value] of parseKeyValueLines(body)) {
     const m = KEY.exec(key);
@@ -44,12 +46,13 @@ export function parseAxisStorage(body: string): StorageReading {
     if (error) throw error;
     throw new CameraApiError("INVALID_RESPONSE", "The camera response contains no Storage.S<n> parameters");
   }
-
-  const devices = [...groups.values()]
+  return [...groups.values()]
     .sort((a, b) => a.index - b.index)
-    .filter((g) => !isAbsentStatus(g.fields.get("drivestatus")))
-    .map(toDevice);
-  return aggregate(devices);
+    .filter((g) => !isAbsentStatus(g.fields.get("drivestatus")));
+}
+
+export function parseAxisStorage(body: string): StorageReading {
+  return aggregate(storageGroups(body).map(toDevice));
 }
 
 function toDevice({ index, fields }: AxisGroup): StorageDeviceStatus {
@@ -100,4 +103,24 @@ export function parseAxisDeviceInfo(body: string): DeviceInfo {
     // Axis serial numbers are the device's MAC address.
     macAddress: serial && /^[0-9a-f]{12}$/i.test(serial) ? serial.match(/../g)!.join(":").toUpperCase() : undefined,
   };
+}
+
+export const mapAxisRecording = recordingMapper({
+  recording: ["recording", "active"],
+  idle: ["notrecording", "stopped", "inactive", "suspended"],
+  error: ["error", "failed"],
+});
+
+/**
+ * Reads recording status from the same Storage parameter group:
+ *   Storage.S0.RecordingStatus=Recording      (Recording | NotRecording)
+ *   Storage.S0.RecordingState=active          (active | inactive | suspended)
+ * Disks that report neither are left out; a camera reporting none at all is "unknown".
+ */
+export function parseAxisRecording(body: string): RecordingReading {
+  const channels = storageGroups(body).flatMap((g) => {
+    const rawStatus = g.fields.get("recordingstatus") || g.fields.get("recordingstate") || undefined;
+    return rawStatus === undefined ? [] : [{ id: `S${g.index}`, state: mapAxisRecording(rawStatus), rawStatus }];
+  });
+  return combineRecording(channels);
 }

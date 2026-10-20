@@ -9,10 +9,10 @@ import { useAuth } from "../hooks/auth";
 import { useCheckNow, useRemoveCameras, useSetMonitoring } from "../hooks/cameras";
 import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, relativeTime } from "../lib/format";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
-import { ConnectionBadge, HealthBadge, UsageMeter } from "./status";
+import { ConnectionBadge, HealthBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
-type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "usage" | "lastSuccess";
+type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess";
 
 const USAGE_FILTERS: Record<string, { minUsage?: number; maxUsage?: number; label: string }> = {
   "": { label: "Any usage" },
@@ -59,7 +59,7 @@ function IconAction({ label, onClick, children, disabled, to }: { label: string;
   );
 }
 
-export function CameraTable({ initialStatus = "", title }: { initialStatus?: string; title?: ReactNode }) {
+export function CameraTable({ initialStatus = "", initialRecording = "", title }: { initialStatus?: string; initialRecording?: string; title?: ReactNode }) {
   const { can } = useAuth();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -67,6 +67,7 @@ export function CameraTable({ initialStatus = "", title }: { initialStatus?: str
   const [status, setStatus] = useState(initialStatus);
   const [location, setLocation] = useState("");
   const [usage, setUsage] = useState("");
+  const [recording, setRecording] = useState(initialRecording);
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
@@ -75,10 +76,10 @@ export function CameraTable({ initialStatus = "", title }: { initialStatus?: str
   const debouncedSearch = useDebounced(search);
   const pageSize = 25;
 
-  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage]);
+  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording]);
 
   const { minUsage, maxUsage } = USAGE_FILTERS[usage] ?? {};
-  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, sort, order, page, pageSize };
+  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, sort, order, page, pageSize };
   const cameras = useQuery({
     queryKey: ["cameras", params],
     queryFn: () => api<Page<Camera>>(`/cameras${toQuery(params)}`),
@@ -95,7 +96,7 @@ export function CameraTable({ initialStatus = "", title }: { initialStatus?: str
     if (sort === k) setOrder(order === "asc" ? "desc" : "asc");
     else {
       setSort(k);
-      setOrder(k === "usage" || k === "health" ? "desc" : "asc");
+      setOrder(k === "usage" || k === "health" || k === "recording" ? "desc" : "asc");
     }
   };
 
@@ -113,7 +114,7 @@ export function CameraTable({ initialStatus = "", title }: { initialStatus?: str
     else next.add(id);
     setSelected(next);
   };
-  const filtered = !!(debouncedSearch || brand || status || location || usage);
+  const filtered = !!(debouncedSearch || brand || status || location || usage || recording);
   const canWrite = can("cameras:write");
 
   return (
@@ -160,6 +161,13 @@ export function CameraTable({ initialStatus = "", title }: { initialStatus?: str
               {l}
             </option>
           ))}
+        </Select>
+        <Select aria-label="Filter by recording status" className="w-auto" value={recording} onChange={(e) => setRecording(e.target.value)}>
+          <option value="">Any recording status</option>
+          <option value="recording">Recording</option>
+          <option value="idle">Not recording</option>
+          <option value="error">Recording error</option>
+          <option value="unknown">Recording unknown</option>
         </Select>
         <Select aria-label="Filter by storage usage" className="w-auto" value={usage} onChange={(e) => setUsage(e.target.value)}>
           {Object.entries(USAGE_FILTERS).map(([k, v]) => (
@@ -221,6 +229,7 @@ export function CameraTable({ initialStatus = "", title }: { initialStatus?: str
                 <SortHeader label="Brand" k="brand" sort={sort} order={order} onSort={onSort} />
                 <SortHeader label="Location" k="location" sort={sort} order={order} onSort={onSort} />
                 <SortHeader label="Connection" k="connection" sort={sort} order={order} onSort={onSort} />
+                <SortHeader label="Recording" k="recording" sort={sort} order={order} onSort={onSort} />
                 <SortHeader label="Storage health" k="health" sort={sort} order={order} onSort={onSort} />
                 <SortHeader label="Usage" k="usage" sort={sort} order={order} onSort={onSort} />
                 <th scope="col" className="px-3 py-2 text-right font-medium">Total</th>
@@ -255,6 +264,9 @@ export function CameraTable({ initialStatus = "", title }: { initialStatus?: str
                     <td className="min-w-[110px] px-3 py-2 text-ink-secondary">{c.location ?? "—"}</td>
                     <td className="px-3 py-2">
                       <ConnectionBadge status={s.connection} monitoringEnabled={c.monitoringEnabled} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <RecordingBadge state={s.recording.state} detail={s.recording.detail} />
                     </td>
                     <td className="px-3 py-2">
                       <HealthBadge health={s.storageHealth} />

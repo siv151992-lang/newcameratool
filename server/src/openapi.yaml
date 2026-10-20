@@ -110,9 +110,10 @@ paths:
         - { name: location, in: query, schema: { type: string } }
         - { name: minUsage, in: query, schema: { type: number } }
         - { name: maxUsage, in: query, schema: { type: number } }
+        - { name: recording, in: query, schema: { type: string, enum: [recording, idle, error, unknown] } }
         - name: sort
           in: query
-          schema: { type: string, enum: [name, host, brand, location, connection, health, usage, lastSuccess] }
+          schema: { type: string, enum: [name, host, brand, location, connection, health, recording, usage, lastSuccess] }
         - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
         - { name: page, in: query, schema: { type: integer, minimum: 1 } }
         - { name: pageSize, in: query, schema: { type: integer, maximum: 200 } }
@@ -595,6 +596,13 @@ components:
             usedBytes: { type: integer, nullable: true }
             freeBytes: { type: integer, nullable: true }
             usedPercentage: { type: number, nullable: true }
+            recording:
+              type: object
+              description: Whether the camera is recording right now, read on each successful check.
+              properties:
+                state: { type: string, enum: [recording, idle, error, unknown] }
+                detail: { type: string, nullable: true, description: What the camera reported, or why it could not be read }
+                checkedAt: { type: string, format: date-time, nullable: true }
     CameraDetail:
       allOf:
         - $ref: "#/components/schemas/Camera"
@@ -694,6 +702,7 @@ components:
         fullThresholdPercent: { type: number, default: 100 }
         recoveryHysteresisPercent: { type: number, default: 2 }
         storageUsageAlertsEnabled: { type: boolean, default: true }
+        recordingAlertsEnabled: { type: boolean, default: true, description: Raise an alert when a camera is not recording }
         deviceInfoRefreshHours: { type: integer, default: 24 }
         historyRetentionDays: { type: integer, default: 90 }
         auditRetentionDays: { type: integer, default: 365 }

@@ -1,6 +1,14 @@
+import { combineRecording, flagToRecordingState } from "../recording.js";
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, isAbsentStatus, parseBoolean, parseByteCount, parseKeyValueLines, statusMapper } from "../parsing.js";
-import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import {
+  CameraApiError,
+  type DeviceInfo,
+  type RecordingChannelStatus,
+  type RecordingReading,
+  type StorageDeviceStatus,
+  type StorageReading,
+} from "../types.js";
 
 /**
  * Parsing for Dahua (and OEM: CP Plus, Amcrest) storageDevice.cgi flat lists:
@@ -159,4 +167,38 @@ export function parseDahuaDeviceInfo(body: string): DeviceInfo {
     serialNumber: get("serialNumber"),
     firmwareVersion: get("version") ?? get("softwareVersion"),
   };
+}
+
+const RECORD_LINE = /^(?:status\.)?Channels?\[(\d+)\]\.(\w+)$/i;
+
+/**
+ * Parses record.cgi?action=getRecordStatus:
+ *   status.Channels[0].RecordStatus=1     0 = stopped, 1 = recording, 2 = alarm recording
+ *   status.Channels[0].Mode=Manual        Manual | Auto | Schedule
+ * Trailing "# ..." annotations (as in documentation samples) are ignored.
+ */
+export function parseDahuaRecording(body: string): RecordingReading {
+  const error = parseDahuaError(body);
+  if (error) throw error;
+  const channels = new Map<number, { status?: string; mode?: string }>();
+  for (const [key, rawValue] of parseKeyValueLines(unescapeLineBreaks(body))) {
+    const m = RECORD_LINE.exec(key);
+    if (!m) continue;
+    const value = rawValue.replace(/\s+#.*$/, "").trim();
+    const ch = channels.get(Number(m[1])) ?? {};
+    channels.set(Number(m[1]), ch);
+    const prop = m[2]!.toLowerCase();
+    if (prop === "recordstatus" || prop === "status") ch.status = value;
+    else if (prop === "mode") ch.mode = value;
+  }
+  if (channels.size === 0) throw new CameraApiError("INVALID_RESPONSE", "The camera response contains no channel recording status");
+  const list: RecordingChannelStatus[] = [...channels.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([index, ch]) => ({
+      id: `channel-${index + 1}`,
+      state: flagToRecordingState(ch.status),
+      rawStatus: ch.status === "2" ? "2 (alarm)" : ch.status,
+      mode: ch.mode || undefined,
+    }));
+  return combineRecording(list);
 }

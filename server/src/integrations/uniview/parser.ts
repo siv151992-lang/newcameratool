@@ -1,6 +1,14 @@
+import { combineRecording, flagToRecordingState } from "../recording.js";
 import { aggregate } from "../storageMath.js";
 import { COMMON_STATUSES, MIB, isAbsentStatus, parseByteCount, statusMapper } from "../parsing.js";
-import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import {
+  CameraApiError,
+  type DeviceInfo,
+  type RecordingChannelStatus,
+  type RecordingReading,
+  type StorageDeviceStatus,
+  type StorageReading,
+} from "../types.js";
 
 /**
  * Parsing for Uniview LAPI storage JSON:
@@ -40,7 +48,8 @@ function str(obj: JsonObject, ...names: string[]): string | undefined {
 }
 
 /**
- * Parses a LAPI body and returns its payload: Response.Data when wrapped, the document otherwise.
+ * Parses a LAPI body and returns its payload: Response.Data when wrapped (or Response itself when
+ * the fields sit directly in it, as some status endpoints do), the document otherwise.
  * A non-zero Response.StatusCode is raised as a classified error.
  */
 function unwrapLapi(body: string): unknown {
@@ -63,7 +72,7 @@ function unwrapLapi(body: string): unknown {
         : "API_ERROR";
       throw new CameraApiError(errorCode, `Camera reported: ${msg}`);
     }
-    data = field(response, "Data");
+    data = field(response, "Data") ?? response;
   }
   return data;
 }
@@ -124,4 +133,33 @@ export function parseUniviewDeviceInfo(body: string): DeviceInfo {
     firmwareVersion: str(data, "FirmwareVersion", "SoftwareVersion"),
     macAddress: str(data, "MAC", "MacAddress"),
   };
+}
+
+/**
+ * Parses GET /LAPI/V1.0/Storage/Status:
+ *   { "Response": { "RecordingStatus": "True", "StreamType": "MainStream", "TriggerType": "Continuous" } }
+ * RecordingStatus is True/False, or 1 (recording), 2 (alarm recording), 0 (not recording).
+ * A list of per-channel objects carrying RecordingStatus is also accepted.
+ */
+export function parseUniviewRecording(body: string): RecordingReading {
+  const data = unwrapLapi(body);
+  if (!isObject(data)) throw new CameraApiError("INVALID_RESPONSE", "Unexpected JSON response: no recording status");
+
+  const toChannel = (obj: JsonObject, id: string): RecordingChannelStatus | undefined => {
+    const raw = field(obj, "RecordingStatus", "RecordStatus");
+    if (raw === undefined || raw === null || typeof raw === "object") return undefined;
+    const rawStatus = String(raw);
+    const mode = [str(obj, "TriggerType", "RecordType"), str(obj, "StreamType")].filter(Boolean).join(", ") || undefined;
+    return { id, state: flagToRecordingState(rawStatus), rawStatus, mode };
+  };
+
+  const single = toChannel(data, "channel-1");
+  if (single) return combineRecording([single]);
+  const list = Object.values(data).find((v): v is unknown[] => Array.isArray(v) && v.some((i) => isObject(i) && toChannel(i, "") !== undefined));
+  if (!list) throw new CameraApiError("INVALID_RESPONSE", "Unexpected JSON response: no RecordingStatus field");
+  const channels = list
+    .filter(isObject)
+    .map((item, i) => toChannel(item, `channel-${str(item, "ID", "ChannelID", "Id") ?? i + 1}`))
+    .filter((c): c is RecordingChannelStatus => c !== undefined);
+  return combineRecording(channels);
 }

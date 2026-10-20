@@ -42,6 +42,7 @@ beforeEach(async () => {
   await resetData();
   actor = await createTestUser("admin");
   cam.mode = "ok";
+  cam.recording = "recording";
   cam.setDisks([{ id: 1, name: "hdde", status: "ok", capacityMb: 121942, freeMb: 56362, property: "RW", formatType: "EXT4" }]);
   sent.length = 0;
 });
@@ -108,6 +109,46 @@ describe("storage checks", () => {
     await runCheck(id, "manual", deps);
     expect((await status(id)).storage_health).toBe("critical");
     expect(await alerts(id)).toEqual([{ type: "disk_unhealthy", severity: "critical", status: "active", occurrence_count: 1 }]);
+  });
+
+  it("records whether the camera is recording, alerts when it stops, and resolves when it resumes", async () => {
+    const id = await addCamera();
+    await runCheck(id, "manual", deps);
+    const s = await status(id);
+    expect(s).toMatchObject({ recording_state: "recording", recording_detail: "status: recording; track-101: recording" });
+    expect(s.recording_checked_at).not.toBeNull();
+    expect(await alerts(id)).toEqual([]);
+
+    cam.recording = "idle";
+    await runCheck(id, "manual", deps);
+    expect((await status(id)).recording_state).toBe("idle");
+    expect(await alerts(id)).toEqual([{ type: "not_recording", severity: "warning", status: "active", occurrence_count: 1 }]);
+
+    cam.recording = "error";
+    await runCheck(id, "manual", deps);
+    expect(await alerts(id)).toEqual([{ type: "not_recording", severity: "critical", status: "active", occurrence_count: 2 }]);
+
+    cam.recording = "recording";
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id))[0]).toMatchObject({ type: "not_recording", status: "resolved" });
+    const history = (await pool.query("SELECT recording_state FROM storage_checks WHERE camera_id = $1 ORDER BY id", [id])).rows;
+    expect(history.map((r) => r.recording_state)).toEqual(["recording", "idle", "error", "recording"]);
+  });
+
+  it("keeps the storage check working when recording status cannot be read, and honours the alert setting", async () => {
+    const id = await addCamera();
+    cam.recording = "<broken";
+    const outcome = await runCheck(id, "manual", deps);
+    expect(outcome.result?.ok).toBe(true);
+    const s = await status(id);
+    expect(s.recording_state).toBe("unknown");
+    expect(s.recording_detail).toMatch(/could not be read/);
+
+    await updateMonitoringSettings({ recordingAlertsEnabled: false }, null);
+    cam.recording = "idle";
+    await runCheck(id, "manual", deps);
+    expect((await status(id)).recording_state).toBe("idle");
+    expect(await alerts(id)).toEqual([]);
   });
 
   it("suppresses duplicate alerts, escalates, and resolves when usage drops", async () => {

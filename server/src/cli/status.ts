@@ -21,6 +21,7 @@ interface Row {
   monitoring_enabled: boolean;
   connection_status: string;
   storage_health: string;
+  recording_state: string;
   total_bytes: number | null;
   used_bytes: number | null;
   free_bytes: number | null;
@@ -64,7 +65,7 @@ async function main() {
 
   const { rows } = await pool.query<Row>(
     `SELECT c.name, c.host, c.port, c.location, c.monitoring_enabled,
-            s.connection_status, s.storage_health, s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
+            s.connection_status, s.storage_health, s.recording_state, s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
             s.last_success_at, s.last_error_code, s.last_error_message
      FROM cameras c JOIN camera_status s ON s.camera_id = c.id
      WHERE c.deleted_at IS NULL ORDER BY lower(c.name)`,
@@ -80,13 +81,14 @@ async function main() {
   }
 
   table(
-    ["CAMERA", "ADDRESS", "LOCATION", "STATUS", "STORAGE", "USED", "FREE", "TOTAL", "LAST OK", "LAST ERROR"],
+    ["CAMERA", "ADDRESS", "LOCATION", "STATUS", "STORAGE", "RECORDING", "USED", "FREE", "TOTAL", "LAST OK", "LAST ERROR"],
     rows.map((r) => [
       r.name,
       `${r.host}:${r.port}`,
       r.location ?? "-",
       r.monitoring_enabled ? r.connection_status.toUpperCase() : "DISABLED",
       r.storage_health.toUpperCase(),
+      r.recording_state === "idle" ? "NOT RECORDING" : r.recording_state.toUpperCase(),
       r.used_percentage === null ? "-" : `${r.used_percentage.toFixed(1)}%`,
       r.free_bytes === null ? "-" : formatBytes(r.free_bytes),
       r.total_bytes === null ? "-" : formatBytes(r.total_bytes),
@@ -101,7 +103,8 @@ async function main() {
       `${count((r) => r.monitoring_enabled && r.connection_status === "offline")} offline, ` +
       `${count((r) => r.monitoring_enabled && r.connection_status === "unknown")} unknown, ` +
       `${count((r) => !r.monitoring_enabled)} disabled; ` +
-      `${count((r) => r.storage_health === "warning")} storage warning, ${count((r) => r.storage_health === "critical")} critical`,
+      `${count((r) => r.storage_health === "warning")} storage warning, ${count((r) => r.storage_health === "critical")} critical; ` +
+      `${count((r) => r.monitoring_enabled && (r.recording_state === "idle" || r.recording_state === "error"))} not recording`,
   );
 }
 

@@ -1,11 +1,12 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, StorageReading } from "../types.js";
-import { parseDahuaDeviceInfo, parseDahuaError, parseDahuaStorage } from "./parser.js";
+import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
+import { parseDahuaDeviceInfo, parseDahuaError, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
 
 export const DAHUA_STORAGE_PATH = "/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo";
 export const DAHUA_DEVICE_INFO_PATH = "/cgi-bin/magicBox.cgi?action=getSystemInfo";
+export const DAHUA_RECORDING_PATH = "/cgi-bin/record.cgi?action=getRecordStatus";
 
 export class DahuaAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
@@ -14,7 +15,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
     storageEndpoint: `GET ${DAHUA_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -34,6 +35,10 @@ export class DahuaAdapter implements CameraBrandAdapter {
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
     return parseDahuaDeviceInfo(await this.getText(camera, DAHUA_DEVICE_INFO_PATH));
+  }
+
+  async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
+    return parseDahuaRecording(await this.getText(camera, DAHUA_RECORDING_PATH));
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {
