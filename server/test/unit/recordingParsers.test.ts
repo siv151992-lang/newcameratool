@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseAxisRecording } from "../../src/integrations/axis/parser.js";
 import { parseDahuaRecording } from "../../src/integrations/dahua/parser.js";
-import { parseRecordingStatusXml } from "../../src/integrations/hikvision/parser.js";
+import { parseCameraTimeXml, parseRecordingSearchXml, parseRecordingStatusXml, recordingSearchXml, wallClockMs } from "../../src/integrations/hikvision/parser.js";
 import { parseOnvifRecording } from "../../src/integrations/onvif/parser.js";
 import { combineRecording, flagToRecordingState } from "../../src/integrations/recording.js";
 import { CameraApiError } from "../../src/integrations/types.js";
@@ -62,6 +62,47 @@ describe("Hikvision recording status", () => {
   it("raises ISAPI errors", () => {
     const notSupported = `<ResponseStatus><statusCode>4</statusCode><statusString>Invalid Operation</statusString><subStatusCode>notSupport</subStatusCode></ResponseStatus>`;
     expect(errorCode(() => parseRecordingStatusXml(notSupported))).toBe("API_UNAVAILABLE");
+  });
+
+  describe("search fallback for cameras without a status endpoint", () => {
+    const now = wallClockMs("2026-10-21T17:25:00")!;
+    const result = (status: string, ends: string[]) => `<?xml version="1.0" encoding="UTF-8"?>
+<CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<searchID>X</searchID><responseStatus>${status === "NO MATCHES" ? "false" : "true"}</responseStatus>
+<responseStatusStrg>${status}</responseStatusStrg><numOfMatches>${ends.length}</numOfMatches>
+<matchList>${ends.map((e) => `<searchMatchItem><sourceID>{X}</sourceID><trackID>101</trackID>
+<timeSpan><startTime>2026-10-21T17:00:00Z</startTime><endTime>${e}</endTime></timeSpan>
+<metadataMatches><metadataDescriptor>recordType.meta.hikvision.com/timing</metadataDescriptor></metadataMatches></searchMatchItem>`).join("")}</matchList>
+</CMSearchResult>`;
+
+    it("reads the camera's wall-clock time regardless of its UTC offset", () => {
+      const xml = `<Time><timeMode>NTP</timeMode><localTime>2026-10-21T17:25:00+05:30</localTime><timeZone>CST-5:30:00</timeZone></Time>`;
+      expect(parseCameraTimeXml(xml)).toBe(now);
+    });
+
+    it("builds a search over the window in ISAPI form", () => {
+      const body = recordingSearchXml("ID", "101", now - 600_000, now);
+      expect(body).toContain("<trackID>101</trackID>");
+      expect(body).toContain("<startTime>2026-10-21T17:15:00Z</startTime><endTime>2026-10-21T17:25:00Z</endTime>");
+    });
+
+    it("is recording when a segment ends near the camera's clock", () => {
+      const r = parseRecordingSearchXml(result("OK", ["2026-10-21T17:10:00Z", "2026-10-21T17:24:40Z"]), "101", now, 180_000);
+      expect(r.state).toBe("recording");
+      expect(r.channels[0]).toMatchObject({ id: "track-101", mode: "timing", rawStatus: "recorded until 2026-10-21T17:24:40Z" });
+    });
+
+    it("is idle when the last segment is old or nothing was recorded", () => {
+      expect(parseRecordingSearchXml(result("OK", ["2026-10-21T17:15:00Z"]), "101", now, 180_000)).toMatchObject({
+        state: "idle",
+        detail: "track-101: last recording ended 2026-10-21T17:15:00Z (timing)",
+      });
+      expect(parseRecordingSearchXml(result("NO MATCHES", []), "101", now, 180_000).state).toBe("idle");
+    });
+
+    it("raises failed searches", () => {
+      expect(errorCode(() => parseRecordingSearchXml(result("FAILED", []).replace(">true<", ">false<"), "101", now, 1))).toBe("API_ERROR");
+    });
   });
 });
 

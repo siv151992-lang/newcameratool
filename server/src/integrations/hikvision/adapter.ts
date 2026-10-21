@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { runDiagnostics } from "../diagnostics.js";
 import {
@@ -10,11 +11,26 @@ import {
   type RecordingReading,
   type StorageReading,
 } from "../types.js";
-import { parseDeviceInfoXml, parseRecordingStatusXml, parseResponseStatus, parseStorageXml } from "./parser.js";
+import {
+  parseCameraTimeXml,
+  parseDeviceInfoXml,
+  parseRecordingSearchXml,
+  parseRecordingStatusXml,
+  parseResponseStatus,
+  parseStorageXml,
+  recordingSearchXml,
+} from "./parser.js";
 
 export const HIKVISION_STORAGE_PATH = "/ISAPI/ContentMgmt/Storage";
 export const HIKVISION_DEVICE_INFO_PATH = "/ISAPI/System/deviceInfo";
 export const HIKVISION_RECORDING_PATH = "/ISAPI/ContentMgmt/Recording/status";
+export const HIKVISION_TIME_PATH = "/ISAPI/System/time";
+export const HIKVISION_SEARCH_PATH = "/ISAPI/ContentMgmt/search";
+/** Main-stream video track of channel 1. */
+const MAIN_TRACK = "101";
+/** How far back the recording search looks, and how recent a segment must end to count as live. */
+const SEARCH_WINDOW_MS = 10 * 60_000;
+const LIVE_WINDOW_MS = 3 * 60_000;
 
 export class HikvisionAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
@@ -33,8 +49,10 @@ export class HikvisionAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {}
 
-  private async getXml(camera: CameraConfig, path: string): Promise<string> {
-    const res = await this.http.get(camera, path);
+  private async getXml(camera: CameraConfig, path: string, body?: string): Promise<string> {
+    const res = body === undefined
+      ? await this.http.get(camera, path)
+      : await this.http.request(camera, { method: "POST", path, body, contentType: "application/xml" });
     if (res.status >= 200 && res.status < 300) return res.body;
     // ISAPI usually explains failures in a <ResponseStatus> body.
     const described = parseResponseStatus(res.body);
@@ -62,8 +80,20 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     return parseDeviceInfoXml(await this.getXml(camera, HIKVISION_DEVICE_INFO_PATH));
   }
 
+  /**
+   * Uses the recording status endpoint where the firmware has one. Most IP cameras do not, so
+   * otherwise the camera's own recordings are searched: footage written in the last few minutes
+   * (by the camera's clock) means it is recording.
+   */
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
-    return parseRecordingStatusXml(await this.getXml(camera, HIKVISION_RECORDING_PATH));
+    try {
+      return parseRecordingStatusXml(await this.getXml(camera, HIKVISION_RECORDING_PATH));
+    } catch (err) {
+      if (!(err instanceof CameraApiError) || (err.code !== "API_UNAVAILABLE" && err.code !== "INVALID_RESPONSE")) throw err;
+    }
+    const now = parseCameraTimeXml(await this.getXml(camera, HIKVISION_TIME_PATH));
+    const query = recordingSearchXml(randomUUID().toUpperCase(), MAIN_TRACK, now - SEARCH_WINDOW_MS, now + 60_000);
+    return parseRecordingSearchXml(await this.getXml(camera, HIKVISION_SEARCH_PATH, query), MAIN_TRACK, now, LIVE_WINDOW_MS);
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {
