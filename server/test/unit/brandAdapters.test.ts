@@ -2,7 +2,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AXIS_DEVICE_INFO_PATH, AXIS_STORAGE_PATH, AxisAdapter } from "../../src/integrations/axis/adapter.js";
 import { DAHUA_DEVICE_INFO_PATH, DAHUA_RECORDING_PATH, DAHUA_STORAGE_PATH, DahuaAdapter } from "../../src/integrations/dahua/adapter.js";
 import { HANWHA_DEVICE_INFO_PATH, HANWHA_EVENT_STATUS_PATH, HANWHA_RECORDING_SETTINGS_PATH, HANWHA_STORAGE_PATH, HanwhaAdapter } from "../../src/integrations/hanwha/adapter.js";
-import { HikvisionAdapter } from "../../src/integrations/hikvision/adapter.js";
+import {
+  HIKVISION_RECORDING_PATH,
+  HIKVISION_SEARCH_PATH,
+  HIKVISION_TIME_PATH,
+  HIKVISION_TRACK_PATH,
+  HikvisionAdapter,
+} from "../../src/integrations/hikvision/adapter.js";
 import { CameraHttpClient } from "../../src/integrations/http/cameraHttpClient.js";
 import { requireOk } from "../../src/integrations/http/responses.js";
 import { PANASONIC_INFO_PATH, PANASONIC_SDCARD_PATH, PanasonicAdapter } from "../../src/integrations/panasonic/adapter.js";
@@ -13,6 +19,7 @@ import { CameraApiError, type CameraConfig } from "../../src/integrations/types.
 import { UNIVIEW_DEVICE_INFO_PATH, UNIVIEW_RECORDING_PATH, UNIVIEW_STORAGE_PATH, UniviewAdapter } from "../../src/integrations/uniview/adapter.js";
 import { readRecording } from "../../src/monitoring/checkService.js";
 import { HostGuard } from "../../src/security/hostGuard.js";
+import { cameraTime, DS2CD3563G2_RECORDING_STATUS_404, DS2CD3563G2_SEARCH, DS2CD3563G2_TRACK, SEARCH_NO_MATCHES } from "../fixtures/hikvision-ds2cd3563g2.js";
 import { WV_S35402_GETINFO, WV_S35402_SDCARD_PAGE } from "../fixtures/panasonic-wv-s35402.js";
 import { MockBrandCamera, type MockRequest } from "../mockBrandCamera.js";
 
@@ -366,5 +373,68 @@ describe("PanasonicAdapter", () => {
   it("is registered under its names", () => {
     const r = createRegistry(http);
     for (const name of ["Panasonic", "i-PRO", "iPRO", "Panasonic i-PRO"]) expect(r.resolveKey(name), name).toBe("panasonic");
+  });
+});
+
+describe("Hikvision recording from the recordings on storage (DS-2CD3563G2-IS)", () => {
+  // Real replies: Recording/status is 404; the newest segment ends at 13:22:18 camera time.
+  let localTime = "2026-10-21T13:25:02+05:30";
+  let search = (_body: string) => DS2CD3563G2_SEARCH;
+  let track = DS2CD3563G2_TRACK();
+  const cam = new MockBrandCamera()
+    .route(HIKVISION_RECORDING_PATH, { status: 404, contentType: "text/html", body: DS2CD3563G2_RECORDING_STATUS_404 })
+    .route(HIKVISION_TIME_PATH, () => ({ body: cameraTime(localTime), contentType: "application/xml" }))
+    .route(HIKVISION_SEARCH_PATH, (req) => ({ body: search(req.body), contentType: "application/xml" }))
+    .route(HIKVISION_TRACK_PATH, () => ({ body: track, contentType: "application/xml" }));
+  const ctx = useCamera(cam);
+  const read = () => new HikvisionAdapter(http).getRecordingStatus(ctx.config);
+  beforeEach(() => {
+    localTime = "2026-10-21T13:25:02+05:30";
+    search = () => DS2CD3563G2_SEARCH;
+    track = DS2CD3563G2_TRACK();
+  });
+
+  it("is recording when the newest segment ended within minutes, on the camera's own clock", async () => {
+    const r = await read();
+    expect(r).toMatchObject({ state: "recording", detail: expect.stringContaining("last recorded 3 min ago, 13:22 camera time") });
+    const post = cam.requests.find((q) => q.path === HIKVISION_SEARCH_PATH)!;
+    expect(post.method).toBe("POST");
+    // The window is in camera wall-clock time: 30 minutes before to 5 minutes after its "now".
+    expect(post.body).toContain("<startTime>2026-10-21T12:55:02Z</startTime><endTime>2026-10-21T13:30:02Z</endTime>");
+    expect(post.body).toContain("<trackID>101</trackID>");
+    expect(cam.requests.some((q) => q.path === HIKVISION_TRACK_PATH)).toBe(false); // not needed
+  });
+
+  it("reports continuous recording that stopped as an error", async () => {
+    localTime = "2026-10-21T14:10:00+05:30"; // Wednesday, scheduled CMR all day
+    const r = await read();
+    expect(r.state).toBe("error");
+    expect(r.detail).toContain("Continuous recording is scheduled, but nothing recorded in the last 10 minutes; last recording ended at 13:22 camera time");
+  });
+
+  it("is not recording when recording is off for the channel", async () => {
+    localTime = "2026-10-21T18:00:00+05:30";
+    search = () => SEARCH_NO_MATCHES;
+    track = DS2CD3563G2_TRACK("false");
+    expect(await read()).toMatchObject({ state: "idle", detail: expect.stringContaining("Recording is turned off for this channel") });
+  });
+
+  it("tries UTC search times for firmware that uses them", async () => {
+    // Local 18:52 (+05:30) = 13:22 UTC; only a search around 13:22 finds the segment.
+    localTime = "2026-10-21T18:53:00+05:30";
+    search = (body) => (body.includes("<startTime>2026-10-21T12:53:00Z") ? DS2CD3563G2_SEARCH : SEARCH_NO_MATCHES);
+    expect((await read()).state).toBe("recording");
+    expect(cam.requests.filter((q) => q.path === HIKVISION_SEARCH_PATH && q.headers.authorization)).toHaveLength(2);
+  });
+
+  it("still prefers Recording/status where the camera provides it", async () => {
+    const live = new MockBrandCamera().route(HIKVISION_RECORDING_PATH, { body: "<RecordingStatus><status>recording</status></RecordingStatus>" });
+    const port = await live.start();
+    try {
+      expect((await new HikvisionAdapter(http).getRecordingStatus({ ...ctx.config, port })).state).toBe("recording");
+      expect(live.requests.map((q) => q.path)).not.toContain(HIKVISION_SEARCH_PATH);
+    } finally {
+      await live.stop();
+    }
   });
 });

@@ -9,10 +9,12 @@ import { MockVendorCamera } from "../testing/mockVendor.js";
  *                                                            for trying configurable API integrations)
  *   ... --panasonic                                          (also a simulated Panasonic / i-PRO camera)
  *   ... --hanwha                                             (also a simulated Hanwha Vision SUNAPI camera)
+ *   ... --search-recording                                   (Hikvision cameras without Recording/status, like
+ *                                                            many real IP cameras: recording is found by search)
  * Register them in the app with host 127.0.0.1 (requires CAMERA_ALLOW_LOOPBACK=true, development only).
  */
 const { values } = parseArgs({
-  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false }, panasonic: { type: "boolean", default: false } },
+  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false }, panasonic: { type: "boolean", default: false }, "search-recording": { type: "boolean", default: false } },
 });
 const base = Number(values.port);
 const count = Math.min(Number(values.count), 20);
@@ -34,6 +36,7 @@ for (let i = 0; i < count; i++) {
   const s = scenarios[i % scenarios.length]!;
   const cam = new MockHikvisionCamera("admin", "Sim-Passw0rd!", s.disks);
   cam.recording = s.recording ?? "recording";
+  cam.recordingStatusApi = !values["search-recording"];
   const port = await cam.start(base + i);
   console.log(`Simulated camera ${i + 1}: http://127.0.0.1:${port}  user=admin password=Sim-Passw0rd!  scenario=${s.label}`);
 }
