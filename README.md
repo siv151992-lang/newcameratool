@@ -42,7 +42,7 @@ The five priority features are implemented end to end and covered by automated t
 and detail page show *Recording*, *Not recording*, *Recording error* or *Unknown*; the dashboard counts cameras
 that are not recording, and an alert is raised when a camera stops (turn it off in **Settings → Thresholds**
 for cameras that only record on motion or a schedule). Endpoints: Hikvision `/ISAPI/ContentMgmt/Recording/status`,
-Axis `Storage.S<n>.RecordingStatus` parameters, Uniview `/LAPI/V1.0/Storage/Status`, Dahua
+Axis `Storage.S<n>.RecordingStatus` parameters, Hanwha (inferred from `recording.cgi` storage settings, `storageinfo` and `eventstatus`, as the camera has no live recording flag), Uniview `/LAPI/V1.0/Storage/Status`, Dahua
 `/cgi-bin/record.cgi?action=getRecordStatus`, ONVIF `GetRecordingJobs` on `/onvif/recording_service`. A failed
 recording read never fails the storage check; the state just shows as *Unknown*.
 

@@ -67,6 +67,12 @@ export class MockVendorCamera {
       if (sub === "storageinfo") {
         return res.end(this.disks.map((d, i) => `Storage.${i}.Type=MicroSD\r\nStorage.${i}.Status=${d.state === "NoCard" ? "None" : d.state}\r\nStorage.${i}.TotalSpace=${d.sizeMiB}\r\nStorage.${i}.FreeSpace=${d.freeMiB}\r\n`).join(""));
       }
+      if (url.pathname === "/stw-cgi/recording.cgi" && url.searchParams.get("msubmenu") === "storage") {
+        return res.end("Enable=True\r\nOverWrite=True\r\nAutoDeleteEnable=True\r\nAutoDeleteDays=180\r\n");
+      }
+      if (url.pathname === "/stw-cgi/eventstatus.cgi") {
+        return res.end("Channel.0.Connected=True\r\nSystemEvent.SDFail=False\r\nSystemEvent.SDFull=False\r\nSystemEvent.SDInsert=True\r\n");
+      }
       if (sub === "deviceinfo") return res.end("Model=SIMULATED-WISENET\r\nSerialNumber=HANWHA0001\r\nFirmwareVersion=2.21.02\r\nConnectedMACAddress=00:09:18:00:00:01\r\n");
       return res.end("NG\r\nError Code: 600\r\nError Details: Submenu Not Found\r\n");
     }

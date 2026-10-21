@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AXIS_DEVICE_INFO_PATH, AXIS_STORAGE_PATH, AxisAdapter } from "../../src/integrations/axis/adapter.js";
 import { DAHUA_DEVICE_INFO_PATH, DAHUA_RECORDING_PATH, DAHUA_STORAGE_PATH, DahuaAdapter } from "../../src/integrations/dahua/adapter.js";
-import { HANWHA_DEVICE_INFO_PATH, HANWHA_STORAGE_PATH, HanwhaAdapter } from "../../src/integrations/hanwha/adapter.js";
+import { HANWHA_DEVICE_INFO_PATH, HANWHA_EVENT_STATUS_PATH, HANWHA_RECORDING_SETTINGS_PATH, HANWHA_STORAGE_PATH, HanwhaAdapter } from "../../src/integrations/hanwha/adapter.js";
 import { HikvisionAdapter } from "../../src/integrations/hikvision/adapter.js";
 import { CameraHttpClient } from "../../src/integrations/http/cameraHttpClient.js";
 import { requireOk } from "../../src/integrations/http/responses.js";
@@ -45,8 +45,8 @@ describe("brand registry", () => {
 
   it("registers every brand adapter, new ones as unverified", () => {
     for (const key of ["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha"]) expect(registry.isSupported(key)).toBe(true);
-    expect(registry.get("hikvision").meta.supportStatus).toBe("supported");
-    for (const key of ["dahua", "axis", "uniview", "onvif", "hanwha"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
+    for (const key of ["hikvision", "hanwha"]) expect(registry.get(key).meta.supportStatus).toBe("supported");
+    for (const key of ["dahua", "axis", "uniview", "onvif"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
     expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha"]);
   });
 
@@ -311,6 +311,14 @@ describe("HanwhaAdapter", () => {
     .route(HANWHA_DEVICE_INFO_PATH, { body: "Model=XNV-8080R\r\nSerialNumber=ZM1234\r\nFirmwareVersion=2.21.02\r\n", contentType: "text/plain" });
   const ctx = useCamera(cam);
   const adapter = new HanwhaAdapter(http);
+
+  it("infers recording status; the event status request is optional", async () => {
+    cam.route(HANWHA_RECORDING_SETTINGS_PATH, { body: "Enable=True\r\nOverWrite=True\r\n" });
+    cam.route(HANWHA_EVENT_STATUS_PATH, { body: "SystemEvent.SDFail=True\r\n" });
+    expect(await adapter.getRecordingStatus(ctx.config)).toMatchObject({ state: "error" });
+    cam.routes.delete(HANWHA_EVENT_STATUS_PATH);
+    expect(await adapter.getRecordingStatus(ctx.config)).toMatchObject({ state: "recording" });
+  });
 
   it("reads storage and device info through Digest auth", async () => {
     expect(await adapter.getStorageStatus(ctx.config)).toMatchObject({ totalBytes: 1000 * MIB, freeBytes: 250 * MIB, usedPercentage: 75 });

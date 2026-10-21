@@ -1,6 +1,6 @@
 import { COMMON_STATUSES, isAbsentStatus, MIB, parseBoolean, parseKeyValueLines, statusMapper } from "../parsing.js";
 import { aggregate } from "../storageMath.js";
-import { CameraApiError, type DeviceInfo, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type RecordingReading, type RecordingState, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Hanwha Vision (Wisenet) SUNAPI replies. Depending on firmware, a "view" request answers either with
@@ -133,4 +133,53 @@ export function parseHanwhaDeviceInfo(body: string): DeviceInfo {
     firmwareVersion: get("FirmwareVersion"),
     macAddress: mac ? mac.toUpperCase() : undefined,
   };
+}
+
+/**
+ * Hanwha cameras do not report "recording right now" through SUNAPI's event status, so the state
+ * is inferred from what they do report: whether recording to storage is enabled
+ * (recording.cgi msubmenu=storage: Enable, OverWrite), the storage slots (storageinfo) and, when
+ * available, the storage events (eventstatus: SystemEvent.SDFail/SDFull/SDInsert/NASFail/NASFull).
+ */
+export function parseHanwhaRecording(storageBody: string, settingsBody: string, eventsBody?: string): RecordingReading {
+  const settings = parseSunapiBody(settingsBody);
+  const storage = parseSunapiBody(storageBody);
+  const events = eventsBody ? parseSunapiBody(eventsBody) : new Map<string, string>();
+  const flag = (m: Map<string, string>, key: string) => parseBoolean(m.get(key));
+
+  const enabled = flag(settings, "Enable");
+  const overwrite = flag(settings, "OverWrite");
+  const slots = new Map<string, { type?: string; enable?: boolean; status?: string }>();
+  for (const [key, value] of storage) {
+    const m = /^storages?\.(\d+)\.(type|enable|status)$/i.exec(key);
+    if (!m) continue;
+    const slot = slots.get(m[1]!) ?? {};
+    const field = m[2]!.toLowerCase();
+    if (field === "enable") slot.enable = parseBoolean(value);
+    else if (field === "type") slot.type = value;
+    else slot.status = value;
+    slots.set(m[1]!, slot);
+  }
+  // A slot is in use when enabled, or when it reports a status and is not explicitly disabled.
+  const empty = (status?: string) => isAbsentStatus(status) || /^(none|nocard|notinserted|notexist)$/i.test(status ?? "");
+  const used = [...slots.values()].filter((s) => !empty(s.status) && (s.enable === true || (s.enable === undefined && !!s.status)));
+  const usedText = used.map((s) => `${s.type ?? "storage"} ${s.status || "no status"}`).join(", ");
+  const note = "inferred from the camera's recording settings and storage status (it does not report live recording)";
+  const result = (state: RecordingState, why: string): RecordingReading => ({
+    state,
+    channels: [{ id: "storage", state, rawStatus: usedText || undefined, mode: overwrite === undefined ? undefined : overwrite ? "overwrite on" : "overwrite off" }],
+    detail: `${why}; ${note}`,
+  });
+
+  if (enabled === false) return result("idle", "Recording to storage is turned off in the camera");
+  if (used.length === 0) return result("idle", "No storage is enabled for recording");
+  if (flag(events, "SystemEvent.SDFail") || flag(events, "SystemEvent.NASFail")) return result("error", "The camera reports a storage failure");
+  if (used.some((s) => STATUS(s.status) === "unhealthy")) return result("error", `Storage status: ${usedText}`);
+  const sd = used.some((s) => /^(das|sd|microsd|sdcard)$/i.test(s.type ?? ""));
+  if (sd && flag(events, "SystemEvent.SDInsert") === false) return result("error", "No SD card is inserted");
+  if ((flag(events, "SystemEvent.SDFull") || flag(events, "SystemEvent.NASFull")) && overwrite === false) {
+    return result("error", "Storage is full and overwrite is off, so recording has stopped");
+  }
+  if (enabled === true && used.some((s) => STATUS(s.status) === "healthy")) return result("recording", `Recording enabled to ${usedText}`);
+  return result("unknown", `Storage: ${usedText}`);
 }
