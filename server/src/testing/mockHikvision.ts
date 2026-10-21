@@ -75,6 +75,9 @@ export class MockHikvisionCamera {
    * visible through the recording search (System/time, ContentMgmt/search, record/tracks/101).
    */
   recordingStatusApi = true;
+  /** Search mode: the camera's UTC offset, and whether search replies are in UTC (as some firmware does). */
+  utcOffsetMinutes = 0;
+  searchRepliesUtc = false;
   requests: { path: string; authorized: boolean }[] = [];
   private server?: http.Server;
   private readonly nonces = new Set<string>();
@@ -143,16 +146,19 @@ export class MockHikvisionCamera {
 
   private searchRoutes(): Record<string, () => string> {
     const wall = (ms: number) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
-    const now = Date.now();
+    const offsetMs = this.utcOffsetMinutes * 60_000;
+    const now = Date.now() + offsetMs; // camera local wall clock
+    const tz = `${this.utcOffsetMinutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(this.utcOffsetMinutes) / 60)).padStart(2, "0")}:${String(Math.abs(this.utcOffsetMinutes) % 60).padStart(2, "0")}`;
+    const reply = (ms: number) => wall(this.searchRepliesUtc ? ms - offsetMs : ms);
     // recording: the current segment ends now; error: continuous recording stopped 2 hours ago;
     // idle: nothing recorded and recording is turned off.
     const lastEnd = this.recording === "recording" ? now - 20_000 : this.recording === "error" ? now - 2 * 3600_000 : undefined;
     const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     return {
-      "/ISAPI/System/time": () => `<?xml version="1.0" encoding="UTF-8"?><Time version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><timeMode>NTP</timeMode><localTime>${wall(now).slice(0, 19)}+00:00</localTime></Time>`,
+      "/ISAPI/System/time": () => `<?xml version="1.0" encoding="UTF-8"?><Time version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><timeMode>NTP</timeMode><localTime>${wall(now).slice(0, 19)}${tz}</localTime></Time>`,
       "/ISAPI/ContentMgmt/search": () =>
         lastEnd !== undefined && this.recording === "recording"
-          ? `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>true</responseStatus><responseStatusStrg>OK</responseStatusStrg><numOfMatches>1</numOfMatches><matchList><searchMatchItem><trackID>101</trackID><timeSpan><startTime>${wall(lastEnd - 3600_000)}</startTime><endTime>${wall(lastEnd)}</endTime></timeSpan></searchMatchItem></matchList></CMSearchResult>`
+          ? `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>true</responseStatus><responseStatusStrg>OK</responseStatusStrg><numOfMatches>1</numOfMatches><matchList><searchMatchItem><trackID>101</trackID><timeSpan><startTime>${reply(lastEnd - 3600_000)}</startTime><endTime>${reply(lastEnd)}</endTime></timeSpan></searchMatchItem></matchList></CMSearchResult>`
           : `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>false</responseStatus><responseStatusStrg>NO MATCHES</responseStatusStrg><numOfMatches>0</numOfMatches></CMSearchResult>`,
       "/ISAPI/ContentMgmt/record/tracks/101": () =>
         `<?xml version="1.0" encoding="UTF-8"?><Track version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><id>101</id><Enable>${this.recording === "idle" ? "false" : "true"}</Enable><TrackSchedule><ScheduleBlockList><ScheduleBlock>${days

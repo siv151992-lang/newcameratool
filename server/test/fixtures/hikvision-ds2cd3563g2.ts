@@ -105,3 +105,22 @@ export const cameraTime = (local: string) => `<?xml version="1.0" encoding="UTF-
 <localTime>${local}</localTime>
 <timeZone>CST-5:30:00</timeZone>
 </Time>`;
+
+/**
+ * A DS-2CD2563G2-IS set to UTC+05:30 (camera time 2026-10-21T19:14:19+05:30) answers the same
+ * search in real UTC: its segment being written ends at 13:42:42Z, i.e. 19:12:42 local time.
+ */
+export const DS2CD2563G2_SEARCH_UTC = `<?xml version="1.0" encoding="UTF-8"?>
+<CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<searchID>{C0000000-0000-0000-0000-000000000001}</searchID>
+<responseStatus>true</responseStatus>
+<responseStatusStrg>OK</responseStatusStrg>
+<totalMatches>4</totalMatches>
+<numOfMatches>4</numOfMatches>
+<matchList>
+${item("2026-10-20T20:18:27Z", "2026-10-21T01:17:32Z", 259932160)}
+${item("2026-10-21T01:17:32Z", "2026-10-21T05:59:49Z", 260112384)}
+${item("2026-10-21T05:59:49Z", "2026-10-21T10:16:08Z", 260014080)}
+${item("2026-10-21T10:16:08Z", "2026-10-21T13:42:42Z", 174489600)}
+</matchList>
+</CMSearchResult>`;

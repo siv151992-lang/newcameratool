@@ -22,6 +22,7 @@ import {
   RECORDING_RECENT_MINUTES,
   recordingFromSegments,
   searchRequestXml,
+  toLocalWallClock,
   type TrackSchedule,
 } from "./parser.js";
 
@@ -105,20 +106,16 @@ export class HikvisionAdapter implements CameraBrandAdapter {
       parseSearchLatestEnd(
         await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(now - SEARCH_WINDOW_MINUTES * 60_000, now + 5 * 60_000, randomUUID().toUpperCase())),
       );
-    let now = nowMs;
-    let latest = await latestAround(now);
-    // Search times are normally local time; some firmware uses real UTC. Try that before concluding.
-    if (latest === undefined && offsetMinutes) {
-      const utcNow = nowMs - offsetMinutes * 60_000;
-      const utcLatest = await latestAround(utcNow);
-      if (utcLatest !== undefined) [now, latest] = [utcNow, utcLatest];
-    }
+    let latest = await latestAround(nowMs);
+    // Some firmware reads the requested period as UTC; search that period too before concluding.
+    if (latest === undefined && offsetMinutes) latest = await latestAround(nowMs - offsetMinutes * 60_000);
+    if (latest !== undefined) latest = toLocalWallClock(latest, nowMs, offsetMinutes);
     // Only needed to explain a camera that is not recording.
     let schedule: TrackSchedule | undefined;
-    if (latest === undefined || now - latest > RECORDING_RECENT_MINUTES * 60_000) {
+    if (latest === undefined || nowMs - latest > RECORDING_RECENT_MINUTES * 60_000) {
       schedule = await this.getXml(camera, HIKVISION_TRACK_PATH).then(parseTrackSchedule, () => undefined);
     }
-    return recordingFromSegments(now, latest, schedule);
+    return recordingFromSegments(nowMs, latest, schedule);
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

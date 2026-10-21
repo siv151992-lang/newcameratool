@@ -19,7 +19,7 @@ import { CameraApiError, type CameraConfig } from "../../src/integrations/types.
 import { UNIVIEW_DEVICE_INFO_PATH, UNIVIEW_RECORDING_PATH, UNIVIEW_STORAGE_PATH, UniviewAdapter } from "../../src/integrations/uniview/adapter.js";
 import { readRecording } from "../../src/monitoring/checkService.js";
 import { HostGuard } from "../../src/security/hostGuard.js";
-import { cameraTime, DS2CD3563G2_RECORDING_STATUS_404, DS2CD3563G2_SEARCH, DS2CD3563G2_TRACK, SEARCH_NO_MATCHES } from "../fixtures/hikvision-ds2cd3563g2.js";
+import { cameraTime, DS2CD2563G2_SEARCH_UTC, DS2CD3563G2_RECORDING_STATUS_404, DS2CD3563G2_SEARCH, DS2CD3563G2_TRACK, SEARCH_NO_MATCHES } from "../fixtures/hikvision-ds2cd3563g2.js";
 import { WV_S35402_GETINFO, WV_S35402_SDCARD_PAGE } from "../fixtures/panasonic-wv-s35402.js";
 import { MockBrandCamera, type MockRequest } from "../mockBrandCamera.js";
 
@@ -440,6 +440,12 @@ describe("Hikvision recording from the recordings on storage (DS-2CD3563G2-IS)",
     search = (body) => (body.includes("<startTime>2026-10-21T12:53:00Z") ? DS2CD3563G2_SEARCH : SEARCH_NO_MATCHES);
     expect((await read()).state).toBe("recording");
     expect(cam.requests.filter((q) => q.path === HIKVISION_SEARCH_PATH && q.headers.authorization)).toHaveLength(2);
+  });
+
+  it("reads replies in UTC from firmware that answers that way (DS-2CD2563G2-IS)", async () => {
+    localTime = "2026-10-21T19:14:19+05:30";
+    search = () => DS2CD2563G2_SEARCH_UTC; // 13:42:42Z = 19:12:42 local
+    expect(await read()).toMatchObject({ state: "recording", detail: expect.stringContaining("last recorded 2 min ago, 19:12 camera time") });
   });
 
   it("still prefers Recording/status where the camera provides it", async () => {

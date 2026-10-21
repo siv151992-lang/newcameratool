@@ -178,8 +178,9 @@ export function parseRecordingStatusXml(xml: string): RecordingReading {
  * IP cameras answer it with HTTP 404). Confirmed on a DS-2CD3563G2-IS:
  * - GET /ISAPI/System/time: <Time><localTime>2026-10-21T13:25:02+05:30</localTime>…
  * - POST /ISAPI/ContentMgmt/search (CMSearchDescription) lists the recorded segments of track 101;
- *   the segment being written ends at about the camera's current time. Times are the camera's
- *   local wall-clock time even though they end in "Z".
+ *   the segment being written ends at about the camera's current time. The requested period is
+ *   read as local time, but replies differ by firmware: a DS-2CD3563G2-IS answers in local time, a
+ *   DS-2CD2563G2-IS set to UTC+05:30 in real UTC, both ending in "Z" (see toLocalWallClock).
  * - GET /ISAPI/ContentMgmt/record/tracks/101: <Enable> and the weekly schedule (CMR = continuous).
  * Times are compared on the camera's own clock, so a camera whose clock is wrong is still read
  * correctly.
@@ -218,6 +219,21 @@ export function searchRequestXml(fromMs: number, toMs: number, searchId: string)
 <maxResults>40</maxResults><searchResultPostion>0</searchResultPostion>
 <metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList>
 </CMSearchDescription>`;
+}
+
+/**
+ * Converts a segment end from a search reply to the camera's local wall-clock time. The reply is
+ * in local time or in UTC depending on firmware; a reading that would lie in the future is ruled
+ * out, otherwise the one closer to the camera's time now is taken.
+ */
+export function toLocalWallClock(endMs: number, nowLocalMs: number, offsetMinutes: number | undefined): number {
+  if (!offsetMinutes) return endMs;
+  const fromUtc = endMs + offsetMinutes * 60_000;
+  const slack = 5 * 60_000;
+  const localPossible = endMs <= nowLocalMs + slack;
+  const utcPossible = fromUtc <= nowLocalMs + slack;
+  if (localPossible !== utcPossible) return utcPossible ? fromUtc : endMs;
+  return Math.abs(nowLocalMs - fromUtc) < Math.abs(nowLocalMs - endMs) ? fromUtc : endMs;
 }
 
 /** POST /ISAPI/ContentMgmt/search → the end of the newest recorded segment (wall clock), if any. */

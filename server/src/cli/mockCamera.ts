@@ -37,6 +37,11 @@ for (let i = 0; i < count; i++) {
   const cam = new MockHikvisionCamera("admin", "Sim-Passw0rd!", s.disks);
   cam.recording = s.recording ?? "recording";
   cam.recordingStatusApi = !values["search-recording"];
+  if (i === 0 && values["search-recording"]) {
+    // Like a DS-2CD2563G2-IS: clock on UTC+05:30, search replies in UTC.
+    cam.utcOffsetMinutes = 330;
+    cam.searchRepliesUtc = true;
+  }
   const port = await cam.start(base + i);
   console.log(`Simulated camera ${i + 1}: http://127.0.0.1:${port}  user=admin password=Sim-Passw0rd!  scenario=${s.label}`);
 }
