@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AXIS_DEVICE_INFO_PATH, AXIS_STORAGE_PATH, AxisAdapter } from "../../src/integrations/axis/adapter.js";
 import { DAHUA_DEVICE_INFO_PATH, DAHUA_RECORDING_PATH, DAHUA_STORAGE_PATH, DahuaAdapter } from "../../src/integrations/dahua/adapter.js";
+import { HANWHA_DEVICE_INFO_PATH, HANWHA_STORAGE_PATH, HanwhaAdapter } from "../../src/integrations/hanwha/adapter.js";
 import { HikvisionAdapter } from "../../src/integrations/hikvision/adapter.js";
 import { CameraHttpClient } from "../../src/integrations/http/cameraHttpClient.js";
 import { requireOk } from "../../src/integrations/http/responses.js";
@@ -43,10 +44,10 @@ describe("brand registry", () => {
   const registry = createRegistry(http);
 
   it("registers every brand adapter, new ones as unverified", () => {
-    for (const key of ["hikvision", "dahua", "axis", "uniview", "onvif"]) expect(registry.isSupported(key)).toBe(true);
+    for (const key of ["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha"]) expect(registry.isSupported(key)).toBe(true);
     expect(registry.get("hikvision").meta.supportStatus).toBe("supported");
-    for (const key of ["dahua", "axis", "uniview", "onvif"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
-    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "dahua", "axis", "uniview", "onvif"]);
+    for (const key of ["dahua", "axis", "uniview", "onvif", "hanwha"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
+    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha"]);
   });
 
   it("resolves brand aliases", () => {
@@ -301,5 +302,33 @@ describe("OnvifAdapter recording jobs", () => {
     const req = cam.requests[0]!;
     expect(req.path).toBe(ONVIF_RECORDING_SERVICE_PATH);
     expect(req.headers["content-type"]).toContain('action="http://www.onvif.org/ver10/recording/wsdl/GetRecordingJobs"');
+  });
+});
+
+describe("HanwhaAdapter", () => {
+  const cam = new MockBrandCamera()
+    .route(HANWHA_STORAGE_PATH, { body: "Storage.0.Type=MicroSD\r\nStorage.0.Status=Normal\r\nStorage.0.TotalSpace=1000\r\nStorage.0.FreeSpace=250\r\n", contentType: "text/plain" })
+    .route(HANWHA_DEVICE_INFO_PATH, { body: "Model=XNV-8080R\r\nSerialNumber=ZM1234\r\nFirmwareVersion=2.21.02\r\n", contentType: "text/plain" });
+  const ctx = useCamera(cam);
+  const adapter = new HanwhaAdapter(http);
+
+  it("reads storage and device info through Digest auth", async () => {
+    expect(await adapter.getStorageStatus(ctx.config)).toMatchObject({ totalBytes: 1000 * MIB, freeBytes: 250 * MIB, usedPercentage: 75 });
+    expect(await adapter.getDeviceInfo(ctx.config)).toMatchObject({ model: "XNV-8080R", firmwareVersion: "2.21.02" });
+    const r = await adapter.testConnection(ctx.config);
+    expect(r.ok).toBe(true);
+  });
+
+  it("classifies unsupported submenus, wrong passwords and missing endpoints", async () => {
+    cam.route(HANWHA_STORAGE_PATH, { body: "NG\r\nError Code: 600\r\nError Details: Submenu Not Found\r\n" });
+    expect(await codeOf(adapter.getStorageStatus(ctx.config))).toBe("API_UNAVAILABLE");
+    expect(await codeOf(adapter.getDeviceInfo({ ...ctx.config, password: "wrong" }))).toBe("AUTH_FAILED");
+    cam.routes.delete(HANWHA_STORAGE_PATH);
+    expect(await codeOf(adapter.getStorageStatus(ctx.config))).toBe("API_UNAVAILABLE");
+  });
+
+  it("is registered under its names", () => {
+    const r = createRegistry(http);
+    for (const name of ["Hanwha", "Wisenet", "Hanwha Vision", "Samsung Techwin"]) expect(r.resolveKey(name), name).toBe("hanwha");
   });
 });

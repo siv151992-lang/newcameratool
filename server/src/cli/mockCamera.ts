@@ -7,10 +7,11 @@ import { MockVendorCamera } from "../testing/mockVendor.js";
  *   npm run mock-camera -- --port 8081 --count 3
  *   npm run mock-camera -- --port 8081 --count 3 --vendor   (also a camera of an unknown "Acme Vision" brand,
  *                                                            for trying configurable API integrations)
+ *   ... --hanwha                                             (also a simulated Hanwha Vision SUNAPI camera)
  * Register them in the app with host 127.0.0.1 (requires CAMERA_ALLOW_LOOPBACK=true, development only).
  */
 const { values } = parseArgs({
-  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false } },
+  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false } },
 });
 const base = Number(values.port);
 const count = Math.min(Number(values.count), 20);
@@ -42,5 +43,10 @@ if (values.vendor) {
     `Simulated Acme Vision camera: http://127.0.0.1:${port}  user=admin password=Acme-Passw0rd!  (Digest)\n` +
       "  JSON storage: GET /api/v1/storage (?page=1)   XML storage: GET /cgi-bin/storage.xml   device info: GET /api/v1/system",
   );
+}
+if (values.hanwha) {
+  const cam = new MockVendorCamera("admin", "Hanwha-Passw0rd!", "hanwha");
+  const port = await cam.start(base + count + 1);
+  console.log(`Simulated Hanwha Vision camera: http://127.0.0.1:${port}  user=admin password=Hanwha-Passw0rd!  (SUNAPI, Digest)`);
 }
 console.log("\nThese are SIMULATED devices for demos. Press Ctrl+C to stop.");

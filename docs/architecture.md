@@ -25,7 +25,7 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 | `services/integrationService.ts` | Integration lifecycle: versions, backend tests and their history, enable/disable, rollback, reassignment, deletion checks |
 | `integrations/http/cameraHttpClient.ts` | HTTP client with Digest (MD5/SHA-256, `-sess`) and Basic auth (or explicit modes for configurable integrations: Digest only, none, a pre-set Authorization header), extra headers that cannot override credentials or framing, timeouts, size limits |
 | `integrations/hikvision/` | Hikvision adapter and ISAPI XML parsing |
-| `integrations/{axis,uniview,dahua,onvif}/` | Adapters and parsers for Axis VAPIX text, Uniview LAPI JSON, Dahua/CP Plus CGI lists and ONVIF SOAP (`onvif/soap.ts`: WS-Security envelopes) |
+| `integrations/{axis,uniview,dahua,hanwha,onvif}/` | Adapters and parsers for Axis VAPIX text, Uniview LAPI JSON, Dahua/CP Plus CGI lists, Hanwha Vision SUNAPI (key=value text or JSON) and ONVIF SOAP (`onvif/soap.ts`: WS-Security envelopes) |
 | `integrations/http/responses.ts` | Shared classification of non-2xx camera responses |
 | `integrations/parsing.ts` | Shared parser helpers: strict byte counts, `key=value` lines, status mapping |
 | `integrations/diagnostics.ts` | Generic step-by-step Test Connection |

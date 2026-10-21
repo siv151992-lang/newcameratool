@@ -33,7 +33,8 @@ export class MockVendorCamera {
   private readonly nonces = new Set<string>();
   private readonly realm = "AcmeVision";
 
-  constructor(public username = "admin", public password = "Acme-Passw0rd!") {}
+  /** "hanwha" answers Hanwha Vision SUNAPI (stw-cgi) requests instead of the Acme API. */
+  constructor(public username = "admin", public password = "Acme-Passw0rd!", public profile: "acme" | "hanwha" = "acme") {}
 
   private verify(header: string | undefined, method: string): boolean {
     if (!header?.startsWith("Digest ")) return false;
@@ -59,6 +60,15 @@ export class MockVendorCamera {
     if (this.mode === "server-error") {
       res.statusCode = 500;
       return res.end(JSON.stringify({ error: "internal" }));
+    }
+    if (this.profile === "hanwha") {
+      res.setHeader("Content-Type", "text/plain");
+      const sub = url.pathname === "/stw-cgi/system.cgi" ? url.searchParams.get("msubmenu") : null;
+      if (sub === "storageinfo") {
+        return res.end(this.disks.map((d, i) => `Storage.${i}.Type=MicroSD\r\nStorage.${i}.Status=${d.state === "NoCard" ? "None" : d.state}\r\nStorage.${i}.TotalSpace=${d.sizeMiB}\r\nStorage.${i}.FreeSpace=${d.freeMiB}\r\n`).join(""));
+      }
+      if (sub === "deviceinfo") return res.end("Model=SIMULATED-WISENET\r\nSerialNumber=HANWHA0001\r\nFirmwareVersion=2.21.02\r\nConnectedMACAddress=00:09:18:00:00:01\r\n");
+      return res.end("NG\r\nError Code: 600\r\nError Details: Submenu Not Found\r\n");
     }
     if (url.pathname === "/api/v1/storage") {
       res.setHeader("Content-Type", "application/json");

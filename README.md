@@ -6,7 +6,7 @@ storage data, tracks history, and raises alerts when storage fills up, a disk re
 goes offline, or its credentials stop working.
 
 **Hikvision (ISAPI) is fully implemented.** Dahua / CP Plus / Amcrest (CGI), Axis (VAPIX), Uniview (LAPI) and
-generic ONVIF (SOAP, WS-Security) adapters are also available, marked *unverified* until they have been
+generic ONVIF (SOAP, WS-Security) and Hanwha Vision / Wisenet (SUNAPI) adapters are also available, marked *unverified* until they have been
 confirmed on real hardware — use Test Connection when adding such a camera.
 
 **New brands without code changes:** administrators can add a brand in **Settings → Camera brands** when its

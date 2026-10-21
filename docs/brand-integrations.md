@@ -5,7 +5,7 @@ Every camera is monitored through a **brand integration**. There are two kinds:
 | | Custom adapter (Mode B) | Configurable API (Mode A) |
 |---|---|---|
 | What it is | A trusted adapter in this code base (`server/src/integrations/<brand>/`) with automated tests | A validated, declarative configuration created in **Settings → Camera brands** |
-| Brands today | Hikvision, Dahua / CP Plus / Amcrest, Axis, Uniview, Generic ONVIF | Whatever an administrator adds |
+| Brands today | Hikvision, Dahua / CP Plus / Amcrest, Axis, Uniview, Hanwha Vision (Wisenet), Generic ONVIF | Whatever an administrator adds |
 | Changing it | A reviewed code change and a new release | In the UI: every change is a new configuration version that must pass a test before it monitors cameras |
 | Can do | Anything (several requests, SOAP + WS-Security, key=value parsing, recording status, …) | One HTTP request returning JSON or XML, mapped onto the storage model |
 
