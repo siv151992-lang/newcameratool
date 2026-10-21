@@ -21,6 +21,7 @@ interface FormState {
   port: string;
   protocol: "http" | "https";
   monitoringEnabled: boolean;
+  localStorage: boolean;
   warningThreshold: string;
   criticalThreshold: string;
   caCertificate: string;
@@ -28,13 +29,13 @@ interface FormState {
 
 const EMPTY: FormState = {
   name: "", host: "", brand: "hikvision", model: "", username: "admin", password: "", location: "", port: "",
-  protocol: "http", monitoringEnabled: true, warningThreshold: "", criticalThreshold: "", caCertificate: "",
+  protocol: "http", monitoringEnabled: true, localStorage: true, warningThreshold: "", criticalThreshold: "", caCertificate: "",
 };
 
 function fromCamera(c: CameraDetail): FormState {
   return {
     name: c.name, host: c.host, brand: c.brand, model: c.model ?? "", username: c.username ?? "", password: "",
-    location: c.location ?? "", port: String(c.port), protocol: c.protocol, monitoringEnabled: c.monitoringEnabled,
+    location: c.location ?? "", port: String(c.port), protocol: c.protocol, monitoringEnabled: c.monitoringEnabled, localStorage: c.localStorage ?? true,
     warningThreshold: c.warningThreshold?.toString() ?? "", criticalThreshold: c.criticalThreshold?.toString() ?? "", caCertificate: "",
   };
 }
@@ -44,7 +45,7 @@ function toPayload(f: FormState, original?: FormState) {
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const full: Record<string, unknown> = {
     name: f.name, host: f.host, brand: f.brand, model: f.model || null, username: f.username, location: f.location || null,
-    port: num(f.port), protocol: f.protocol, monitoringEnabled: f.monitoringEnabled,
+    port: num(f.port), protocol: f.protocol, monitoringEnabled: f.monitoringEnabled, localStorage: f.localStorage,
     warningThreshold: num(f.warningThreshold), criticalThreshold: num(f.criticalThreshold),
   };
   if (f.password) full.password = f.password;
@@ -275,6 +276,14 @@ export function CameraFormPage() {
                   checked={form.monitoringEnabled}
                   onChange={(e) => set("monitoringEnabled", e.target.checked)}
                 />
+                <div className="mt-3">
+                  <Checkbox
+                    label="Records to an SD card or local storage"
+                    description="Untick for cameras that record elsewhere (e.g. to an NVR) and have no SD card. They are still checked for being online, but storage and recording alerts are off."
+                    checked={form.localStorage}
+                    onChange={(e) => set("localStorage", e.target.checked)}
+                  />
+                </div>
               </div>
               <Field label="Warning threshold (%)" error={errors.warningThreshold} hint={`Blank uses the global default (${s?.warningThresholdPercent ?? 80}%)`}>
                 {(fid, d) => <Input id={fid} aria-describedby={d} inputMode="decimal" placeholder={String(s?.warningThresholdPercent ?? 80)} value={form.warningThreshold} onChange={(e) => set("warningThreshold", e.target.value)} invalid={!!errors.warningThreshold} />}

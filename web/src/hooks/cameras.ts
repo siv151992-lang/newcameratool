@@ -44,6 +44,20 @@ export function useSetMonitoring() {
   });
 }
 
+export function useSetLocalStorage() {
+  const invalidate = useInvalidateCameras();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: ({ ids, localStorage }: { ids: string[]; localStorage: boolean }) =>
+      api<{ updated: number }>("/cameras/bulk-local-storage", { method: "POST", body: { ids, localStorage } }),
+    onSuccess: (r, v) => {
+      toast("success", `${r.updated} camera(s) marked as ${v.localStorage ? "using local storage" : "recording elsewhere (no local storage)"}`);
+      invalidate();
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+}
+
 export function useRemoveCameras() {
   const invalidate = useInvalidateCameras();
   const toast = useToast();

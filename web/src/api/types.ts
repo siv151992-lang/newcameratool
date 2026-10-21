@@ -24,6 +24,8 @@ export interface Camera {
   model: string | null;
   location: string | null;
   monitoringEnabled: boolean;
+  /** False for cameras that record elsewhere (e.g. an NVR) and have no SD card by design. */
+  localStorage: boolean;
   warningThreshold: number | null;
   criticalThreshold: number | null;
   hasCaCertificate: boolean;
@@ -93,6 +95,7 @@ export interface Summary {
   usedBytes: number;
   freeBytes: number;
   camerasWithStorageData: number;
+  withoutLocalStorage: number;
   alerts: { active: number; acknowledged: number; critical: number };
 }
 

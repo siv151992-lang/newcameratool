@@ -7,7 +7,7 @@ import { api, toQuery } from "../api/client";
 import type { Alert, CameraDetail, CameraHistory, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
-import { ConnectionBadge, DeviceHealthBadge, HealthBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
+import { ConnectionBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
 import { UsageHistoryChart } from "../components/UsageHistoryChart";
 import { useAiStatus } from "../hooks/ai";
 import { CameraForecastPanel } from "./AiPage";
@@ -139,8 +139,14 @@ export function CameraDetailPage() {
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             <ConnectionBadge status={s.connection} monitoringEnabled={c.monitoringEnabled} />
-            <RecordingBadge state={s.recording.state} detail={s.recording.detail} />
-            <HealthBadge health={s.storageHealth} />
+            {c.localStorage === false ? (
+              <NoLocalStorageBadge />
+            ) : (
+              <>
+                <RecordingBadge state={s.recording.state} detail={s.recording.detail} />
+                <HealthBadge health={s.storageHealth} />
+              </>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -183,7 +189,12 @@ export function CameraDetailPage() {
       <div className="grid gap-5 lg:grid-cols-3">
         <Card title="Storage" className="lg:col-span-2">
           <div className="p-4">
-            {s.totalBytes === null ? (
+            {c.localStorage === false ? (
+              <EmptyState
+                title="No local storage"
+                description="This camera records elsewhere (e.g. to an NVR), so its storage and recording are not monitored here. It is still checked for being online. Change this under Edit."
+              />
+            ) : s.totalBytes === null ? (
               <EmptyState
                 title={s.lastAttemptAt ? "No storage data yet" : "Not checked yet"}
                 description={s.lastAttemptAt ? "Storage has not been read successfully yet. See the problem described above." : "The first check runs shortly after the camera is added, or use Refresh now."}

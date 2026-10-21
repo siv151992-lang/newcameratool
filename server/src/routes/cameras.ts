@@ -17,6 +17,7 @@ import {
   listLocations,
   listQuerySchema,
   removeCameras,
+  setLocalStorage,
   setMonitoring,
   updateCamera,
 } from "../services/cameraService.js";
@@ -81,6 +82,11 @@ camerasRouter.post("/import", write, importLimiter, async (req, res) => {
 camerasRouter.post("/bulk-delete", write, async (req, res) => {
   const { ids } = parse(z.object({ ids: z.array(z.string()).min(1).max(500) }), req.body);
   res.json(await removeCameras(ids, actorOf(req), req.ip));
+});
+
+camerasRouter.post("/bulk-local-storage", write, async (req, res) => {
+  const { ids, localStorage } = parse(z.object({ ids: z.array(z.string().uuid()).min(1).max(500), localStorage: z.boolean() }).strict(), req.body);
+  res.json(await setLocalStorage(ids, localStorage, actorOf(req), req.ip));
 });
 
 camerasRouter.get("/:id", read, async (req, res) => {

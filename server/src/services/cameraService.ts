@@ -80,6 +80,8 @@ const baseFields = {
   username: z.string().trim().max(64).default(""),
   password: z.string().max(256).default(""),
   monitoringEnabled: z.boolean().default(true),
+  /** False for cameras that record elsewhere (NVR) and have no SD card by design. */
+  localStorage: z.boolean().default(true),
   warningThreshold: threshold,
   criticalThreshold: threshold,
   caCertificate: pemSchema,
@@ -134,7 +136,7 @@ export function defaultPort(brandKey: string, protocol: "http" | "https") {
 
 const SELECT_CAMERA = `
   SELECT c.id, c.name, c.host, c.port, c.protocol, c.brand_key, b.display_name AS brand_name,
-         c.model, c.location, c.monitoring_enabled, c.warning_threshold, c.critical_threshold,
+         c.model, c.location, c.monitoring_enabled, c.local_storage, c.warning_threshold, c.critical_threshold,
          (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
          c.created_at, c.updated_at,
          cr.username, cr.updated_at AS credentials_updated_at,
@@ -183,6 +185,7 @@ export function toCameraView(r: CameraRow) {
     model: r.model ?? (r.device_model as string | null) ?? null,
     location: r.location,
     monitoringEnabled: r.monitoring_enabled,
+    localStorage: r.local_storage as boolean,
     warningThreshold: r.warning_threshold,
     criticalThreshold: r.critical_threshold,
     hasCaCertificate: r.has_ca_certificate,
@@ -223,7 +226,7 @@ export type CameraView = ReturnType<typeof toCameraView>;
 export const listQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   brand: z.string().trim().max(40).optional(),
-  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled"]).optional(),
+  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled", "nostoragedevice", "nolocalstorage"]).optional(),
   location: z.string().trim().max(120).optional(),
   minUsage: z.coerce.number().min(0).max(100).optional(),
   maxUsage: z.coerce.number().min(0).max(100).optional(),
@@ -258,6 +261,11 @@ export async function listCameras(q: ListQuery) {
   if (q.brand) where.push(`c.brand_key = ${p(q.brand)}`);
   if (q.location) where.push(`c.location = ${p(q.location)}`);
   if (q.status === "disabled") where.push("c.monitoring_enabled = false");
+  else if (q.status === "nolocalstorage") where.push("NOT c.local_storage");
+  else if (q.status === "nostoragedevice") {
+    // Read successfully but reported no SD card / storage device.
+    where.push(`c.local_storage AND s.last_success_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id)`);
+  }
   else if (q.status && ["online", "offline", "unknown"].includes(q.status)) {
     where.push(`c.monitoring_enabled AND s.connection_status = ${p(q.status)}`);
   } else if (q.status) where.push(`c.monitoring_enabled AND s.storage_health = ${p(q.status)}`);
@@ -316,6 +324,7 @@ export async function getSummary() {
             count(*) FILTER (WHERE c.monitoring_enabled AND s.storage_health = 'critical')::int AS critical,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
+            count(*) FILTER (WHERE c.monitoring_enabled AND NOT c.local_storage)::int AS without_local_storage,
             coalesce(sum(s.total_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS total_bytes,
             coalesce(sum(s.used_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS used_bytes,
             coalesce(sum(s.free_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS free_bytes,
@@ -345,6 +354,7 @@ export async function getSummary() {
     usedBytes: r.used_bytes,
     freeBytes: r.free_bytes,
     camerasWithStorageData: r.cameras_with_storage_data,
+    withoutLocalStorage: r.without_local_storage,
     alerts: alerts.rows[0],
   };
 }
@@ -358,19 +368,19 @@ function translateUniqueViolation(err: unknown): never {
   throw err;
 }
 
-export async function createCamera(input: CameraInput, actor: Actor, ip?: string | null, db?: Queryable) {
+export async function createCamera(input: Omit<CameraInput, "localStorage"> & { localStorage?: boolean }, actor: Actor, ip?: string | null, db?: Queryable) {
   const port = input.port ?? defaultPort(input.brand, input.protocol);
   const cipher = getCipher();
   const run = async (client: Queryable) => {
     const { rows } = await client
       .query<{ id: string }>(
         `INSERT INTO cameras (name, host, port, protocol, brand_key, model, location, monitoring_enabled,
-                              warning_threshold, critical_threshold, ca_certificate, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
-          input.caCertificate, actor.id,
+          input.caCertificate, actor.id, input.localStorage ?? true,
         ],
       )
       .catch(translateUniqueViolation);
@@ -426,7 +436,7 @@ export async function updateCamera(id: string, patch: CameraUpdate, actor: Actor
       .query(
         `UPDATE cameras SET name = $2, host = $3, port = $4, protocol = $5, brand_key = $6, model = $7, location = $8,
                 monitoring_enabled = $9, warning_threshold = $10, critical_threshold = $11,
-                ca_certificate = $12, updated_at = now()
+                ca_certificate = $12, local_storage = $13, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -443,6 +453,7 @@ export async function updateCamera(id: string, patch: CameraUpdate, actor: Actor
           patch.caCertificate === undefined
             ? (await client.query("SELECT ca_certificate FROM cameras WHERE id = $1", [id])).rows[0].ca_certificate
             : patch.caCertificate,
+          patch.localStorage ?? current.local_storage,
         ],
       )
       .catch(translateUniqueViolation);
@@ -570,4 +581,20 @@ export async function getHistory(id: string, opts: { hours: number; limit: numbe
     [id],
   );
   return { checks: checks.rows, connectionEvents: events.rows };
+}
+
+/** Marks cameras as recording elsewhere (no SD card / local storage) or back to using local storage. */
+export async function setLocalStorage(ids: string[], localStorage: boolean, actor: Actor, ip?: string | null) {
+  return withTransaction(async (db) => {
+    const { rows } = await db.query<{ id: string }>(
+      `UPDATE cameras SET local_storage = $2, updated_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL AND local_storage <> $2 RETURNING id`,
+      [ids, localStorage],
+    );
+    // Check them again soon so their status and alerts reflect the change.
+    await db.query("UPDATE camera_status SET next_check_at = now() WHERE camera_id = ANY($1::uuid[])", [rows.map((r) => r.id)]);
+    for (const r of rows) {
+      await audit({ actor, ip, action: localStorage ? "camera.local_storage_on" : "camera.local_storage_off", entityType: "camera", entityId: r.id }, db);
+    }
+    return { updated: rows.length };
+  });
 }

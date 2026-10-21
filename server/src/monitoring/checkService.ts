@@ -116,7 +116,7 @@ export async function runCheck(
   let config: CameraConfig | undefined;
   let integrationVersion: string | undefined;
   try {
-    const cam = await pool.query("SELECT brand_key, monitoring_enabled, deleted_at FROM cameras WHERE id = $1", [cameraId]);
+    const cam = await pool.query("SELECT brand_key, monitoring_enabled, local_storage, deleted_at FROM cameras WHERE id = $1", [cameraId]);
     const row = cam.rows[0];
     if (!row || row.deleted_at || (trigger === "scheduled" && !row.monitoring_enabled)) {
       return { cameraId, status: "skipped" };
@@ -135,14 +135,17 @@ export async function runCheck(
       integrationVersion = meta.configVersion ? `${meta.version ?? "1.0.0"} (config ${meta.configVersion})` : (meta.version ?? "1.0.0");
       config = await getCameraConfig(cameraId, settings.requestTimeoutMs);
       const cfg = config;
-      const { value, attempts: n } = await withRetry(() => adapter.getStorageStatus(cfg), {
+      const local = row.local_storage !== false;
+      const { value, attempts: n } = await withRetry(() => (local ? adapter.getStorageStatus(cfg) : reachability(adapter, cfg)), {
         maxRetries: settings.maxRetries,
         baseDelayMs: settings.retryBaseDelayMs,
         sleep: deps.sleep,
       });
       attempts = n;
       result = { ok: true, reading: value };
-      recording = await readRecording(adapter, cfg);
+      recording = local
+        ? await readRecording(adapter, cfg)
+        : { state: "unknown", channels: [], detail: "No local storage: this camera records elsewhere (e.g. an NVR)" };
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
     } catch (err) {
       attempts = (err as { attempts?: number }).attempts ?? attempts;
@@ -155,6 +158,21 @@ export async function runCheck(
   } finally {
     await releaseLease(cameraId, settings).catch((err) => logger.error({ err: err.message, cameraId }, "Failed to release lease"));
   }
+}
+
+/**
+ * For a camera without local storage the storage request only proves it is reachable: a reply that
+ * says there is no storage (or no storage API) still counts as a successful check. Network and
+ * authentication failures still fail, so offline detection and credential alerts work as usual.
+ */
+async function reachability(adapter: CameraBrandAdapter, cfg: CameraConfig): Promise<StorageReading> {
+  try {
+    await adapter.getStorageStatus(cfg);
+  } catch (err) {
+    if (!(err instanceof CameraApiError) || NETWORK_ERROR_CODES.has(err.code) || AUTH_ERROR_CODES.has(err.code)) throw err;
+    if (["CREDENTIALS_UNAVAILABLE", "UNSUPPORTED_BRAND", "HOST_NOT_ALLOWED", "INVALID_HOST"].includes(err.code)) throw err;
+  }
+  return { devices: [] };
 }
 
 /**
@@ -205,7 +223,7 @@ async function persist(
 ): Promise<NotificationEvent[]> {
   return withTransaction(async (db) => {
     const { rows } = await db.query(
-      `SELECT c.id, c.name, c.host, c.created_at, c.warning_threshold, c.critical_threshold,
+      `SELECT c.id, c.name, c.host, c.created_at, c.warning_threshold, c.critical_threshold, c.local_storage,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
               (SELECT max(checked_at) FROM storage_checks sc WHERE sc.camera_id = c.id AND sc.outcome = 'success') AS last_storage_success
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
@@ -239,7 +257,9 @@ async function persist(
     }
 
     const reading: StorageReading | undefined = result.ok ? result.reading : undefined;
-    const health = reading ? storageHealth(reading, thresholds) : undefined;
+    const localStorage = cam.local_storage !== false;
+    // Without local storage there is no storage health to report.
+    const health = reading ? (localStorage ? storageHealth(reading, thresholds) : "unknown") : undefined;
     const lastStorageSuccess: Date = cam.last_storage_success ?? cam.created_at;
     const minutesWithoutStorage = result.ok ? 0 : (Date.now() - new Date(lastStorageSuccess).getTime()) / 60000;
 
@@ -328,6 +348,7 @@ async function persist(
       minutesWithoutStorage,
       thresholds,
       settings,
+      localStorage,
       openTypes: await openAlertTypes(cameraId, db),
     });
     return applyConditions(db, { id: cam.id, name: cam.name, host: cam.host }, evaluation.active, evaluation.evaluated);

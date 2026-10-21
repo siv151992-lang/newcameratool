@@ -1,17 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, Camera as CameraIcon, Eye, Pause, Pencil, Play, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera as CameraIcon, Eye, HardDrive, HardDriveDownload, Pause, Pencil, Play, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
-import { useCheckNow, useRemoveCameras, useSetMonitoring } from "../hooks/cameras";
+import { useCheckNow, useRemoveCameras, useSetLocalStorage, useSetMonitoring } from "../hooks/cameras";
 import { useColumnVisibility } from "../hooks/columns";
 import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, relativeTime } from "../lib/format";
 import { ColumnsMenu } from "./ColumnsMenu";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
-import { ConnectionBadge, HealthBadge, RecordingBadge, UsageMeter } from "./status";
+import { ConnectionBadge, HealthBadge, NoLocalStorageBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
 type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess";
@@ -64,9 +64,9 @@ const COLUMNS: ColumnDef[] = [
     label: "Recording",
     sortKey: "recording",
     cellClassName: "",
-    render: (c) => <RecordingBadge state={c.status.recording.state} detail={c.status.recording.detail} />,
+    render: (c) => (c.localStorage === false ? <span className="text-ink-muted">—</span> : <RecordingBadge state={c.status.recording.state} detail={c.status.recording.detail} />),
   },
-  { key: "health", label: "Storage health", sortKey: "health", cellClassName: "", render: (c) => <HealthBadge health={c.status.storageHealth} /> },
+  { key: "health", label: "Storage health", sortKey: "health", cellClassName: "", render: (c) => (c.localStorage === false ? <NoLocalStorageBadge /> : <HealthBadge health={c.status.storageHealth} />) },
   {
     key: "usage",
     label: "Usage",
@@ -154,6 +154,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [removing, setRemoving] = useState<Camera[] | null>(null);
+  const setLocalStorage = useSetLocalStorage();
   const debouncedSearch = useDebounced(search);
   const columnVisibility = useColumnVisibility("cctv-camera-columns", COLUMN_KEYS);
   const visibleColumns = COLUMNS.filter((col) => columnVisibility.isVisible(col.key));
@@ -198,6 +199,23 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
     setSelected(next);
   };
   const filtered = !!(debouncedSearch || brand || status || location || usage || recording);
+  const total = cameras.data?.total ?? 0;
+  const [selectingAll, setSelectingAll] = useState(false);
+  /** Selects every camera matching the current filters, across all pages. */
+  const selectAllMatching = async () => {
+    setSelectingAll(true);
+    try {
+      const ids: string[] = [];
+      for (let p = 1; ids.length < total && p <= 50; p++) {
+        const res = await api<Page<Camera>>(`/cameras${toQuery({ ...params, page: p, pageSize: 200 })}`);
+        ids.push(...res.items.map((c) => c.id));
+        if (res.items.length < 200) break;
+      }
+      setSelected(new Set(ids));
+    } finally {
+      setSelectingAll(false);
+    }
+  };
   const canWrite = can("cameras:write");
 
   return (
@@ -235,6 +253,8 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
             <option value="healthy">Healthy</option>
             <option value="warning">Warning</option>
             <option value="critical">Critical</option>
+            <option value="nostoragedevice">No SD card detected</option>
+            <option value="nolocalstorage">No local storage (records elsewhere)</option>
           </optgroup>
         </Select>
         <Select aria-label="Filter by location" className="w-auto" value={location} onChange={(e) => setLocation(e.target.value)}>
@@ -263,16 +283,50 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
           <ColumnsMenu columns={COLUMNS} {...columnVisibility} />
         </div>
         {canWrite && selected.size > 0 && (
+          <>
+            <Button
+              size="sm"
+              icon={<HardDriveDownload className="h-4 w-4" />}
+              loading={setLocalStorage.isPending && setLocalStorage.variables?.localStorage === false}
+              onClick={() => setLocalStorage.mutate({ ids: [...selected], localStorage: false }, { onSuccess: () => setSelected(new Set()) })}
+              title="These cameras record elsewhere (e.g. an NVR) and have no SD card: stop storage and recording alerts"
+            >
+              No local storage
+            </Button>
+            <Button
+              size="sm"
+              icon={<HardDrive className="h-4 w-4" />}
+              loading={setLocalStorage.isPending && setLocalStorage.variables?.localStorage === true}
+              onClick={() => setLocalStorage.mutate({ ids: [...selected], localStorage: true }, { onSuccess: () => setSelected(new Set()) })}
+              title="These cameras record to an SD card or local storage"
+            >
+              Uses local storage
+            </Button>
+          </>
+        )}
+        {canWrite && selected.size > 0 && (
           <Button
             variant="danger"
             size="sm"
             icon={<Trash2 className="h-4 w-4" />}
             onClick={() => setRemoving(items.filter((c) => selected.has(c.id)))}
           >
-            Remove {selected.size} selected
+            Remove {items.filter((c) => selected.has(c.id)).length} on this page
           </Button>
         )}
       </div>
+
+      {canWrite && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-accent-soft/30 px-4 py-2 text-sm">
+          <span>{selected.size} selected</span>
+          {allSelected && total > selected.size && (
+            <Button size="sm" variant="ghost" loading={selectingAll} onClick={() => void selectAllMatching()}>
+              Select all {total} matching cameras
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear selection</Button>
+        </div>
+      )}
 
       {cameras.isLoading ? (
         <Spinner label="Loading cameras" />

@@ -65,7 +65,7 @@ export function DashboardPage() {
           label="Total capacity"
           value={s ? formatBytes(s.totalBytes) : "—"}
           icon={<HardDrive className={icon} />}
-          hint={s ? `From ${s.camerasWithStorageData} of ${s.monitoredCameras} monitored cameras` : undefined}
+          hint={s ? `From ${s.camerasWithStorageData} of ${s.monitoredCameras} monitored cameras${s.withoutLocalStorage ? ` (${s.withoutLocalStorage} without local storage)` : ""}` : undefined}
         />
         <StatTile label="Used" value={s ? formatBytes(s.usedBytes) : "—"} icon={<HardDrive className={icon} />} hint={usedPct !== null ? `${usedPct.toFixed(1)}% of capacity` : undefined} />
         <StatTile label="Available" value={s ? formatBytes(s.freeBytes) : "—"} icon={<HardDrive className={icon} />} />

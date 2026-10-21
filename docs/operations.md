@@ -155,6 +155,7 @@ Configured in **Settings → Retention**: monitoring history (default 90 days) a
 |---|---|
 | Test connection: *Address … is outside the allowed camera networks* | Add the camera subnet in **Settings → Camera networks** (applies within 30 seconds, no restart) |
 | A brand is missing from **Add camera** | Only enabled integrations are offered. Check **Settings → Camera brands**: a draft must pass **Test API** and be enabled |
+| Many cameras show *No storage device* / *Not recording* although they record to an NVR | Cameras → status filter **No SD card detected** → select all → **No local storage**. They stay monitored for online/offline; storage and recording alerts stop |
 | Cameras of one brand stopped being checked | The brand's integration was disabled (Settings → Camera brands; see the audit log). Enable it again; history was kept |
 | Configurable brand test: *An API key / Basic / bearer token is only sent over HTTPS* | Use HTTPS for that camera (paste its CA certificate if self-signed), or Digest authentication if the camera supports it |
 | *Camera unreachable (connection refused)* | Wrong port or protocol, or the camera's web service is disabled. Check the camera's *Network → Advanced → Integration protocol* and port settings |

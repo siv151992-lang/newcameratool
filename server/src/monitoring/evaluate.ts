@@ -86,6 +86,8 @@ export interface EvaluationInput {
   thresholds: Thresholds;
   settings: MonitoringSettings;
   openTypes: ReadonlySet<AlertType>;
+  /** False for cameras that record elsewhere: storage and recording alerts do not apply (and are resolved). */
+  localStorage?: boolean;
 }
 
 export interface Evaluation {
@@ -123,6 +125,11 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
       description: `${result.errorMessage} (${input.consecutiveAuthFailures} consecutive attempts). Update the camera credentials.`,
       context: { errorCode: result.errorCode, consecutiveAuthFailures: input.consecutiveAuthFailures },
     });
+  }
+
+  if (input.localStorage === false) {
+    evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "not_recording");
+    return { active, evaluated };
   }
 
   if (result.ok) {

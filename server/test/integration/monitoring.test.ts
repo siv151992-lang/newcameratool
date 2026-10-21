@@ -258,3 +258,34 @@ describe("scheduler", () => {
     expect((await pool.query("SELECT count(*)::int AS n FROM storage_checks")).rows[0].n).toBe(1);
   });
 });
+
+describe("cameras without local storage", () => {
+  it("stop storage and recording alerts but stay monitored for reachability", async () => {
+    cam.setDisks([]);
+    const id = await addCamera();
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).map((a) => [a.type, a.status])).toContainEqual(["no_storage_device", "active"]);
+
+    const { setLocalStorage, getSummary, listCameras, listQuerySchema } = await import("../../src/services/cameraService.js");
+    const ids = async (status: string) => (await listCameras(listQuerySchema.parse({ status }))).items.map((c) => c.id);
+    expect(await ids("nostoragedevice")).toEqual([id]);
+    expect(await setLocalStorage([id], false, actor)).toEqual({ updated: 1 });
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).find((a) => a.type === "no_storage_device")!.status).toBe("resolved");
+    expect(await status(id)).toMatchObject({ connection_status: "online", storage_health: "unknown", recording_state: "unknown", total_bytes: null });
+    expect(await getSummary()).toMatchObject({ online: 1, storageCritical: 0, notRecording: 0, withoutLocalStorage: 1 });
+    expect(await ids("nolocalstorage")).toEqual([id]);
+    expect(await ids("nostoragedevice")).toEqual([]);
+
+    // A missing storage API still counts as reachable…
+    cam.mode = "not-found";
+    expect((await runCheck(id, "manual", deps)).result).toMatchObject({ ok: true });
+    // …but no answer at all still makes it offline.
+    cam.mode = "hang";
+    await updateMonitoringSettings({ offlineFailureThreshold: 1, maxRetries: 0, requestTimeoutMs: 1000 }, null);
+    await runCheck(id, "manual", deps);
+    expect((await status(id)).connection_status).toBe("offline");
+    expect((await alerts(id)).find((a) => a.type === "offline")!.status).toBe("active");
+    cam.mode = "ok";
+  });
+});

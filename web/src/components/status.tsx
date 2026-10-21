@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, FilePen, FlaskConical, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, FilePen, FlaskConical, HardDriveDownload, WifiOff } from "lucide-react";
 import type { ConnectionStatus, IntegrationStatus, RecordingState, Severity, StorageHealth } from "../api/types";
 
 /**
@@ -102,6 +102,11 @@ export function UsageMeter({
       <span className="tabular w-12 text-right text-sm text-ink">{percent.toFixed(1)}%</span>
     </div>
   );
+}
+
+/** Shown instead of storage and recording states for cameras that record elsewhere (e.g. an NVR). */
+export function NoLocalStorageBadge() {
+  return <Pill tone="unknown" icon={HardDriveDownload} label="No local storage" title="Records elsewhere (e.g. an NVR); storage and recording alerts are off" />;
 }
 
 /** Lifecycle of a brand integration: only "Enabled" integrations monitor cameras. */
