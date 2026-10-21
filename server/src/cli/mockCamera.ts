@@ -7,11 +7,12 @@ import { MockVendorCamera } from "../testing/mockVendor.js";
  *   npm run mock-camera -- --port 8081 --count 3
  *   npm run mock-camera -- --port 8081 --count 3 --vendor   (also a camera of an unknown "Acme Vision" brand,
  *                                                            for trying configurable API integrations)
+ *   ... --panasonic                                          (also a simulated Panasonic / i-PRO camera)
  *   ... --hanwha                                             (also a simulated Hanwha Vision SUNAPI camera)
  * Register them in the app with host 127.0.0.1 (requires CAMERA_ALLOW_LOOPBACK=true, development only).
  */
 const { values } = parseArgs({
-  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false } },
+  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false }, panasonic: { type: "boolean", default: false } },
 });
 const base = Number(values.port);
 const count = Math.min(Number(values.count), 20);
@@ -48,5 +49,10 @@ if (values.hanwha) {
   const cam = new MockVendorCamera("admin", "Hanwha-Passw0rd!", "hanwha");
   const port = await cam.start(base + count + 1);
   console.log(`Simulated Hanwha Vision camera: http://127.0.0.1:${port}  user=admin password=Hanwha-Passw0rd!  (SUNAPI, Digest)`);
+}
+if (values.panasonic) {
+  const cam = new MockVendorCamera("admin", "Ipro-Passw0rd!", "panasonic");
+  const port = await cam.start(base + count + 2);
+  console.log(`Simulated Panasonic / i-PRO camera: http://127.0.0.1:${port}  user=admin password=Ipro-Passw0rd!  (Digest)`);
 }
 console.log("\nThese are SIMULATED devices for demos. Press Ctrl+C to stop.");

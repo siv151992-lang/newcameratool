@@ -34,7 +34,7 @@ export class MockVendorCamera {
   private readonly realm = "AcmeVision";
 
   /** "hanwha" answers Hanwha Vision SUNAPI (stw-cgi) requests instead of the Acme API. */
-  constructor(public username = "admin", public password = "Acme-Passw0rd!", public profile: "acme" | "hanwha" = "acme") {}
+  constructor(public username = "admin", public password = "Acme-Passw0rd!", public profile: "acme" | "hanwha" | "panasonic" = "acme") {}
 
   private verify(header: string | undefined, method: string): boolean {
     if (!header?.startsWith("Digest ")) return false;
@@ -60,6 +60,19 @@ export class MockVendorCamera {
     if (this.mode === "server-error") {
       res.statusCode = 500;
       return res.end(JSON.stringify({ error: "internal" }));
+    }
+    if (this.profile === "panasonic") {
+      if (url.pathname === "/cgi-bin/getinfo" && url.searchParams.get("FILE") === "1") {
+        res.setHeader("Content-Type", "text/plain");
+        return res.end("<HTML>\r\nMAC=00-80-45-00-00-01\r\nSERIAL=SIM0001\r\nVERSION=3.50\r\nNAME=SIMULATED-IPRO\r\nSDrec=on\r\nFIRMWARE=s32302\r\n</HTML>\r\n");
+      }
+      if (url.pathname === "/admin/setup_sdcard.html") {
+        res.setHeader("Content-Type", "text/html");
+        const d = this.disks[0]!;
+        return res.end(`<html><head><script>\nvar gsSdMode = "sdrec";\nvar sRemSD = "${d.freeMiB}";\nvar sRemSD2 = "-";\nvar sTotalSD = "${d.sizeMiB}";\nvar sTotalSD2 = "-";\nvar sTotalSDplus = 0;\n</script></head><body></body></html>`);
+      }
+      res.statusCode = 404;
+      return res.end("Not Found");
     }
     if (this.profile === "hanwha") {
       res.setHeader("Content-Type", "text/plain");

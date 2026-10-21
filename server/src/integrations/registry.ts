@@ -5,6 +5,7 @@ import { HanwhaAdapter } from "./hanwha/adapter.js";
 import { HikvisionAdapter } from "./hikvision/adapter.js";
 import { CameraHttpClient } from "./http/cameraHttpClient.js";
 import { OnvifAdapter } from "./onvif/adapter.js";
+import { PanasonicAdapter } from "./panasonic/adapter.js";
 import { UniviewAdapter } from "./uniview/adapter.js";
 import { pool, type Queryable } from "../db/pool.js";
 import { ConfigurableAdapter, type ConfigurableMeta } from "./configurable/adapter.js";
@@ -165,6 +166,9 @@ export class BrandRegistry {
       hanwhatechwin: "hanwha",
       wisenet: "hanwha",
       samsungtechwin: "hanwha",
+      panasonic: "panasonic",
+      ipro: "panasonic",
+      panasonicipro: "panasonic",
     };
     const key = aliases[s] ?? s;
     if (this.adapters.has(key) || this.planned.has(key) || this.states.has(key)) return key;
@@ -192,6 +196,7 @@ export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandReg
   registry.register(new UniviewAdapter(http));
   registry.register(new OnvifAdapter(http));
   registry.register(new HanwhaAdapter(http));
+  registry.register(new PanasonicAdapter(http));
   for (const p of PLANNED) registry.registerPlanned(p);
   return registry;
 }

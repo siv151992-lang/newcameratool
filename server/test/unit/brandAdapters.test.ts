@@ -5,6 +5,7 @@ import { HANWHA_DEVICE_INFO_PATH, HANWHA_EVENT_STATUS_PATH, HANWHA_RECORDING_SET
 import { HikvisionAdapter } from "../../src/integrations/hikvision/adapter.js";
 import { CameraHttpClient } from "../../src/integrations/http/cameraHttpClient.js";
 import { requireOk } from "../../src/integrations/http/responses.js";
+import { PANASONIC_INFO_PATH, PANASONIC_SDCARD_PATH, PanasonicAdapter } from "../../src/integrations/panasonic/adapter.js";
 import { ONVIF_DEVICE_SERVICE_PATH, ONVIF_RECORDING_SERVICE_PATH, OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { MIB } from "../../src/integrations/parsing.js";
 import { createRegistry } from "../../src/integrations/registry.js";
@@ -12,6 +13,7 @@ import { CameraApiError, type CameraConfig } from "../../src/integrations/types.
 import { UNIVIEW_DEVICE_INFO_PATH, UNIVIEW_RECORDING_PATH, UNIVIEW_STORAGE_PATH, UniviewAdapter } from "../../src/integrations/uniview/adapter.js";
 import { readRecording } from "../../src/monitoring/checkService.js";
 import { HostGuard } from "../../src/security/hostGuard.js";
+import { WV_S35402_GETINFO, WV_S35402_SDCARD_PAGE } from "../fixtures/panasonic-wv-s35402.js";
 import { MockBrandCamera, type MockRequest } from "../mockBrandCamera.js";
 
 const http = new CameraHttpClient(new HostGuard({ allowedNetworks: "10.0.0.0/8", allowLoopback: true }));
@@ -44,10 +46,10 @@ describe("brand registry", () => {
   const registry = createRegistry(http);
 
   it("registers every brand adapter, new ones as unverified", () => {
-    for (const key of ["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha"]) expect(registry.isSupported(key)).toBe(true);
-    for (const key of ["hikvision", "hanwha"]) expect(registry.get(key).meta.supportStatus).toBe("supported");
+    for (const key of ["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic"]) expect(registry.isSupported(key)).toBe(true);
+    for (const key of ["hikvision", "hanwha", "panasonic"]) expect(registry.get(key).meta.supportStatus).toBe("supported");
     for (const key of ["dahua", "axis", "uniview", "onvif"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
-    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha"]);
+    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic"]);
   });
 
   it("resolves brand aliases", () => {
@@ -338,5 +340,31 @@ describe("HanwhaAdapter", () => {
   it("is registered under its names", () => {
     const r = createRegistry(http);
     for (const name of ["Hanwha", "Wisenet", "Hanwha Vision", "Samsung Techwin"]) expect(r.resolveKey(name), name).toBe("hanwha");
+  });
+});
+
+describe("PanasonicAdapter", () => {
+  const cam = new MockBrandCamera()
+    .route(PANASONIC_SDCARD_PATH, { body: WV_S35402_SDCARD_PAGE, contentType: "text/html" })
+    .route(PANASONIC_INFO_PATH, { body: WV_S35402_GETINFO, contentType: "text/plain" });
+  const ctx = useCamera(cam);
+  const adapter = new PanasonicAdapter(http);
+
+  it("reads storage, device info and recording through Digest auth", async () => {
+    expect(await adapter.getStorageStatus(ctx.config)).toMatchObject({ totalBytes: 243952 * MIB, freeBytes: 696 * MIB });
+    expect(await adapter.getDeviceInfo(ctx.config)).toMatchObject({ model: "WV-S35402-F2L" });
+    expect(await adapter.getRecordingStatus(ctx.config)).toMatchObject({ state: "recording" });
+    expect((await adapter.testConnection(ctx.config)).ok).toBe(true);
+  });
+
+  it("classifies wrong passwords and a missing SD page", async () => {
+    expect(await codeOf(adapter.getStorageStatus({ ...ctx.config, password: "wrong" }))).toBe("AUTH_FAILED");
+    cam.routes.delete(PANASONIC_SDCARD_PATH);
+    expect(await codeOf(adapter.getStorageStatus(ctx.config))).toBe("API_UNAVAILABLE");
+  });
+
+  it("is registered under its names", () => {
+    const r = createRegistry(http);
+    for (const name of ["Panasonic", "i-PRO", "iPRO", "Panasonic i-PRO"]) expect(r.resolveKey(name), name).toBe("panasonic");
   });
 });
