@@ -730,6 +730,7 @@ function AuditTab() {
                   <th scope="col" className="px-4 py-2 font-medium">Time</th>
                   <th scope="col" className="px-4 py-2 font-medium">User</th>
                   <th scope="col" className="px-4 py-2 font-medium">Action</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Camera</th>
                   <th scope="col" className="px-4 py-2 font-medium">Details</th>
                   <th scope="col" className="px-4 py-2 font-medium">IP</th>
                 </tr>
@@ -740,6 +741,13 @@ function AuditTab() {
                     <td className="tabular whitespace-nowrap px-4 py-2 text-ink-secondary">{absoluteTime(a.created_at)}</td>
                     <td className="px-4 py-2">{a.actor_username}</td>
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">{a.action}</td>
+                    <td className="max-w-xs px-4 py-2">
+                      {a.camera_name && (a.camera_removed || !a.entity_id ? (
+                        <span className="text-ink-secondary" title={a.camera_host ?? undefined}>{a.camera_name}{a.camera_removed && " (removed)"}</span>
+                      ) : (
+                        <Link to={`/cameras/${a.entity_id}`} className="text-accent hover:underline" title={a.camera_host ?? undefined}>{a.camera_name}</Link>
+                      ))}
+                    </td>
                     <td className="max-w-md px-4 py-2 text-xs text-ink-secondary">{describe(a.details)}</td>
                     <td className="tabular px-4 py-2 text-xs text-ink-muted">{a.ip}</td>
                   </tr>

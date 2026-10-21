@@ -131,6 +131,10 @@ describe("cameras", () => {
     expect((await pool.query("SELECT count(*)::int AS n FROM camera_credentials WHERE camera_id = $1", [id])).rows[0].n).toBe(0);
     const actions = (await pool.query("SELECT action FROM audit_logs WHERE entity_id = $1 ORDER BY id", [id])).rows.map((r) => r.action);
     expect(actions).toEqual(["camera.created", "camera.updated", "camera.credentials_changed", "camera.removed"]);
+    // The audit log names the camera (its latest name), also after removal.
+    const log = (await agent.get(`/api/audit?entityType=camera&entityId=${id}`).expect(200)).body.items;
+    expect(log).toHaveLength(4);
+    for (const e of log) expect(e).toMatchObject({ camera_name: "Main Entrance", camera_removed: true });
   });
 
   it("validates input", async () => {

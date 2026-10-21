@@ -34,14 +34,19 @@ export async function audit(entry: AuditEntry, db: Queryable = pool) {
 export async function listAudit(opts: { page: number; pageSize: number; entityType?: string; entityId?: string }) {
   const where: string[] = [];
   const params: unknown[] = [];
-  if (opts.entityType) where.push(`entity_type = $${params.push(opts.entityType)}`);
-  if (opts.entityId) where.push(`entity_id = $${params.push(opts.entityId)}`);
+  if (opts.entityType) where.push(`a.entity_type = $${params.push(opts.entityType)}`);
+  if (opts.entityId) where.push(`a.entity_id = $${params.push(opts.entityId)}`);
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_logs ${clause}`, params)).rows[0]!.n;
+  const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_logs a ${clause}`, params)).rows[0]!.n;
   params.push(opts.pageSize, (opts.page - 1) * opts.pageSize);
   const { rows } = await pool.query(
-    `SELECT id, actor_username, action, entity_type, entity_id, details, ip, created_at
-     FROM audit_logs ${clause} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    // Camera entries carry the camera's current name (removed cameras are soft-deleted, so still found).
+    `SELECT a.id, a.actor_username, a.action, a.entity_type, a.entity_id, a.details, a.ip, a.created_at,
+            COALESCE(c.name, a.details->>'name') AS camera_name, c.host AS camera_host,
+            (c.id IS NULL OR c.deleted_at IS NOT NULL) AS camera_removed
+     FROM audit_logs a
+     LEFT JOIN cameras c ON a.entity_type = 'camera' AND c.id::text = a.entity_id
+     ${clause} ORDER BY a.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
   return { items: rows, total };

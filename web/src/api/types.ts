@@ -234,6 +234,10 @@ export interface AuditEntry {
   details: Record<string, unknown>;
   ip: string | null;
   created_at: string;
+  /** Camera entries only: the camera's name (null for other entries or bulk actions). */
+  camera_name: string | null;
+  camera_host: string | null;
+  camera_removed: boolean;
 }
 
 export interface ImportRow {
