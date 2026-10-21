@@ -448,6 +448,20 @@ describe("Hikvision recording from the recordings on storage (DS-2CD3563G2-IS)",
     expect(await read()).toMatchObject({ state: "recording", detail: expect.stringContaining("last recorded 2 min ago, 19:12 camera time") });
   });
 
+  it("falls back when Recording/status is refused with 403, and names a refused search", async () => {
+    cam.route(HIKVISION_RECORDING_PATH, { status: 403, contentType: "text/html", body: "Forbidden" });
+    try {
+      expect((await read()).state).toBe("recording");
+      cam.route(HIKVISION_SEARCH_PATH, { status: 403, contentType: "text/html", body: "Forbidden" });
+      const r = await readRecording(new HikvisionAdapter(http), ctx.config);
+      expect(r.state).toBe("unknown");
+      expect(r.detail).toContain("(while searching its recordings). Give the camera user the Remote: Playback permission");
+    } finally {
+      cam.route(HIKVISION_RECORDING_PATH, { status: 404, contentType: "text/html", body: DS2CD3563G2_RECORDING_STATUS_404 });
+      cam.route(HIKVISION_SEARCH_PATH, (req) => ({ body: search(req.body), contentType: "application/xml" }));
+    }
+  });
+
   it("still prefers Recording/status where the camera provides it", async () => {
     const live = new MockBrandCamera().route(HIKVISION_RECORDING_PATH, { body: "<RecordingStatus><status>recording</status></RecordingStatus>" });
     const port = await live.start();

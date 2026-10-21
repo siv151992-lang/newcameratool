@@ -95,16 +95,19 @@ export class HikvisionAdapter implements CameraBrandAdapter {
       const live = parseRecordingStatusXml(await this.getXml(camera, HIKVISION_RECORDING_PATH));
       if (live.state !== "unknown") return live;
     } catch (err) {
-      if (!(err instanceof CameraApiError) || !["API_UNAVAILABLE", "INVALID_RESPONSE"].includes(err.code)) throw err;
+      // Some firmware answers a missing Recording/status with 403 rather than 404.
+      if (!(err instanceof CameraApiError) || !["API_UNAVAILABLE", "INVALID_RESPONSE", "PERMISSION_DENIED"].includes(err.code)) throw err;
     }
     return this.recordingFromSearch(camera);
   }
 
   private async recordingFromSearch(camera: CameraConfig): Promise<RecordingReading> {
-    const { nowMs, offsetMinutes } = parseCameraTime(await this.getXml(camera, HIKVISION_TIME_PATH));
+    const { nowMs, offsetMinutes } = parseCameraTime(await this.step("reading the camera's clock", () => this.getXml(camera, HIKVISION_TIME_PATH)));
     const latestAround = async (now: number) =>
       parseSearchLatestEnd(
-        await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(now - SEARCH_WINDOW_MINUTES * 60_000, now + 5 * 60_000, randomUUID().toUpperCase())),
+        await this.step("searching its recordings", () =>
+          this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(now - SEARCH_WINDOW_MINUTES * 60_000, now + 5 * 60_000, randomUUID().toUpperCase())),
+        ),
       );
     let latest = await latestAround(nowMs);
     // Some firmware reads the requested period as UTC; search that period too before concluding.
@@ -116,6 +119,19 @@ export class HikvisionAdapter implements CameraBrandAdapter {
       schedule = await this.getXml(camera, HIKVISION_TRACK_PATH).then(parseTrackSchedule, () => undefined);
     }
     return recordingFromSegments(nowMs, latest, schedule);
+  }
+
+  /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */
+  private async step<T>(what: string, run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      if (!(err instanceof CameraApiError)) throw err;
+      const hint = err.code === "PERMISSION_DENIED"
+        ? ". Give the camera user the Remote: Playback permission (Configuration → System → User Management), or use an administrator account"
+        : "";
+      throw new CameraApiError(err.code, `${err.message} (while ${what})${hint}`, err.options);
+    }
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {
