@@ -95,6 +95,8 @@ export interface Summary {
   usedBytes: number;
   freeBytes: number;
   camerasWithStorageData: number;
+  /** Offline cameras whose last storage reading is left out of the capacity totals. */
+  offlineWithStorageData: number;
   withoutLocalStorage: number;
   alerts: { active: number; acknowledged: number; critical: number };
 }

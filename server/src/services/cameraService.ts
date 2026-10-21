@@ -325,10 +325,12 @@ export async function getSummary() {
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND NOT c.local_storage)::int AS without_local_storage,
-            coalesce(sum(s.total_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS total_bytes,
-            coalesce(sum(s.used_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS used_bytes,
-            coalesce(sum(s.free_bytes) FILTER (WHERE c.monitoring_enabled), 0)::bigint AS free_bytes,
-            count(s.total_bytes) FILTER (WHERE c.monitoring_enabled)::int AS cameras_with_storage_data
+            -- Capacity counts only cameras that are reachable: an offline camera's last reading is stale.
+            coalesce(sum(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline'), 0)::bigint AS total_bytes,
+            coalesce(sum(s.used_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline'), 0)::bigint AS used_bytes,
+            coalesce(sum(s.free_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline'), 0)::bigint AS free_bytes,
+            count(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline')::int AS cameras_with_storage_data,
+            count(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status = 'offline')::int AS offline_with_storage_data
      FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id
      WHERE c.deleted_at IS NULL`,
   );
@@ -354,6 +356,7 @@ export async function getSummary() {
     usedBytes: r.used_bytes,
     freeBytes: r.free_bytes,
     camerasWithStorageData: r.cameras_with_storage_data,
+    offlineWithStorageData: r.offline_with_storage_data,
     withoutLocalStorage: r.without_local_storage,
     alerts: alerts.rows[0],
   };

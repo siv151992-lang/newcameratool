@@ -79,6 +79,9 @@ describe("storage checks", () => {
     const s = await status(id);
     expect(s).toMatchObject({ connection_status: "offline", storage_health: "unknown", last_error_code: "UNREACHABLE", consecutive_failures: 3 });
     expect(s.used_percentage).toBe(53.78); // last known figures retained
+    const { getSummary } = await import("../../src/services/cameraService.js");
+    // …but left out of the dashboard's capacity totals while the camera is offline.
+    expect(await getSummary()).toMatchObject({ offline: 1, totalBytes: 0, camerasWithStorageData: 0, offlineWithStorageData: 1 });
     expect(await alerts(id)).toEqual([{ type: "offline", severity: "critical", status: "active", occurrence_count: 1 }]);
     const events = (await pool.query("SELECT from_status, to_status FROM connection_events WHERE camera_id = $1", [id])).rows;
     expect(events).toEqual([{ from_status: "unknown", to_status: "online" }, { from_status: "online", to_status: "offline" }]);
@@ -87,6 +90,7 @@ describe("storage checks", () => {
     await pool.query("UPDATE cameras SET port = $2 WHERE id = $1", [id, port]);
     await runCheck(id, "manual", deps);
     expect((await status(id)).connection_status).toBe("online");
+    expect(await getSummary()).toMatchObject({ camerasWithStorageData: 1, offlineWithStorageData: 0 });
     expect((await alerts(id))[0]).toMatchObject({ type: "offline", status: "resolved" });
     expect(sent.map((e) => `${e.type}:${e.kind}`)).toEqual(["offline:opened", "offline:resolved"]);
   });
