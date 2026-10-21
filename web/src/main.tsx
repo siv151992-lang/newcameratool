@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
@@ -9,7 +9,9 @@ import { AuthProvider } from "./hooks/auth";
 import { ThemeProvider } from "./hooks/theme";
 import "./index.css";
 
-const queryClient = new QueryClient({
+const queryClient: QueryClient = new QueryClient({
+  // Every change made in the app writes an audit entry, so show it straight away.
+  mutationCache: new MutationCache({ onSettled: () => queryClient.invalidateQueries({ queryKey: ["audit"] }) }),
   defaultOptions: {
     queries: {
       staleTime: 10_000,

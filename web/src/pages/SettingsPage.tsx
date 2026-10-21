@@ -695,13 +695,32 @@ function AccountTab() {
 
 function AuditTab() {
   const [page, setPage] = useState(1);
-  const audit = useQuery({ queryKey: ["audit", page], queryFn: () => api<Page<AuditEntry>>(`/audit${toQuery({ page, pageSize: 50 })}`) });
+  // Polled so new entries appear without reloading; mutations also invalidate it (main.tsx).
+  const audit = useQuery({
+    queryKey: ["audit", page],
+    queryFn: () => api<Page<AuditEntry>>(`/audit${toQuery({ page, pageSize: 50 })}`),
+    refetchInterval: 5_000,
+    staleTime: 0,
+  });
   const describe = (d: Record<string, unknown>): ReactNode => {
     const entries = Object.entries(d);
     return entries.length ? entries.map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`).join(" · ") : "";
   };
   return (
-    <Card title="Audit log">
+    <Card
+      title="Audit log"
+      actions={
+        <>
+          {audit.dataUpdatedAt > 0 && (
+            <span className="flex items-center gap-1.5 text-xs text-ink-secondary" aria-live="polite">
+              <span className={clsx("h-2 w-2 rounded-full", audit.error ? "bg-bad" : "bg-good")} aria-hidden />
+              Live · updated {absoluteTime(new Date(audit.dataUpdatedAt).toISOString())}
+            </span>
+          )}
+          <Button variant="secondary" onClick={() => audit.refetch()} disabled={audit.isFetching}>Refresh</Button>
+        </>
+      }
+    >
       {audit.isLoading ? <Spinner /> : audit.error ? <div className="p-4"><ErrorMessage error={audit.error} /></div> : (
         <>
           <div className="overflow-x-auto">
