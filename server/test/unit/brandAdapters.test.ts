@@ -282,6 +282,21 @@ describe("getRecordingStatus over HTTP", () => {
     ]);
   });
 
+  it("falls back to searching Hikvision recordings when the status endpoint is missing", async () => {
+    cam.routes.delete("/ISAPI/ContentMgmt/Recording/status");
+    cam.route("/ISAPI/System/time", { body: "<Time><localTime>2026-10-21T17:25:00+05:30</localTime></Time>" });
+    cam.route("/ISAPI/ContentMgmt/search", {
+      body: `<CMSearchResult><responseStatus>true</responseStatus><responseStatusStrg>OK</responseStatusStrg><matchList>
+        <searchMatchItem><trackID>101</trackID><timeSpan><startTime>2026-10-21T17:00:00Z</startTime><endTime>2026-10-21T17:24:50Z</endTime></timeSpan></searchMatchItem>
+        </matchList></CMSearchResult>`,
+    });
+    cam.requests.length = 0;
+    expect((await new HikvisionAdapter(http).getRecordingStatus(ctx.config)).state).toBe("recording");
+    const search = cam.requests.find((r) => r.headers.authorization && r.path === "/ISAPI/ContentMgmt/search");
+    expect(search).toMatchObject({ method: "POST" });
+    expect(search!.body).toContain("<startTime>2026-10-21T16:55:00Z</startTime>"); // 30 minutes back
+  });
+
   it("is reported as unknown by the monitor when the endpoint is missing, without failing", async () => {
     cam.routes.delete(DAHUA_RECORDING_PATH);
     const r = await readRecording(new DahuaAdapter(http), ctx.config);
