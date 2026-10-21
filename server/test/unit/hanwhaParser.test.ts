@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiError, parseSunapiSize } from "../../src/integrations/hanwha/parser.js";
-import { QND7012R_EVENTSTATUS, QND7012R_RECORDING_STORAGE, QND7012R_STORAGEINFO } from "../fixtures/hanwha-qnd7012r.js";
+import { QND7012R_EVENTSTATUS, QND7012R_NO_CARD_STORAGEINFO, QND7012R_RECORDING_STORAGE, QND7012R_STORAGEINFO } from "../fixtures/hanwha-qnd7012r.js";
 import { MIB } from "../../src/integrations/parsing.js";
 
 describe("Hanwha SUNAPI storage", () => {
@@ -87,5 +87,25 @@ describe("Hanwha QND-7012R (real replies)", () => {
     expect(parseHanwhaRecording(QND7012R_STORAGEINFO, fullNoOverwrite, QND7012R_EVENTSTATUS.replace("SDFull=False", "SDFull=True")).detail).toMatch(/full and overwrite is off/);
     // Full with overwrite on keeps recording.
     expect(parseHanwhaRecording(QND7012R_STORAGEINFO, QND7012R_RECORDING_STORAGE, QND7012R_EVENTSTATUS.replace("SDFull=False", "SDFull=True")).state).toBe("recording");
+  });
+});
+
+describe("Hanwha QND-7012R without an SD card (real reply)", () => {
+  it("reports no storage device instead of a card of unknown state", () => {
+    const r = parseHanwhaStorage(QND7012R_NO_CARD_STORAGEINFO);
+    expect(r.devices).toEqual([]);
+    expect(r.totalBytes).toBeUndefined();
+  });
+
+  it("says the enabled SD slot has no card", () => {
+    const r = parseHanwhaRecording(QND7012R_NO_CARD_STORAGEINFO, QND7012R_RECORDING_STORAGE, QND7012R_EVENTSTATUS.replace("SDInsert=True", "SDInsert=False"));
+    expect(r).toMatchObject({ state: "error", detail: expect.stringMatching(/^The SD card slot is enabled but no card is inserted/) });
+    // With SD recording switched off it is simply not recording.
+    expect(parseHanwhaRecording(QND7012R_NO_CARD_STORAGEINFO, QND7012R_RECORDING_STORAGE.replace("Enable=True", "Enable=False")).state).toBe("idle");
+  });
+
+  it("still reads a card whose status is empty but whose size is reported", () => {
+    const odd = QND7012R_STORAGEINFO.replace("Storage.1.Status=Active", "Storage.1.Status=");
+    expect(parseHanwhaStorage(odd).devices).toHaveLength(1);
   });
 });

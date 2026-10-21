@@ -58,6 +58,15 @@ const STATUS = statusMapper({
 });
 
 const TOTAL = ["totalspace", "totalsize", "total", "capacity"];
+
+/**
+ * A slot without a card: an "absent" status, or (as a QND-7012R without a card reports) an empty
+ * status with zero or no capacity, even though the slot itself is enabled.
+ */
+export function isEmptySlot(status: string | undefined, totalRaw: string | undefined): boolean {
+  if (isAbsentStatus(status) || /^(none|nocard|notinserted|notexist)$/i.test(status ?? "")) return true;
+  return !status?.trim() && (totalRaw === undefined || /^\s*0*(\.0+)?\s*$/.test(totalRaw));
+}
 const FREE = ["freespace", "freesize", "free", "remainspace", "remainsize", "remaining"];
 const USED = ["usedspace", "usedsize", "used"];
 
@@ -95,7 +104,7 @@ export function parseHanwhaStorage(body: string): StorageReading {
   for (const [index, s] of [...slots.entries()].sort(([a], [b]) => Number(a) - Number(b))) {
     const rawStatus = s.get("status") ?? s.get("state");
     const enabled = parseBoolean(s.get("enable"));
-    if (enabled === false || isAbsentStatus(rawStatus) || /^(none|nocard|notinserted|notexist)$/i.test(rawStatus ?? "")) continue;
+    if (enabled === false || isEmptySlot(rawStatus, pick(s, TOTAL))) continue;
     const totalBytes = parseSunapiSize(pick(s, TOTAL));
     let freeBytes = parseSunapiSize(pick(s, FREE));
     const usedBytes = parseSunapiSize(pick(s, USED));
@@ -149,20 +158,22 @@ export function parseHanwhaRecording(storageBody: string, settingsBody: string, 
 
   const enabled = flag(settings, "Enable");
   const overwrite = flag(settings, "OverWrite");
-  const slots = new Map<string, { type?: string; enable?: boolean; status?: string }>();
+  const slots = new Map<string, { type?: string; enable?: boolean; status?: string; total?: string }>();
   for (const [key, value] of storage) {
-    const m = /^storages?\.(\d+)\.(type|enable|status)$/i.exec(key);
+    const m = /^storages?\.(\d+)\.(type|enable|status|totalspace)$/i.exec(key);
     if (!m) continue;
     const slot = slots.get(m[1]!) ?? {};
     const field = m[2]!.toLowerCase();
     if (field === "enable") slot.enable = parseBoolean(value);
     else if (field === "type") slot.type = value;
+    else if (field === "totalspace") slot.total = value;
     else slot.status = value;
     slots.set(m[1]!, slot);
   }
   // A slot is in use when enabled, or when it reports a status and is not explicitly disabled.
-  const empty = (status?: string) => isAbsentStatus(status) || /^(none|nocard|notinserted|notexist)$/i.test(status ?? "");
-  const used = [...slots.values()].filter((s) => !empty(s.status) && (s.enable === true || (s.enable === undefined && !!s.status)));
+  const used = [...slots.values()].filter((s) => !isEmptySlot(s.status, s.total) && (s.enable === true || (s.enable === undefined && !!s.status)));
+  const sdType = (t?: string) => /^(das|sd|microsd|sdcard)$/i.test(t ?? "");
+  const emptySdEnabled = [...slots.values()].some((s) => s.enable === true && sdType(s.type) && isEmptySlot(s.status, s.total));
   const usedText = used.map((s) => `${s.type ?? "storage"} ${s.status || "no status"}`).join(", ");
   const note = "inferred from the camera's recording settings and storage status (it does not report live recording)";
   const result = (state: RecordingState, why: string): RecordingReading => ({
@@ -172,10 +183,14 @@ export function parseHanwhaRecording(storageBody: string, settingsBody: string, 
   });
 
   if (enabled === false) return result("idle", "Recording to storage is turned off in the camera");
-  if (used.length === 0) return result("idle", "No storage is enabled for recording");
+  if (used.length === 0) {
+    // Recording to SD is set up but there is no card: recording cannot happen.
+    if (enabled === true && emptySdEnabled) return result("error", "The SD card slot is enabled but no card is inserted");
+    return result("idle", "No storage is enabled for recording");
+  }
   if (flag(events, "SystemEvent.SDFail") || flag(events, "SystemEvent.NASFail")) return result("error", "The camera reports a storage failure");
   if (used.some((s) => STATUS(s.status) === "unhealthy")) return result("error", `Storage status: ${usedText}`);
-  const sd = used.some((s) => /^(das|sd|microsd|sdcard)$/i.test(s.type ?? ""));
+  const sd = used.some((s) => sdType(s.type));
   if (sd && flag(events, "SystemEvent.SDInsert") === false) return result("error", "No SD card is inserted");
   if ((flag(events, "SystemEvent.SDFull") || flag(events, "SystemEvent.NASFull")) && overwrite === false) {
     return result("error", "Storage is full and overwrite is off, so recording has stopped");

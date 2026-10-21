@@ -194,6 +194,11 @@ export function CameraDetailPage() {
                 title="No local storage"
                 description="This camera records elsewhere (e.g. to an NVR), so its storage and recording are not monitored here. It is still checked for being online. Change this under Edit."
               />
+            ) : s.totalBytes === null && s.lastSuccessAt && c.devices.length === 0 ? (
+              <EmptyState
+                title="No SD card detected"
+                description="The camera answered but reports no SD card or storage device. If it records to an NVR instead, untick “Records to an SD card or local storage” under Edit (or use No local storage in the camera list)."
+              />
             ) : s.totalBytes === null ? (
               <EmptyState
                 title={s.lastAttemptAt ? "No storage data yet" : "Not checked yet"}
