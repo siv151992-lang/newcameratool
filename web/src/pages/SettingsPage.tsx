@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, Boxes, ChevronRight, Clock, Gauge, Mail, Network, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, Boxes, ChevronRight, Clock, Download, Gauge, Mail, Network, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
-import { api, ApiError, toQuery } from "../api/client";
+import { api, ApiError, downloadFile, toQuery } from "../api/client";
 import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NetworkSettings, NotificationChannel, Page } from "../api/types";
 import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea } from "../components/ui";
 import { useToast } from "../components/toast";
@@ -702,6 +702,24 @@ function AuditTab() {
     refetchInterval: 5_000,
     staleTime: 0,
   });
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const rangeInvalid = !!from && !!to && from > to;
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      await downloadFile(`/audit/export${toQuery({ from, to, timeZone })}`, "audit-log.csv");
+      void queryClient.invalidateQueries({ queryKey: ["audit"] }); // the export is itself audited
+    } catch (e) {
+      toast("error", (e as Error).message);
+    } finally {
+      setDownloading(false);
+    }
+  };
   const describe = (d: Record<string, unknown>): ReactNode => {
     const entries = Object.entries(d);
     return entries.length ? entries.map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`).join(" · ") : "";
@@ -721,6 +739,20 @@ function AuditTab() {
         </>
       }
     >
+      <div className="flex flex-wrap items-end gap-3 border-b border-line px-4 py-3">
+        <Field label="From" className="w-40">
+          {(id, describedBy) => <Input id={id} aria-describedby={describedBy} type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} invalid={rangeInvalid} />}
+        </Field>
+        <Field label="To" className="w-40">
+          {(id, describedBy) => <Input id={id} aria-describedby={describedBy} type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} invalid={rangeInvalid} />}
+        </Field>
+        <Button icon={<Download className="h-4 w-4" />} onClick={download} loading={downloading} disabled={rangeInvalid}>
+          Download CSV
+        </Button>
+        <p className="text-xs text-ink-secondary">
+          {rangeInvalid ? "“From” must not be after “To”." : `${from || to ? "Entries in the selected days" : "All entries"}, newest first, times in your time zone. Opens in Excel.`}
+        </p>
+      </div>
       {audit.isLoading ? <Spinner /> : audit.error ? <div className="p-4"><ErrorMessage error={audit.error} /></div> : (
         <>
           <div className="overflow-x-auto">

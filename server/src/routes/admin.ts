@@ -6,7 +6,7 @@ import { registry } from "../integrations/registry.js";
 import { hostGuard } from "../security/hostGuardInstance.js";
 import { param, parse } from "../lib/validate.js";
 import { notifier } from "../notifications/notifier.js";
-import { audit, listAudit } from "../services/auditService.js";
+import { audit, exportAuditCsv, listAudit } from "../services/auditService.js";
 import {
   channelInputSchema,
   channelUpdateSchema,
@@ -85,6 +85,21 @@ usersRouter.patch("/:id", async (req, res) => {
 });
 
 export const auditRouter = Router();
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+auditRouter.get("/export", requirePermission("audit:read"), async (req, res) => {
+  const q = parse(
+    z.object({ from: day.optional(), to: day.optional(), timeZone: z.string().min(1).max(64).default("UTC") })
+      .refine((v) => !v.from || !v.to || v.from <= v.to, { message: "From must not be after To", path: ["from"] }),
+    req.query,
+  );
+  const { csv, rows, truncated } = await exportAuditCsv(q);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "audit.exported", entityType: "audit", details: { from: q.from ?? "start", to: q.to ?? "now", rows } });
+  const name = `audit-log${q.from ? `-${q.from}` : ""}${q.to ? `-to-${q.to}` : ""}.csv`;
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+  if (truncated) res.setHeader("X-Export-Truncated", "true");
+  res.send(csv);
+});
 auditRouter.get("/", requirePermission("audit:read"), async (req, res) => {
   const q = parse(
     z.object({

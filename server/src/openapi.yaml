@@ -718,6 +718,19 @@ paths:
         - { name: entityId, in: query, schema: { type: string } }
       responses:
         "200": { description: OK }
+  /audit/export:
+    get:
+      tags: [Admin]
+      summary: Audit log as CSV, newest first, up to 100 000 rows (audit:read). The export is itself audited.
+      parameters:
+        - { name: from, in: query, description: First day (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: to, in: query, description: Last day, inclusive (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: timeZone, in: query, description: IANA time zone for days and times, schema: { type: string, default: UTC } }
+      responses:
+        "200":
+          description: CSV file (UTF-8 with BOM)
+          content:
+            text/csv: {}
 
 components:
   securitySchemes:

@@ -61,6 +61,28 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return data as T;
 }
 
+/** GETs a file (e.g. a CSV export) and saves it under the name the server gives, or `fallbackName`. */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, { credentials: "same-origin" });
+  } catch {
+    throw new ApiError(0, "NETWORK_ERROR", "Cannot reach the server. Check that the API is running.");
+  }
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null))?.error as { code: string; message: string } | undefined;
+    if (res.status === 401) unauthorizedListeners.forEach((l) => l());
+    throw new ApiError(res.status, err?.code ?? "HTTP_ERROR", err?.message ?? `Download failed (${res.status})`);
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export function toQuery(params: Record<string, string | number | boolean | undefined | null>) {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));

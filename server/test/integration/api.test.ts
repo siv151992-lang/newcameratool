@@ -262,6 +262,32 @@ describe("alerts and settings", () => {
     expect(resolved.body.events.map((e: { eventType: string }) => e.eventType)).toEqual(["opened", "acknowledged", "resolved"]);
   });
 
+  it("exports the audit log as CSV, in the viewer's time zone, and audits the export", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const id = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "=Lobby, \"east\"" }).expect(201)).body.id;
+    await pool.query("UPDATE audit_logs SET created_at = '2026-10-21T20:00:00Z' WHERE entity_id = $1", [id]);
+
+    const res = await agent.get("/api/audit/export?timeZone=Asia/Kolkata&from=2026-10-22&to=2026-10-22").expect(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.headers["content-disposition"]).toBe('attachment; filename="audit-log-2026-10-22-to-2026-10-22.csv"');
+    const lines = res.text.replace(/^\uFEFF/, "").trim().split("\r\n");
+    expect(lines[0]).toBe("Time (Asia/Kolkata),User,Action,Camera,Camera IP,Entity type,Entity ID,Details,IP");
+    // 20:00 UTC on the 21st is 01:30 on the 22nd in India; the formula-like name is neutralised and quoted.
+    expect(lines.find((l) => l.includes("camera.created"))).toMatch(/^2026-10-22 01:30:00,admin-user,camera\.created,"'=Lobby, ""east""",127\.0\.0\.1,camera,/);
+    expect(res.text).not.toContain("Cam-Pass-123");
+    // Outside the range: not included.
+    const before = await agent.get("/api/audit/export?timeZone=UTC&to=2026-10-20").expect(200);
+    expect(before.text).not.toContain("camera.created");
+
+    const exported = (await pool.query("SELECT details FROM audit_logs WHERE action = 'audit.exported' ORDER BY id")).rows;
+    expect(exported[0].details).toMatchObject({ from: "2026-10-22", to: "2026-10-22" });
+    // Browsers report India as the legacy Asia/Calcutta, which PostgreSQL does not know.
+    expect((await agent.get("/api/audit/export?timeZone=Asia/Calcutta&from=2026-10-22&to=2026-10-22").expect(200)).text).toContain("2026-10-22 01:30:00,admin-user,camera.created");
+    await agent.get("/api/audit/export?timeZone=Mars/Olympus").expect(400);
+    await agent.get("/api/audit/export?from=2026-10-23&to=2026-10-22").expect(400);
+    await (await signIn("viewer")).agent.get("/api/audit/export").expect(403);
+  });
+
   it("validates monitoring settings", async () => {
     const { agent, csrf } = await signIn("admin");
     await agent.patch("/api/settings/monitoring").set("X-CSRF-Token", csrf).send({ warningThresholdPercent: 95, criticalThresholdPercent: 90 }).expect(400);
