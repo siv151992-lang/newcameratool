@@ -56,9 +56,9 @@ export interface FleetInsights {
 
 const toMs = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : null);
 
-async function loadSnapshots(cameraId?: string) {
-  const settings = await getMonitoringSettings();
-  const params: unknown[] = [];
+async function loadSnapshots(orgId: string, cameraId?: string) {
+  const settings = await getMonitoringSettings(orgId);
+  const params: unknown[] = [orgId];
   const filter = cameraId ? `AND c.id = $${params.push(cameraId)}` : "";
   const { rows } = await pool.query(
     `SELECT c.id, c.name, c.host, c.location, c.brand_key, c.monitoring_enabled, c.warning_threshold, c.critical_threshold,
@@ -71,7 +71,7 @@ async function loadSnapshots(cameraId?: string) {
             coalesce((SELECT json_agg(json_build_object('id', a.id, 'type', a.type, 'severity', a.severity, 'title', a.title) ORDER BY a.id)
                FROM alerts a WHERE a.camera_id = c.id AND a.status <> 'resolved'), '[]') AS open_alerts
      FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.deleted_at IS NULL ${filter}
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL ${filter}
      ORDER BY lower(c.name)`,
     params,
   );
@@ -142,8 +142,9 @@ function analyse(cam: Awaited<ReturnType<typeof loadSnapshots>>[number], points:
   };
 }
 
-let cache: { at: number; value: FleetInsights } | undefined;
-let computing: Promise<FleetInsights> | undefined;
+/** Per organization. */
+const cache = new Map<string, { at: number; value: FleetInsights }>();
+const computing = new Map<string, Promise<FleetInsights>>();
 /** Cameras whose history is held in memory at once (14 days of 15-minute points each). */
 const HISTORY_BATCH = 500;
 
@@ -152,26 +153,31 @@ const HISTORY_BATCH = 500;
  * History is read in batches so memory stays bounded with tens of thousands of cameras, and
  * concurrent callers share one computation.
  */
-export async function getFleetInsights(opts: { fresh?: boolean } = {}): Promise<FleetInsights> {
-  const start = () =>
-    (computing ??= computeFleetInsights().finally(() => {
-      computing = undefined;
-    }));
-  if (!opts.fresh && cache) {
+export async function getFleetInsights(orgId: string, opts: { fresh?: boolean } = {}): Promise<FleetInsights> {
+  const start = () => {
+    let p = computing.get(orgId);
+    if (!p) {
+      p = computeFleetInsights(orgId).finally(() => computing.delete(orgId));
+      computing.set(orgId, p);
+    }
+    return p;
+  };
+  const cached = cache.get(orgId);
+  if (!opts.fresh && cached) {
     // Large fleets take a while to analyse: serve the last result and refresh it in the background.
-    const maxAge = cache.value.cameras.length > LARGE_FLEET ? LARGE_FLEET_CACHE_MS : CACHE_MS;
-    if (Date.now() - cache.at < maxAge) return cache.value;
-    if (cache.value.cameras.length > LARGE_FLEET) {
+    const maxAge = cached.value.cameras.length > LARGE_FLEET ? LARGE_FLEET_CACHE_MS : CACHE_MS;
+    if (Date.now() - cached.at < maxAge) return cached.value;
+    if (cached.value.cameras.length > LARGE_FLEET) {
       start().catch(() => undefined);
-      return cache.value;
+      return cached.value;
     }
   }
   return start();
 }
 
-async function computeFleetInsights(): Promise<FleetInsights> {
+async function computeFleetInsights(orgId: string): Promise<FleetInsights> {
   const now = Date.now();
-  const cams = await loadSnapshots();
+  const cams = await loadSnapshots(orgId);
   const cameras: CameraInsight[] = [];
   for (let i = 0; i < cams.length; i += HISTORY_BATCH) {
     const batch = cams.slice(i, i + HISTORY_BATCH);
@@ -197,7 +203,7 @@ async function computeFleetInsights(): Promise<FleetInsights> {
       averageHealth: scored.length ? Math.round(scored.reduce((s, c) => s + c.health.score, 0) / scored.length) : null,
     },
   };
-  cache = { at: now, value };
+  cache.set(orgId, { at: now, value });
   return value;
 }
 
@@ -225,8 +231,8 @@ export function insightsForClient(ins: FleetInsights): FleetInsights & { cameras
 }
 
 export function clearInsightsCache() {
-  cache = undefined;
-  computing = undefined;
+  cache.clear();
+  computing.clear();
 }
 
 export interface CameraForecastView extends CameraInsight {
@@ -236,8 +242,9 @@ export interface CameraForecastView extends CameraInsight {
   projected: { t: string; usedPercentage: number }[];
 }
 
-export async function getCameraForecast(cameraId: string, days = HISTORY_DAYS): Promise<CameraForecastView> {
-  const [cam] = await loadSnapshots(cameraId);
+export async function getCameraForecast(orgId: string, cameraId: string, days = HISTORY_DAYS): Promise<CameraForecastView> {
+  if (!/^[0-9a-f-]{36}$/i.test(cameraId)) throw notFound("Camera");
+  const [cam] = await loadSnapshots(orgId, cameraId);
   if (!cam) throw notFound("Camera");
   const points = (await loadHistory([cameraId], days)).get(cameraId) ?? [];
   const now = Date.now();

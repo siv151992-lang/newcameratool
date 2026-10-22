@@ -74,11 +74,17 @@ export async function updateNetworkSettings(input: unknown, userId: string | nul
   return { allowedNetworks: next.allowedNetworks, isDefault: false };
 }
 
-/** Registered cameras (by IP address) that the given list would no longer allow. Hostnames are not resolved here. */
-export async function camerasOutside(allowedNetworks: string[], db: Queryable = pool): Promise<{ id: string; name: string; host: string }[]> {
+/**
+ * Registered cameras (by IP address) that the given list would no longer allow, in `orgId` (null: every
+ * organization). Hostnames are not resolved here.
+ */
+export async function camerasOutside(
+  allowedNetworks: string[], orgId: string | null = null, db: Queryable = pool,
+): Promise<{ id: string; name: string; host: string }[]> {
   const guard = new HostGuard({ allowedNetworks: allowedNetworks.join(","), allowLoopback: config.CAMERA_ALLOW_LOOPBACK });
   const { rows } = await db.query<{ id: string; name: string; host: string }>(
-    "SELECT id, name, host FROM cameras WHERE deleted_at IS NULL ORDER BY lower(name)",
+    "SELECT id, name, host FROM cameras WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR organization_id = $1) ORDER BY lower(name)",
+    [orgId],
   );
   return rows.filter((c) => {
     if (!isIP(c.host)) return false;

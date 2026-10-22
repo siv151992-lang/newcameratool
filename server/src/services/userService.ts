@@ -1,81 +1,80 @@
 import { z } from "zod";
-import { pool } from "../db/pool.js";
-import { HttpError, notFound } from "../lib/errors.js";
+import { config } from "../config.js";
+import { pool, withTransaction, type Queryable } from "../db/pool.js";
+import { HttpError } from "../lib/errors.js";
 import { hashPassword } from "../security/passwords.js";
 import { validateNewPassword } from "../auth/sessions.js";
 import { type Actor, audit } from "./auditService.js";
+import { addMember, ROLES, type Role } from "./organizationService.js";
 
+export const usernameSchema = z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/, "Letters, numbers, dot, dash and underscore only");
+export const emailSchema = z.string().trim().toLowerCase().max(254).email("Enter a valid email address");
+
+/** An account added by an Org Admin straight into their organization (replaced by invitations). */
 export const createUserSchema = z
   .object({
-    username: z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/, "Letters, numbers, dot, dash and underscore only"),
+    username: usernameSchema,
     displayName: z.string().trim().max(120).optional(),
+    email: emailSchema.optional(),
     password: z.string().max(200),
-    role: z.enum(["admin", "operator", "viewer"]),
+    role: z.enum(ROLES),
   })
   .strict();
 
-export const updateUserSchema = z
-  .object({
-    displayName: z.string().trim().max(120).nullable().optional(),
-    role: z.enum(["admin", "operator", "viewer"]).optional(),
-    isActive: z.boolean().optional(),
-    password: z.string().max(200).optional(),
-  })
-  .strict();
-
-export async function listUsers() {
-  const { rows } = await pool.query(
-    `SELECT id, username, display_name AS "displayName", role, is_active AS "isActive",
-            last_login_at AS "lastLoginAt", (locked_until > now()) AS "locked", created_at AS "createdAt"
-     FROM users ORDER BY lower(username)`,
-  );
-  return rows;
+interface AccountInput {
+  username: string;
+  displayName?: string | null;
+  email?: string | null;
+  password?: string | null;
+  emailVerified?: boolean;
+  isSystemAdmin?: boolean;
 }
 
-export async function createUser(input: z.infer<typeof createUserSchema>, actor: Actor | null, ip?: string | null) {
-  validateNewPassword(input.password);
+/** Creates a sign-in account (no organization). */
+export async function createAccount(input: AccountInput, db: Queryable = pool): Promise<string> {
+  if (input.password != null) validateNewPassword(input.password);
   try {
-    const { rows } = await pool.query<{ id: string }>(
-      "INSERT INTO users (username, display_name, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id",
-      [input.username, input.displayName ?? null, await hashPassword(input.password), input.role],
+    const { rows } = await db.query<{ id: string }>(
+      `INSERT INTO users (username, display_name, email, email_verified_at, password_hash, is_system_admin)
+       VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN now() END, $5, $6) RETURNING id`,
+      [
+        input.username, input.displayName ?? null, input.email ?? null, input.emailVerified ?? false,
+        input.password != null ? await hashPassword(input.password) : null, input.isSystemAdmin ?? false,
+      ],
     );
-    await audit({ actor, ip, action: "user.created", entityType: "user", entityId: rows[0]!.id, details: { username: input.username, role: input.role } });
     return rows[0]!.id;
   } catch (err) {
-    if ((err as { code?: string }).code === "23505") throw new HttpError(409, "CONFLICT", "That username is already taken");
+    if ((err as { code?: string; constraint?: string }).code === "23505") {
+      const email = (err as { constraint?: string }).constraint === "users_email_unique";
+      throw new HttpError(409, "CONFLICT", email ? "An account with this email already exists" : "That username is already taken");
+    }
     throw err;
   }
 }
 
-export async function updateUser(id: string, patch: z.infer<typeof updateUserSchema>, actor: Actor, ip?: string | null) {
-  const { rows } = await pool.query("SELECT id, role, is_active FROM users WHERE id = $1", [id]).catch(() => ({ rows: [] }));
-  const user = rows[0];
-  if (!user) throw notFound("User");
-  const losesAdmin = user.role === "admin" && ((patch.role && patch.role !== "admin") || patch.isActive === false);
-  if (losesAdmin) {
-    if (id === actor.id) throw new HttpError(400, "SELF_LOCKOUT", "You cannot remove your own administrator access");
-    const admins = await pool.query("SELECT count(*)::int AS n FROM users WHERE role = 'admin' AND is_active");
-    if (admins.rows[0].n <= 1) throw new HttpError(400, "LAST_ADMIN", "At least one active administrator is required");
-  }
-  if (patch.password !== undefined) validateNewPassword(patch.password);
-  await pool.query(
-    `UPDATE users SET display_name = CASE WHEN $2::boolean THEN $3 ELSE display_name END,
-            role = coalesce($4, role), is_active = coalesce($5, is_active),
-            password_hash = coalesce($6, password_hash),
-            failed_login_count = CASE WHEN $6 IS NULL THEN failed_login_count ELSE 0 END,
-            locked_until = CASE WHEN $6 IS NULL THEN locked_until ELSE NULL END,
-            updated_at = now()
-     WHERE id = $1`,
-    [
-      id, patch.displayName !== undefined, patch.displayName ?? null, patch.role ?? null, patch.isActive ?? null,
-      patch.password !== undefined ? await hashPassword(patch.password) : null,
-    ],
-  );
-  if (patch.isActive === false || patch.password !== undefined || patch.role) {
-    await pool.query("DELETE FROM sessions WHERE user_id = $1", [id]);
-  }
-  await audit({
-    actor, ip, action: "user.updated", entityType: "user", entityId: id,
-    details: { fields: Object.keys(patch).map((k) => (k === "password" ? "password (reset)" : k)), role: patch.role },
+/** Adds a new account with a password to `orgId` with `role`. */
+export async function createUser(orgId: string, input: z.infer<typeof createUserSchema>, actor: Actor | null, ip?: string | null) {
+  return withTransaction(async (db) => {
+    const id = await createAccount({ username: input.username, displayName: input.displayName, email: input.email, password: input.password }, db);
+    await addMember(orgId, id, input.role, actor?.id ?? null, db);
+    await audit({ actor, ip, organizationId: orgId, action: "user.created", entityType: "user", entityId: id, details: { username: input.username, role: input.role } }, db);
+    return id;
+  });
+}
+
+/**
+ * The first system administrator, with an organization to work in: used by BOOTSTRAP_ADMIN_* and
+ * `npm run create-admin`. Joins the oldest active organization, or creates the default one.
+ */
+export async function createSystemAdmin(input: { username: string; password: string; email?: string | null }) {
+  return withTransaction(async (db) => {
+    const id = await createAccount({ ...input, isSystemAdmin: true, emailVerified: Boolean(input.email) }, db);
+    let org = (await db.query<{ id: string }>("SELECT id FROM organizations WHERE is_active ORDER BY created_at LIMIT 1")).rows[0]?.id;
+    if (!org) {
+      org = (await db.query<{ id: string }>("INSERT INTO organizations (name, created_by) VALUES ($1, $2) RETURNING id", [config.DEFAULT_ORGANIZATION_NAME, id])).rows[0]!.id;
+    }
+    await addMember(org, id, "admin" satisfies Role, null, db);
+    await audit({ actor: null, action: "user.created", entityType: "user", entityId: id, details: { username: input.username, systemAdmin: true }, organizationId: null }, db);
+    return id;
   });
 }

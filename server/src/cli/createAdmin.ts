@@ -2,11 +2,11 @@ import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { pool } from "../db/pool.js";
 import { migrate } from "../db/migrate.js";
-import { createUser } from "../services/userService.js";
+import { createSystemAdmin } from "../services/userService.js";
 
 /**
- * Creates an administrator account.
- *   npm run create-admin -- --username admin
+ * Creates a system administrator, who is also Org Admin of the first organization (created if none exists).
+ *   npm run create-admin -- --username admin [--email admin@example.com]
  * The password is read from ADMIN_PASSWORD or prompted for (input hidden).
  */
 function promptHidden(question: string): Promise<string> {
@@ -25,10 +25,8 @@ function promptHidden(question: string): Promise<string> {
 }
 
 async function main() {
-  const { values } = parseArgs({ options: { username: { type: "string" }, role: { type: "string", default: "admin" } } });
-  if (!values.username) throw new Error("Usage: npm run create-admin -- --username <name> [--role admin|operator|viewer]");
-  const role = values.role as "admin" | "operator" | "viewer";
-  if (!["admin", "operator", "viewer"].includes(role)) throw new Error("--role must be admin, operator or viewer");
+  const { values } = parseArgs({ options: { username: { type: "string" }, email: { type: "string" } } });
+  if (!values.username) throw new Error("Usage: npm run create-admin -- --username <name> [--email <address>]");
   let password = process.env.ADMIN_PASSWORD;
   if (!password) {
     password = await promptHidden("Password: ");
@@ -36,8 +34,8 @@ async function main() {
     if (password !== confirm) throw new Error("Passwords do not match");
   }
   await migrate(pool);
-  await createUser({ username: values.username, password, role }, null);
-  console.log(`Created ${role} user "${values.username}"`);
+  await createSystemAdmin({ username: values.username, password, email: values.email?.toLowerCase() ?? null });
+  console.log(`Created system administrator "${values.username}"`);
 }
 
 main()

@@ -39,9 +39,14 @@ export class Notifier {
 
   async dispatch(events: NotificationEvent[]) {
     if (events.length === 0) return;
-    const { rows: channels } = await pool.query<NotificationChannel>("SELECT * FROM notification_channels WHERE enabled");
+    // Only the channels of the organization that owns the camera.
+    const { rows: channels } = await pool.query<NotificationChannel & { camera_id: string }>(
+      `SELECT n.*, c.id AS camera_id FROM notification_channels n JOIN cameras c ON c.organization_id = n.organization_id
+       WHERE n.enabled AND c.id = ANY($1::uuid[])`,
+      [[...new Set(events.map((e) => e.cameraId))]],
+    );
     for (const event of events) {
-      for (const channel of channels) {
+      for (const channel of channels.filter((c) => c.camera_id === event.cameraId)) {
         await this.deliver(channel, event).catch((err) =>
           logger.error({ err: (err as Error).message, channel: channel.id }, "Notification delivery bookkeeping failed"),
         );

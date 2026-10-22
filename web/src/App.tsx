@@ -11,12 +11,14 @@ import { CamerasPage } from "./pages/CamerasPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ImportPage } from "./pages/ImportPage";
 import { LoginPage } from "./pages/LoginPage";
+import { NoOrganizationPage } from "./pages/NoOrganizationPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
   const { user, loading, can } = useAuth();
   if (loading) return <Spinner label="Starting" />;
   if (!user) return <LoginPage />;
+  if (!user.organizationId) return <NoOrganizationPage />;
   return (
     <Routes>
       <Route element={<AppShell />}>

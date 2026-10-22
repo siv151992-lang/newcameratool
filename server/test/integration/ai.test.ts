@@ -5,7 +5,7 @@ import { runTool } from "../../src/ai/tools.js";
 import { createApp } from "../../src/app.js";
 import { pool } from "../../src/db/pool.js";
 import { createCamera } from "../../src/services/cameraService.js";
-import { createTestUser, PASSWORD, prepareDb, resetData } from "../helpers.js";
+import { createTestUser, PASSWORD, prepareDb, resetData, testOrgId } from "../helpers.js";
 
 const app = createApp();
 const TOTAL = 128_000_000_000;
@@ -21,6 +21,7 @@ async function signIn(role: "admin" | "operator" | "viewer") {
 async function cameraWithHistory(name: string, host: string, nowPct: number, perDay: number, hours = 72) {
   const actor = await createTestUser("admin", `seed-${name.toLowerCase().replace(/\W/g, "")}`);
   const id = await createCamera(
+    testOrgId,
     {
       name, host, port: 80, protocol: "http", brand: "hikvision", model: null, location: "Office", username: "admin",
       password: "Secret-Cam-Pass-1", monitoringEnabled: true, warningThreshold: null, criticalThreshold: null, caCertificate: null,
@@ -116,7 +117,7 @@ describe("assistant tools against the database", () => {
     );
     await pool.query("INSERT INTO alert_events (alert_id, event_type, severity, message) VALUES ($1, 'opened', 'critical', 'Camera offline')", [rows[0].id]);
 
-    const ctx = { permissions: ["cameras:read", "alerts:read"], now: Date.now(), insights: () => getFleetInsights({ fresh: true }) };
+    const ctx = { permissions: ["cameras:read", "alerts:read"], organizationId: testOrgId, now: Date.now(), insights: () => getFleetInsights(testOrgId, { fresh: true }) };
     const alerts = JSON.parse((await runTool("get_alerts", { severity: "critical" }, ctx)).content);
     expect(alerts.alerts[0]).toMatchObject({ title: "Camera offline", camera: { name: "Entrance Camera 07", ip: "10.10.15.7" } });
 

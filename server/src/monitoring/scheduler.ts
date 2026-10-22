@@ -41,6 +41,7 @@ export class Scheduler {
       `WITH due AS (
          SELECT s.camera_id FROM camera_status s JOIN cameras c ON c.id = s.camera_id
          JOIN camera_brands b ON b.key = c.brand_key
+         JOIN organizations o ON o.id = c.organization_id AND o.is_active
          WHERE c.deleted_at IS NULL AND c.monitoring_enabled AND b.status = 'enabled' AND b.deleted_at IS NULL
            AND (s.next_check_at IS NULL OR s.next_check_at <= now())
            AND (s.check_lock_until IS NULL OR s.check_lock_until < now())

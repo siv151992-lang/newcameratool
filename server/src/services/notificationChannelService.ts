@@ -23,8 +23,8 @@ const toView = (c: NotificationChannel & { created_at?: Date }) => ({
   minSeverity: c.min_severity, cooldownMinutes: c.cooldown_minutes, notifyOnRecovery: c.notify_on_recovery,
 });
 
-export async function listChannels() {
-  const { rows } = await pool.query<NotificationChannel>("SELECT * FROM notification_channels ORDER BY created_at");
+export async function listChannels(orgId: string) {
+  const { rows } = await pool.query<NotificationChannel>("SELECT * FROM notification_channels WHERE organization_id = $1 ORDER BY created_at", [orgId]);
   return rows.map(toView);
 }
 
@@ -39,26 +39,28 @@ function validated(notifier: Notifier, type: string, config: unknown) {
   }
 }
 
-export async function createChannel(notifier: Notifier, input: z.infer<typeof channelInputSchema>, actor: Actor, ip?: string | null) {
+export async function createChannel(orgId: string, notifier: Notifier, input: z.infer<typeof channelInputSchema>, actor: Actor, ip?: string | null) {
   const cfg = validated(notifier, input.type, input.config);
   const { rows } = await pool.query<NotificationChannel>(
-    `INSERT INTO notification_channels (type, name, enabled, config, min_severity, cooldown_minutes, notify_on_recovery)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [input.type, input.name, input.enabled, JSON.stringify(cfg), input.minSeverity, input.cooldownMinutes, input.notifyOnRecovery],
+    `INSERT INTO notification_channels (type, name, enabled, config, min_severity, cooldown_minutes, notify_on_recovery, organization_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [input.type, input.name, input.enabled, JSON.stringify(cfg), input.minSeverity, input.cooldownMinutes, input.notifyOnRecovery, orgId],
   );
   await audit({ actor, ip, action: "notification_channel.created", entityType: "notification_channel", entityId: rows[0]!.id, details: { name: input.name } });
   return toView(rows[0]!);
 }
 
-async function getChannel(id: string) {
+async function getChannel(orgId: string, id: string) {
   if (!z.string().uuid().safeParse(id).success) throw notFound("Channel");
-  const { rows } = await pool.query<NotificationChannel>("SELECT * FROM notification_channels WHERE id = $1", [id]);
+  const { rows } = await pool.query<NotificationChannel>("SELECT * FROM notification_channels WHERE id = $1 AND organization_id = $2", [id, orgId]);
   if (!rows[0]) throw notFound("Channel");
   return rows[0];
 }
 
-export async function updateChannel(notifier: Notifier, id: string, patch: z.infer<typeof channelUpdateSchema>, actor: Actor, ip?: string | null) {
-  const c = await getChannel(id);
+export async function updateChannel(
+  orgId: string, notifier: Notifier, id: string, patch: z.infer<typeof channelUpdateSchema>, actor: Actor, ip?: string | null,
+) {
+  const c = await getChannel(orgId, id);
   const cfg = patch.config ? validated(notifier, c.type, patch.config) : c.config;
   const { rows } = await pool.query<NotificationChannel>(
     `UPDATE notification_channels SET name = $2, enabled = $3, config = $4, min_severity = $5, cooldown_minutes = $6,
@@ -72,14 +74,14 @@ export async function updateChannel(notifier: Notifier, id: string, patch: z.inf
   return toView(rows[0]!);
 }
 
-export async function deleteChannel(id: string, actor: Actor, ip?: string | null) {
-  const c = await getChannel(id);
+export async function deleteChannel(orgId: string, id: string, actor: Actor, ip?: string | null) {
+  const c = await getChannel(orgId, id);
   await pool.query("DELETE FROM notification_channels WHERE id = $1", [id]);
   await audit({ actor, ip, action: "notification_channel.deleted", entityType: "notification_channel", entityId: id, details: { name: c.name } });
 }
 
-export async function testChannel(notifier: Notifier, id: string) {
-  const c = await getChannel(id);
+export async function testChannel(orgId: string, notifier: Notifier, id: string) {
+  const c = await getChannel(orgId, id);
   const driver = notifier.driver(c.type);
   if (!driver) throw new HttpError(400, "VALIDATION_ERROR", `Unsupported channel type ${c.type}`);
   try {

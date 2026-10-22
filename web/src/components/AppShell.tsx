@@ -1,14 +1,15 @@
 import clsx from "clsx";
-import { Bell, Camera, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, Video, X } from "lucide-react";
+import { Bell, Building2, Camera, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, Video, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Summary } from "../api/types";
 import { useAiStatus } from "../hooks/ai";
-import { useAuth } from "../hooks/auth";
+import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
-import { Button } from "./ui";
+import { useToast } from "./toast";
+import { Button, Select } from "./ui";
 
 const SIDEBAR_KEY = "cctv-sidebar-collapsed";
 
@@ -50,6 +51,49 @@ function NavItem({ to, icon, children, badge, onClick, collapsed }: { to: string
         )
       ) : null}
     </NavLink>
+  );
+}
+
+/** The organization this session works in; a picker when the user belongs to several. */
+function OrganizationSwitcher() {
+  const { user, organizations, switchOrganization } = useAuth();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  if (!user?.organizationId) return null;
+  if (organizations.length < 2) {
+    return (
+      <span className="flex min-w-0 items-center gap-1.5 text-sm text-ink-secondary" title="Organization">
+        <Building2 className="h-4 w-4 shrink-0" aria-hidden />
+        <span className="truncate">{user.organizationName}</span>
+      </span>
+    );
+  }
+  return (
+    <label className="flex min-w-0 items-center gap-1.5">
+      <Building2 className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden />
+      <span className="sr-only">Organization</span>
+      <Select
+        className="w-auto max-w-[14rem] py-1 text-sm"
+        value={user.organizationId}
+        disabled={busy}
+        onChange={(e) => {
+          const target = organizations.find((o) => o.id === e.target.value);
+          setBusy(true);
+          switchOrganization(e.target.value)
+            .then(() => {
+              navigate("/");
+              toast("success", `Now working in ${target?.name ?? "the selected organization"}`);
+            })
+            .catch((err: Error) => toast("error", err.message))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {organizations.map((o) => (
+          <option key={o.id} value={o.id}>{o.name}</option>
+        ))}
+      </Select>
+    </label>
   );
 }
 
@@ -128,7 +172,9 @@ export function AppShell() {
             icon={collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
           />
           <span className="font-semibold lg:hidden">Zoho IBMS CCTV Monitoring</span>
-          <div className="flex-1" />
+          <div className="flex min-w-0 flex-1 justify-end sm:justify-start sm:pl-2">
+            <OrganizationSwitcher />
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -139,7 +185,9 @@ export function AppShell() {
           />
           <div className="hidden text-right text-xs sm:block">
             <div className="font-medium text-ink">{user?.displayName ?? user?.username}</div>
-            <div className="capitalize text-ink-muted">{user?.role}</div>
+            <div className="text-ink-muted">
+              {[user?.role && ROLE_LABELS[user.role], user?.isSystemAdmin && "System admin"].filter(Boolean).join(" · ")}
+            </div>
           </div>
           <Button variant="ghost" size="sm" onClick={() => void logout()} icon={<LogOut className="h-4 w-4" />}>
             <span className="hidden sm:inline">Sign out</span>

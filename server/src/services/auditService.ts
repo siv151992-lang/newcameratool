@@ -4,6 +4,8 @@ import { pool, type Queryable } from "../db/pool.js";
 export interface Actor {
   id: string;
   username: string;
+  /** The organization the actor works in; their entries are recorded there. */
+  organizationId?: string | null;
 }
 
 export interface AuditEntry {
@@ -13,13 +15,15 @@ export interface AuditEntry {
   entityId?: string | null;
   details?: Record<string, unknown>;
   ip?: string | null;
+  /** Defaults to the actor's organization; null for server-wide entries (sign-in, organizations, brand integrations). */
+  organizationId?: string | null;
 }
 
 /** Records an audit event. Callers must never put passwords or other secrets in `details`. */
 export async function audit(entry: AuditEntry, db: Queryable = pool) {
   await db.query(
-    `INSERT INTO audit_logs (actor_user_id, actor_username, action, entity_type, entity_id, details, ip)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    `INSERT INTO audit_logs (actor_user_id, actor_username, action, entity_type, entity_id, details, ip, organization_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       entry.actor?.id ?? null,
       entry.actor?.username ?? "system",
@@ -28,16 +32,31 @@ export async function audit(entry: AuditEntry, db: Queryable = pool) {
       entry.entityId ?? null,
       JSON.stringify(entry.details ?? {}),
       entry.ip ?? null,
+      entry.organizationId !== undefined ? entry.organizationId : (entry.actor?.organizationId ?? null),
     ],
   );
 }
 
-export async function listAudit(opts: { page: number; pageSize: number; entityType?: string; entityId?: string }) {
-  const where: string[] = [];
+/**
+ * Which entries a viewer sees: their organization's, plus the server-wide ones (sign-ins, organizations,
+ * brand integrations, camera networks) for the system administrator.
+ */
+export interface AuditScope {
+  organizationId: string | null;
+  includeServerWide: boolean;
+}
+
+function scopeFilter(scope: AuditScope, params: unknown[]) {
+  const org = `$${params.push(scope.organizationId)}::uuid`;
+  return scope.includeServerWide ? `(a.organization_id = ${org} OR a.organization_id IS NULL)` : `a.organization_id = ${org}`;
+}
+
+export async function listAudit(scope: AuditScope, opts: { page: number; pageSize: number; entityType?: string; entityId?: string }) {
   const params: unknown[] = [];
+  const where: string[] = [scopeFilter(scope, params)];
   if (opts.entityType) where.push(`a.entity_type = $${params.push(opts.entityType)}`);
   if (opts.entityId) where.push(`a.entity_id = $${params.push(opts.entityId)}`);
-  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const clause = `WHERE ${where.join(" AND ")}`;
   const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_logs a ${clause}`, params)).rows[0]!.n;
   params.push(opts.pageSize, (opts.page - 1) * opts.pageSize);
   const { rows } = await pool.query(
@@ -69,10 +88,10 @@ function describeDetails(details: Record<string, unknown>): string {
  * days (inclusive) and times are written in `timeZone`, the viewer's IANA time zone. Zones are
  * handled here rather than in PostgreSQL, which rejects some names browsers report (Asia/Calcutta).
  */
-export async function exportAuditCsv(opts: { from?: string; to?: string; timeZone: string }) {
+export async function exportAuditCsv(scope: AuditScope, opts: { from?: string; to?: string; timeZone: string }) {
   zonedParts(Date.now(), opts.timeZone); // validates the zone
   const params: unknown[] = [];
-  const where: string[] = [];
+  const where: string[] = [scopeFilter(scope, params)];
   if (opts.from) where.push(`a.created_at >= $${params.push(startOfDay(opts.from, opts.timeZone))}`);
   if (opts.to) where.push(`a.created_at < $${params.push(startOfDay(nextDay(opts.to), opts.timeZone))}`);
   params.push(AUDIT_EXPORT_MAX_ROWS);
@@ -82,7 +101,7 @@ export async function exportAuditCsv(opts: { from?: string; to?: string; timeZon
             a.entity_type, a.entity_id, a.details, a.ip
      FROM audit_logs a
      LEFT JOIN cameras c ON a.entity_type = 'camera' AND c.id::text = a.entity_id
-     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     WHERE ${where.join(" AND ")}
      ORDER BY a.created_at DESC, a.id DESC LIMIT $${params.length}`,
     params,
   );

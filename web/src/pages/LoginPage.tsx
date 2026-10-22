@@ -40,7 +40,7 @@ export function LoginPage() {
           </div>
         </div>
         <div className="space-y-4">
-          <Field label="Username">
+          <Field label="Username or email">
             {(id) => <Input id={id} autoComplete="username" required value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />}
           </Field>
           <Field label="Password">

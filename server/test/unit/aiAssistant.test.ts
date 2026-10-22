@@ -46,7 +46,8 @@ function scripted(...responses: Partial<Msg>[]) {
 }
 const toolUse = (id: string, name: string, input: unknown) => ({ type: "tool_use", id, name, input }) as Anthropic.Beta.Messages.BetaToolUseBlock;
 const text = (t: string) => ({ type: "text", text: t, citations: null }) as Anthropic.Beta.Messages.BetaTextBlock;
-const ADMIN = { permissions: ["cameras:read", "alerts:read"] };
+const ORG = "00000000-0000-4000-8000-000000000001";
+const ADMIN = { permissions: ["cameras:read", "alerts:read"], organizationId: ORG };
 const ask = (q: string) => chatSchema.parse({ messages: [{ role: "user", content: q }] });
 
 describe("runAssistant", () => {
@@ -89,14 +90,14 @@ describe("runAssistant", () => {
 
   it("only offers tools the user is allowed to use, and refuses unknown or forbidden ones", async () => {
     expect(toolsFor(["cameras:read"]).map((t) => t.name)).not.toContain("get_alerts");
-    const ctx = { permissions: ["cameras:read"], now: NOW, insights: async () => fleet };
+    const ctx = { permissions: ["cameras:read"], organizationId: ORG, now: NOW, insights: async () => fleet };
     expect(await runTool("get_alerts", {}, ctx)).toEqual({ content: 'Unknown or unavailable tool "get_alerts".', isError: true });
     expect((await runTool("drop_table", {}, ctx)).isError).toBe(true);
   });
 
   it("finds cameras by IP or partial name and lists candidates when ambiguous", async () => {
     const db = { query: async () => ({ rows: [] }) } as unknown as import("../../src/db/pool.js").Queryable;
-    const ctx = { permissions: ADMIN.permissions, now: NOW, insights: async () => fleet, db };
+    const ctx = { permissions: ADMIN.permissions, organizationId: ORG, now: NOW, insights: async () => fleet, db };
     const byIp = JSON.parse((await runTool("get_camera_details", { camera: "10.10.15.3" }, { ...ctx, insights: async () => ({ ...fleet, cameras: [fleet.cameras[0]!] }) })).content);
     expect(byIp.observed).toMatchObject({ name: "Office Camera 03", usedPercent: 81 });
     expect(byIp.forecast).toMatchObject({ kind: "estimate", status: "growing", daysToCritical: 3 });

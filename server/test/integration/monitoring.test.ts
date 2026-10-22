@@ -7,7 +7,7 @@ import type { NotificationEvent } from "../../src/notifications/types.js";
 import { createCamera, removeCameras } from "../../src/services/cameraService.js";
 import { updateMonitoringSettings } from "../../src/services/settingsService.js";
 import { MockHikvisionCamera } from "../../src/testing/mockHikvision.js";
-import { createTestUser, prepareDb, resetData } from "../helpers.js";
+import { createTestUser, prepareDb, resetData, testOrgId } from "../helpers.js";
 
 const registry = createRegistry();
 const sent: NotificationEvent[] = [];
@@ -19,6 +19,7 @@ let actor: { id: string; username: string };
 
 async function addCamera(overrides: Record<string, unknown> = {}) {
   return createCamera(
+    testOrgId,
     {
       name: "Reception", host: "127.0.0.1", port, protocol: "http", brand: "hikvision", model: null, location: "Lobby",
       username: "admin", password: "Cam-Pass-123", monitoringEnabled: true, warningThreshold: null, criticalThreshold: null,
@@ -81,7 +82,7 @@ describe("storage checks", () => {
     expect(s.used_percentage).toBe(53.78); // last known figures retained
     const { getSummary } = await import("../../src/services/cameraService.js");
     // …but left out of the dashboard's capacity totals while the camera is offline.
-    expect(await getSummary()).toMatchObject({ offline: 1, totalBytes: 0, camerasWithStorageData: 0, offlineWithStorageData: 1 });
+    expect(await getSummary(testOrgId)).toMatchObject({ offline: 1, totalBytes: 0, camerasWithStorageData: 0, offlineWithStorageData: 1 });
     expect(await alerts(id)).toEqual([{ type: "offline", severity: "critical", status: "active", occurrence_count: 1 }]);
     const events = (await pool.query("SELECT from_status, to_status FROM connection_events WHERE camera_id = $1", [id])).rows;
     expect(events).toEqual([{ from_status: "unknown", to_status: "online" }, { from_status: "online", to_status: "offline" }]);
@@ -90,7 +91,7 @@ describe("storage checks", () => {
     await pool.query("UPDATE cameras SET port = $2 WHERE id = $1", [id, port]);
     await runCheck(id, "manual", deps);
     expect((await status(id)).connection_status).toBe("online");
-    expect(await getSummary()).toMatchObject({ camerasWithStorageData: 1, offlineWithStorageData: 0 });
+    expect(await getSummary(testOrgId)).toMatchObject({ camerasWithStorageData: 1, offlineWithStorageData: 0 });
     expect((await alerts(id))[0]).toMatchObject({ type: "offline", status: "resolved" });
     expect(sent.map((e) => `${e.type}:${e.kind}`)).toEqual(["offline:opened", "offline:resolved"]);
   });
@@ -148,7 +149,7 @@ describe("storage checks", () => {
     expect(s.recording_state).toBe("unknown");
     expect(s.recording_detail).toMatch(/could not be read|does not report recording status/);
 
-    await updateMonitoringSettings({ recordingAlertsEnabled: false }, null);
+    await updateMonitoringSettings(testOrgId, { recordingAlertsEnabled: false }, null);
     cam.recording = "idle";
     await runCheck(id, "manual", deps);
     expect((await status(id)).recording_state).toBe("idle");
@@ -211,7 +212,7 @@ describe("storage checks", () => {
 
 describe("scheduler", () => {
   it("checks only due, enabled, non-removed cameras within the concurrency limit", async () => {
-    await updateMonitoringSettings({ concurrency: 2 }, null);
+    await updateMonitoringSettings(testOrgId, { concurrency: 2 }, null);
     // A camera that never answers, listening on every loopback address, keeps checks in flight.
     const hanging = new MockHikvisionCamera();
     hanging.mode = "hang";
@@ -222,7 +223,7 @@ describe("scheduler", () => {
     await pool.query("UPDATE cameras SET port = $1", [hangPort]);
     const disabled = await addCamera({ name: "Disabled", host: "127.0.0.50", monitoringEnabled: false });
     const removed = await addCamera({ name: "Removed", host: "127.0.0.51" });
-    await removeCameras([removed], actor);
+    await removeCameras(testOrgId, [removed], actor);
 
     const scheduler = new Scheduler(deps, { owner: "test-worker" });
     const first = await scheduler.tick();
@@ -244,7 +245,7 @@ describe("scheduler", () => {
   });
 
   it("refills a freed slot without waiting for the regular tick", async () => {
-    await updateMonitoringSettings({ concurrency: 1 }, null);
+    await updateMonitoringSettings(testOrgId, { concurrency: 1 }, null);
     const ids = [await addCamera(), await addCamera({ name: "Second", host: "127.0.0.2" }), await addCamera({ name: "Third", host: "127.0.0.3" })];
     const scheduler = new Scheduler(deps, { owner: "refill-worker", tickMs: 60_000 });
     scheduler.start();
@@ -278,7 +279,7 @@ describe("scheduler", () => {
     await runCheck(id, "scheduled", deps); // interval elapsed: kept
     expect(await rows()).toHaveLength(4);
 
-    await updateMonitoringSettings({ historyIntervalMinutes: 0 }, null);
+    await updateMonitoringSettings(testOrgId, { historyIntervalMinutes: 0 }, null);
     await runCheck(id, "scheduled", deps); // 0 keeps every check
     expect(await rows()).toHaveLength(5);
   });
@@ -355,13 +356,13 @@ describe("cameras without local storage", () => {
     expect((await alerts(id)).map((a) => [a.type, a.status])).toContainEqual(["no_storage_device", "active"]);
 
     const { setLocalStorage, getSummary, listCameras, listQuerySchema } = await import("../../src/services/cameraService.js");
-    const ids = async (status: string) => (await listCameras(listQuerySchema.parse({ status }))).items.map((c) => c.id);
+    const ids = async (status: string) => (await listCameras(testOrgId, listQuerySchema.parse({ status }))).items.map((c) => c.id);
     expect(await ids("nostoragedevice")).toEqual([id]);
-    expect(await setLocalStorage([id], false, actor)).toEqual({ updated: 1 });
+    expect(await setLocalStorage(testOrgId, [id], false, actor)).toEqual({ updated: 1 });
     await runCheck(id, "manual", deps);
     expect((await alerts(id)).find((a) => a.type === "no_storage_device")!.status).toBe("resolved");
     expect(await status(id)).toMatchObject({ connection_status: "online", storage_health: "unknown", recording_state: "unknown", total_bytes: null });
-    expect(await getSummary()).toMatchObject({ online: 1, storageCritical: 0, notRecording: 0, withoutLocalStorage: 1 });
+    expect(await getSummary(testOrgId)).toMatchObject({ online: 1, storageCritical: 0, notRecording: 0, withoutLocalStorage: 1 });
     expect(await ids("nolocalstorage")).toEqual([id]);
     expect(await ids("nostoragedevice")).toEqual([]);
 
@@ -370,7 +371,7 @@ describe("cameras without local storage", () => {
     expect((await runCheck(id, "manual", deps)).result).toMatchObject({ ok: true });
     // …but no answer at all still makes it offline.
     cam.mode = "hang";
-    await updateMonitoringSettings({ offlineFailureThreshold: 1, maxRetries: 0, requestTimeoutMs: 1000 }, null);
+    await updateMonitoringSettings(testOrgId, { offlineFailureThreshold: 1, maxRetries: 0, requestTimeoutMs: 1000 }, null);
     await runCheck(id, "manual", deps);
     expect((await status(id)).connection_status).toBe("offline");
     expect((await alerts(id)).find((a) => a.type === "offline")!.status).toBe("active");

@@ -14,7 +14,7 @@ import { CameraApiError } from "./integrations/types.js";
 import { HttpError } from "./lib/errors.js";
 import { logger } from "./lib/logger.js";
 import { formatZodError } from "./lib/validate.js";
-import { auditRouter, brandsRouter, settingsRouter, usersRouter } from "./routes/admin.js";
+import { auditRouter, brandsRouter, organizationsRouter, settingsRouter, usersRouter } from "./routes/admin.js";
 import { aiRouter } from "./routes/ai.js";
 import { alertsRouter } from "./routes/alerts.js";
 import { authRouter } from "./routes/auth.js";
@@ -76,6 +76,7 @@ export function createApp() {
   protectedApi.use("/integrations", integrationsRouter);
   protectedApi.use("/settings", settingsRouter);
   protectedApi.use("/users", usersRouter);
+  protectedApi.use("/organizations", organizationsRouter);
   protectedApi.use("/audit", auditRouter);
   protectedApi.use("/ai", aiRouter);
   app.use("/api", protectedApi);

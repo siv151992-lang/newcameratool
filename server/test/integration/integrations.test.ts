@@ -13,8 +13,9 @@ const vendor = new MockVendorCamera();
 let port: number;
 const deps = { registry, notifier: { dispatch: async () => undefined }, sleep: async () => undefined };
 
+// Brand integrations serve every organization: the administrator here is the system administrator.
 async function signIn(role: "admin" | "operator" | "viewer") {
-  const { username } = await createTestUser(role);
+  const { username } = await createTestUser(role, undefined, undefined, { systemAdmin: role === "admin" });
   const agent = request.agent(app);
   const res = await agent.post("/api/auth/login").send({ username, password: PASSWORD }).expect(200);
   return { agent, csrf: res.body.csrfToken as string };

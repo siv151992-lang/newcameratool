@@ -51,9 +51,9 @@ export function sdCardStatus(r: Pick<ReportRow, "local_storage" | "last_success_
   return r.connection_status === "offline" ? `${status} (last known; camera offline)` : status;
 }
 
-export async function cameraReportCsv(q: ListQuery, timeZone: string): Promise<{ csv: string; rows: number }> {
+export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: string): Promise<{ csv: string; rows: number }> {
   zonedParts(Date.now(), timeZone); // validates the zone
-  const { clause, params } = listFilter(q);
+  const { clause, params } = listFilter(orgId, q);
   const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
   const { rows } = await pool.query<ReportRow>(
     `SELECT c.name, c.host, c.port, b.display_name AS brand_name, c.model, c.location, c.monitoring_enabled, c.local_storage,

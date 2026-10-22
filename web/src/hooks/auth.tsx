@@ -1,29 +1,48 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, onUnauthorized, setCsrfToken } from "../api/client";
-import type { User } from "../api/types";
+import type { Membership, User } from "../api/types";
 
 interface AuthState {
   user: User | null;
+  /** The organizations the user belongs to. */
+  organizations: Membership[];
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Moves this session to another organization; everything on screen reloads for it. */
+  switchOrganization: (organizationId: string) => Promise<void>;
+  /** Reloads the user and their organizations (after creating or joining one). */
+  refresh: () => Promise<void>;
   can: (permission: string) => boolean;
+}
+
+interface Me {
+  user: User;
+  csrfToken: string;
+  organizations: Membership[];
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/** Roles as people see them: an organization's admin is its Org Admin. */
+export const ROLE_LABELS: Record<string, string> = { admin: "Org Admin", operator: "Operator", viewer: "Viewer" };
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [organizations, setOrganizations] = useState<Membership[]>([]);
   const [loading, setLoading] = useState(true);
   const qc = useQueryClient();
 
+  const load = useCallback(async () => {
+    const r = await api<Me>("/auth/me");
+    setCsrfToken(r.csrfToken);
+    setUser(r.user);
+    setOrganizations(r.organizations);
+  }, []);
+
   useEffect(() => {
-    api<{ user: User; csrfToken: string }>("/auth/me")
-      .then((r) => {
-        setCsrfToken(r.csrfToken);
-        setUser(r.user);
-      })
+    load()
       .catch((e) => {
         if (!(e instanceof ApiError && e.status === 401)) console.warn(e);
       })
@@ -32,24 +51,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       qc.clear();
     });
-  }, [qc]);
+  }, [qc, load]);
 
   const login = useCallback(async (username: string, password: string) => {
     const r = await api<{ user: User; csrfToken: string }>("/auth/login", { method: "POST", body: { username, password } });
     setCsrfToken(r.csrfToken);
-    setUser(r.user);
-  }, []);
+    await load();
+  }, [load]);
 
   const logout = useCallback(async () => {
     await api("/auth/logout", { method: "POST" }).catch(() => undefined);
     setCsrfToken(null);
     setUser(null);
+    setOrganizations([]);
     qc.clear();
   }, [qc]);
 
+  const switchOrganization = useCallback(async (organizationId: string) => {
+    await api("/auth/organization", { method: "POST", body: { organizationId } });
+    qc.clear();
+    await load();
+  }, [qc, load]);
+
   const can = useCallback((p: string) => !!user?.permissions.includes(p), [user]);
 
-  return <AuthContext.Provider value={{ user, loading, login, logout, can }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, organizations, loading, login, logout, switchOrganization, refresh: load, can }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

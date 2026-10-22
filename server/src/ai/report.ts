@@ -43,9 +43,9 @@ const pct = (n: number | null) => (n === null ? "—" : `${Math.round(n * 10) / 
 export const REPORT_LIST_LIMIT = 100;
 const top = <T,>(list: T[]) => list.slice(0, REPORT_LIST_LIMIT);
 
-export async function buildReport(period: ReportPeriod, deps: { insights?: FleetInsights } = {}): Promise<MonitoringReport> {
+export async function buildReport(orgId: string, period: ReportPeriod, deps: { insights?: FleetInsights } = {}): Promise<MonitoringReport> {
   const hours = REPORT_PERIODS[period];
-  const ins = deps.insights ?? (await getFleetInsights());
+  const ins = deps.insights ?? (await getFleetInsights(orgId));
   const now = new Date(ins.generatedAt);
   const from = new Date(now.getTime() - hours * 3_600_000);
 
@@ -57,8 +57,8 @@ export async function buildReport(period: ReportPeriod, deps: { insights?: Fleet
                WHERE a.camera_id = c.id AND e.event_type IN ('resolved','auto_resolved') AND e.created_at > $1) AS resolved,
             (SELECT count(*)::int FROM connection_events e WHERE e.camera_id = c.id AND e.to_status = 'offline' AND e.occurred_at > $1) AS drops,
             (SELECT count(*)::int FROM storage_checks s WHERE s.camera_id = c.id AND s.outcome <> 'success' AND s.checked_at > $1) AS failed
-     FROM cameras c WHERE c.deleted_at IS NULL ORDER BY lower(c.name)`,
-    [from],
+     FROM cameras c WHERE c.organization_id = $2 AND c.deleted_at IS NULL ORDER BY lower(c.name)`,
+    [from, orgId],
   );
   const byCamera = rows
     .filter((r) => r.opened + r.drops + r.failed > 0)

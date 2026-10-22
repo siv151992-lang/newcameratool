@@ -259,10 +259,10 @@ export const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
   recordingDays: "s.recording_days",
 };
 
-/** WHERE clause (over cameras c LEFT JOIN camera_status s) for the camera list filters. */
-export function listFilter(q: Omit<ListQuery, "page" | "pageSize" | "sort" | "order">) {
-  const where = ["c.deleted_at IS NULL"];
-  const params: unknown[] = [];
+/** WHERE clause (over cameras c LEFT JOIN camera_status s) for the camera list filters, within one organization. */
+export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize" | "sort" | "order">) {
+  const params: unknown[] = [orgId];
+  const where = ["c.organization_id = $1", "c.deleted_at IS NULL"];
   const p = (v: unknown) => `$${params.push(v)}`;
   if (q.search) {
     const like = p(`%${q.search.replace(/[%_\\]/g, (m) => `\\${m}`)}%`);
@@ -286,8 +286,8 @@ export function listFilter(q: Omit<ListQuery, "page" | "pageSize" | "sort" | "or
   return { clause: where.join(" AND "), params, p };
 }
 
-export async function listCameras(q: ListQuery) {
-  const { clause, params, p } = listFilter(q);
+export async function listCameras(orgId: string, q: ListQuery) {
+  const { clause, params, p } = listFilter(orgId, q);
   const base = `FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause}`;
   const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n ${base}`, params)).rows[0]!.n;
   const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
@@ -301,8 +301,8 @@ export async function listCameras(q: ListQuery) {
 }
 
 /** IDs of every camera matching the list filters ("Select all N matching"), in list order. */
-export async function listCameraIds(q: ListQuery): Promise<{ ids: string[]; total: number }> {
-  const { clause, params } = listFilter(q);
+export async function listCameraIds(orgId: string, q: ListQuery): Promise<{ ids: string[]; total: number }> {
+  const { clause, params } = listFilter(orgId, q);
   const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
   const { rows } = await pool.query<{ id: string }>(
     `SELECT c.id FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause} ORDER BY ${order}`,
@@ -311,22 +311,30 @@ export async function listCameraIds(q: ListQuery): Promise<{ ids: string[]; tota
   return { ids: rows.map((r) => r.id), total: rows.length };
 }
 
-export async function listLocations(): Promise<string[]> {
+export async function listLocations(orgId: string): Promise<string[]> {
   const { rows } = await pool.query<{ location: string }>(
-    "SELECT DISTINCT location FROM cameras WHERE deleted_at IS NULL AND location IS NOT NULL ORDER BY location",
+    "SELECT DISTINCT location FROM cameras WHERE organization_id = $1 AND deleted_at IS NULL AND location IS NOT NULL ORDER BY location",
+    [orgId],
   );
   return rows.map((r) => r.location);
 }
 
-export async function getCameraRow(id: string, db: Queryable = pool): Promise<CameraRow> {
+/**
+ * One camera. `orgId` limits it to that organization (a camera of another organization is "not found");
+ * null is for the monitoring worker, which works across organizations.
+ */
+export async function getCameraRow(id: string, orgId: string | null, db: Queryable = pool): Promise<CameraRow> {
   if (!z.string().uuid().safeParse(id).success) throw notFound("Camera");
-  const { rows } = await db.query<CameraRow>(`${SELECT_CAMERA} WHERE c.id = $1 AND c.deleted_at IS NULL`, [id]);
+  const { rows } = await db.query<CameraRow>(
+    `${SELECT_CAMERA} WHERE c.id = $1 AND c.deleted_at IS NULL AND ($2::uuid IS NULL OR c.organization_id = $2)`,
+    [id, orgId],
+  );
   if (!rows[0]) throw notFound("Camera");
   return rows[0];
 }
 
-export async function getCamera(id: string) {
-  const row = await getCameraRow(id);
+export async function getCamera(id: string, orgId: string | null) {
+  const row = await getCameraRow(id, orgId);
   const devices = await pool.query(
     `SELECT vendor_id AS id, name, type, health_status AS "healthStatus", raw_status AS "rawStatus",
             total_bytes AS "totalBytes", free_bytes AS "freeBytes", used_bytes AS "usedBytes",
@@ -337,7 +345,7 @@ export async function getCamera(id: string) {
   return { ...toCameraView(row), devices: devices.rows };
 }
 
-export async function getSummary() {
+export async function getSummary(orgId: string) {
   const { rows } = await pool.query(
     `SELECT count(*)::int AS total,
             count(*) FILTER (WHERE c.monitoring_enabled)::int AS monitored,
@@ -357,14 +365,16 @@ export async function getSummary() {
             count(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline')::int AS cameras_with_storage_data,
             count(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status = 'offline')::int AS offline_with_storage_data
      FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.deleted_at IS NULL`,
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL`,
+    [orgId],
   );
   const r = rows[0];
   const alerts = await pool.query(
     `SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
             count(*) FILTER (WHERE status = 'acknowledged')::int AS acknowledged,
             count(*) FILTER (WHERE status <> 'resolved' AND severity = 'critical')::int AS critical
-     FROM alerts a JOIN cameras c ON c.id = a.camera_id WHERE c.deleted_at IS NULL`,
+     FROM alerts a JOIN cameras c ON c.id = a.camera_id WHERE c.organization_id = $1 AND c.deleted_at IS NULL`,
+    [orgId],
   );
   return {
     totalCameras: r.total,
@@ -396,19 +406,21 @@ function translateUniqueViolation(err: unknown): never {
   throw err;
 }
 
-export async function createCamera(input: Omit<CameraInput, "localStorage"> & { localStorage?: boolean }, actor: Actor, ip?: string | null, db?: Queryable) {
+export async function createCamera(
+  orgId: string, input: Omit<CameraInput, "localStorage"> & { localStorage?: boolean }, actor: Actor, ip?: string | null, db?: Queryable,
+) {
   const port = input.port ?? defaultPort(input.brand, input.protocol);
   const cipher = getCipher();
   const run = async (client: Queryable) => {
     const { rows } = await client
       .query<{ id: string }>(
         `INSERT INTO cameras (name, host, port, protocol, brand_key, model, location, monitoring_enabled,
-                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
-          input.caCertificate, actor.id, input.localStorage ?? true,
+          input.caCertificate, actor.id, input.localStorage ?? true, orgId,
         ],
       )
       .catch(translateUniqueViolation);
@@ -432,9 +444,9 @@ export async function createCamera(input: Omit<CameraInput, "localStorage"> & { 
   return id;
 }
 
-export async function updateCamera(id: string, patch: CameraUpdate, actor: Actor, ip?: string | null) {
+export async function updateCamera(orgId: string, id: string, patch: CameraUpdate, actor: Actor, ip?: string | null) {
   return withTransaction(async (client) => {
-    const current = await getCameraRow(id, client);
+    const current = await getCameraRow(id, orgId, client);
     const brand = patch.brand ?? current.brand_key;
     if (brand !== current.brand_key && credentialsFor(brand) !== credentialsFor(current.brand_key)) {
       // The stored credentials were for a different kind of login: ask for the new ones.
@@ -523,8 +535,8 @@ export async function updateCamera(id: string, patch: CameraUpdate, actor: Actor
   });
 }
 
-export async function setMonitoring(id: string, enabled: boolean, actor: Actor, ip?: string | null) {
-  await getCameraRow(id);
+export async function setMonitoring(orgId: string, id: string, enabled: boolean, actor: Actor, ip?: string | null) {
+  await getCameraRow(id, orgId);
   await pool.query("UPDATE cameras SET monitoring_enabled = $2, updated_at = now() WHERE id = $1", [id, enabled]);
   if (enabled) await pool.query("UPDATE camera_status SET next_check_at = now() WHERE camera_id = $1", [id]);
   await audit({ actor, ip, action: enabled ? "camera.monitoring_enabled" : "camera.monitoring_disabled", entityType: "camera", entityId: id });
@@ -535,13 +547,13 @@ export async function setMonitoring(id: string, enabled: boolean, actor: Actor, 
  * records are preserved; stored credentials are destroyed because they are no longer needed.
  * Nothing is sent to the physical camera.
  */
-export async function removeCameras(ids: string[], actor: Actor, ip?: string | null) {
+export async function removeCameras(orgId: string, ids: string[], actor: Actor, ip?: string | null) {
   const valid = ids.filter((id) => z.string().uuid().safeParse(id).success);
   return withTransaction(async (client) => {
     const { rows } = await client.query<{ id: string; name: string; host: string }>(
       `UPDATE cameras SET deleted_at = now(), monitoring_enabled = false, updated_at = now()
-       WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL RETURNING id, name, host`,
-      [valid],
+       WHERE id = ANY($1::uuid[]) AND organization_id = $2 AND deleted_at IS NULL RETURNING id, name, host`,
+      [valid, orgId],
     );
     const removed = rows.map((r) => r.id);
     if (removed.length) {
@@ -592,8 +604,8 @@ export async function getCameraConfig(id: string, timeoutMs: number, db: Queryab
   };
 }
 
-export async function getHistory(id: string, opts: { hours: number; limit: number }) {
-  await getCameraRow(id);
+export async function getHistory(orgId: string, id: string, opts: { hours: number; limit: number }) {
+  await getCameraRow(id, orgId);
   const checks = await pool.query(
     `SELECT checked_at AS "checkedAt", trigger, outcome, duration_ms AS "durationMs", attempts,
             storage_health AS "storageHealth", total_bytes AS "totalBytes", used_bytes AS "usedBytes",
@@ -612,11 +624,12 @@ export async function getHistory(id: string, opts: { hours: number; limit: numbe
 }
 
 /** Marks cameras as recording elsewhere (no SD card / local storage) or back to using local storage. */
-export async function setLocalStorage(ids: string[], localStorage: boolean, actor: Actor, ip?: string | null) {
+export async function setLocalStorage(orgId: string, ids: string[], localStorage: boolean, actor: Actor, ip?: string | null) {
   return withTransaction(async (db) => {
     const { rows } = await db.query<{ id: string }>(
-      `UPDATE cameras SET local_storage = $2, updated_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL AND local_storage <> $2 RETURNING id`,
-      [ids, localStorage],
+      `UPDATE cameras SET local_storage = $2, updated_at = now()
+       WHERE id = ANY($1::uuid[]) AND organization_id = $3 AND deleted_at IS NULL AND local_storage <> $2 RETURNING id`,
+      [ids, localStorage, orgId],
     );
     // Check them again soon so their status and alerts reflect the change.
     await db.query("UPDATE camera_status SET next_check_at = now() WHERE camera_id = ANY($1::uuid[])", [rows.map((r) => r.id)]);

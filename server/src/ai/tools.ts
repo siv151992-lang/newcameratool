@@ -13,6 +13,8 @@ import type { CameraInsight, FleetInsights } from "./insightsService.js";
 
 export interface ToolContext {
   permissions: readonly string[];
+  /** The asker's organization; every query is limited to its cameras. */
+  organizationId: string;
   /** Loaded once per question, on first use. */
   insights: () => Promise<FleetInsights>;
   now: number;
@@ -246,8 +248,8 @@ export const TOOLS = [
     },
     run: async (input, ctx) => {
       const db = ctx.db ?? pool;
-      const where = ["c.deleted_at IS NULL"];
-      const params: unknown[] = [];
+      const params: unknown[] = [ctx.organizationId];
+      const where = ["c.organization_id = $1", "c.deleted_at IS NULL"];
       const p = (v: unknown) => `$${params.push(v)}`;
       const status = input.status ?? "open";
       if (status === "open") where.push("a.status <> 'resolved'");
@@ -293,23 +295,23 @@ export const TOOLS = [
       const alertEvents = await db.query(
         `SELECT e.event_type, e.severity, e.message, e.created_at, a.id AS alert_id, a.title, c.id AS camera_id, c.name, c.host
          FROM alert_events e JOIN alerts a ON a.id = e.alert_id JOIN cameras c ON c.id = a.camera_id
-         WHERE c.deleted_at IS NULL AND e.created_at > now() - make_interval(hours => $1)
+         WHERE c.organization_id = $2 AND c.deleted_at IS NULL AND e.created_at > now() - make_interval(hours => $1)
          ORDER BY e.created_at DESC LIMIT 200`,
-        [h],
+        [h, ctx.organizationId],
       );
       const connection = await db.query(
         `SELECT e.occurred_at, e.from_status, e.to_status, e.reason, c.id AS camera_id, c.name, c.host
          FROM connection_events e JOIN cameras c ON c.id = e.camera_id
-         WHERE c.deleted_at IS NULL AND e.occurred_at > now() - make_interval(hours => $1)
+         WHERE c.organization_id = $2 AND c.deleted_at IS NULL AND e.occurred_at > now() - make_interval(hours => $1)
          ORDER BY e.occurred_at DESC LIMIT 200`,
-        [h],
+        [h, ctx.organizationId],
       );
       const failures = await db.query(
         `SELECT c.id AS camera_id, c.name, c.host, sc.outcome, count(*)::int AS n, max(sc.checked_at) AS last_at
          FROM storage_checks sc JOIN cameras c ON c.id = sc.camera_id
-         WHERE c.deleted_at IS NULL AND sc.outcome <> 'success' AND sc.checked_at > now() - make_interval(hours => $1)
+         WHERE c.organization_id = $2 AND c.deleted_at IS NULL AND sc.outcome <> 'success' AND sc.checked_at > now() - make_interval(hours => $1)
          GROUP BY c.id, c.name, c.host, sc.outcome ORDER BY n DESC LIMIT 100`,
-        [h],
+        [h, ctx.organizationId],
       );
       const cam = (r: { camera_id: string; name: string; host: string }) => ({ name: r.name, ip: r.host, link: `/cameras/${r.camera_id}` });
       return {

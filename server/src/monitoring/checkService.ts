@@ -107,7 +107,8 @@ export async function runCheck(
   deps: CheckDeps,
   opts: { leaseHeld?: boolean } = {},
 ): Promise<CheckOutcome> {
-  const settings = await getMonitoringSettings();
+  // Server-wide values (timeouts, retries) size the lease; the camera's organization settings apply below.
+  let settings = await getMonitoringSettings();
   if (!opts.leaseHeld && !(await acquireLease(cameraId, settings))) return { cameraId, status: "busy" };
 
   const started = Date.now();
@@ -118,11 +119,15 @@ export async function runCheck(
   let config: CameraConfig | undefined;
   let integrationVersion: string | undefined;
   try {
-    const cam = await pool.query("SELECT brand_key, monitoring_enabled, local_storage, deleted_at FROM cameras WHERE id = $1", [cameraId]);
+    const cam = await pool.query(
+      "SELECT brand_key, monitoring_enabled, local_storage, deleted_at, organization_id FROM cameras WHERE id = $1",
+      [cameraId],
+    );
     const row = cam.rows[0];
     if (!row || row.deleted_at || (trigger === "scheduled" && !row.monitoring_enabled)) {
       return { cameraId, status: "skipped" };
     }
+    settings = await getMonitoringSettings(row.organization_id);
     try {
       let adapter: CameraBrandAdapter;
       try {

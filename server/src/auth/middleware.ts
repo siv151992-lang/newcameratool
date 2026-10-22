@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { HttpError } from "../lib/errors.js";
 import type { Actor } from "../services/auditService.js";
-import { type AuthContext, getSession, SESSION_COOKIE } from "./sessions.js";
+import { type AuthContext, getSession, SESSION_COOKIE, SYSTEM_PERMISSION } from "./sessions.js";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -33,16 +33,31 @@ export function requireCsrf(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
+const noOrganization = () =>
+  new HttpError(403, "NO_ORGANIZATION", "You are not in any organization yet. Ask an organization administrator to invite you.");
+
 export function requirePermission(permission: string) {
   return (req: Request, _res: Response, next: NextFunction) => {
     if (!req.auth) return next(new HttpError(401, "UNAUTHENTICATED", "Please sign in"));
     if (!req.auth.user.permissions.includes(permission)) {
+      if (!req.auth.user.organizationId && permission !== SYSTEM_PERMISSION) return next(noOrganization());
       return next(new HttpError(403, "FORBIDDEN", "You do not have permission to perform this action"));
     }
     next();
   };
 }
 
+/** The current user, recorded in audit entries under the organization the session works in. */
 export function actorOf(req: Request): Actor {
-  return { id: req.auth!.user.id, username: req.auth!.user.username };
+  return { id: req.auth!.user.id, username: req.auth!.user.username, organizationId: req.auth!.user.organizationId };
+}
+
+/**
+ * The organization the request works in. Every organization-owned record (cameras, alerts, channels,
+ * settings, audit) is read and changed only within it.
+ */
+export function orgOf(req: Request): string {
+  const org = req.auth?.user.organizationId;
+  if (!org) throw noOrganization();
+  return org;
 }

@@ -73,7 +73,7 @@ function toInput(r: ImportRow, o: ImportOptions): { input: unknown; shared: bool
   };
 }
 
-export async function validateImport(rows: ImportRow[], options: ImportOptions): Promise<RowValidation[]> {
+export async function validateImport(orgId: string, rows: ImportRow[], options: ImportOptions): Promise<RowValidation[]> {
   const results: RowValidation[] = rows.map((r) => {
     const { input, shared } = toInput(r, options);
     const parsed = cameraInputSchema.safeParse(input);
@@ -101,8 +101,8 @@ export async function validateImport(rows: ImportRow[], options: ImportOptions):
   if (keys.length) {
     const { rows: found } = await pool.query<{ k: string }>(
       `SELECT brand_key || '|' || host || '|' || port AS k FROM cameras
-       WHERE deleted_at IS NULL AND (brand_key || '|' || host || '|' || port) = ANY($1::text[])`,
-      [keys],
+       WHERE organization_id = $2 AND deleted_at IS NULL AND (brand_key || '|' || host || '|' || port) = ANY($1::text[])`,
+      [keys, orgId],
     );
     for (const f of found) existing.add(f.k);
   }
@@ -135,8 +135,8 @@ export interface ImportRowResult {
   test?: { ok: boolean; code?: string; message: string };
 }
 
-export async function commitImport(rows: ImportRow[], options: ImportOptions, actor: Actor, ip?: string | null) {
-  const validation = await validateImport(rows, options);
+export async function commitImport(orgId: string, rows: ImportRow[], options: ImportOptions, actor: Actor, ip?: string | null) {
+  const validation = await validateImport(orgId, rows, options);
   const results: ImportRowResult[] = await mapWithConcurrency(
     validation,
     options.testConnectivity ? options.testConcurrency : 1,
@@ -155,7 +155,7 @@ export async function commitImport(rows: ImportRow[], options: ImportOptions, ac
         }
       }
       try {
-        const cameraId = await createCamera(v.input, actor, ip);
+        const cameraId = await createCamera(orgId, v.input, actor, ip);
         return { row: v.row, status: "imported", message: "Camera registered", cameraId, test };
       } catch (err) {
         const message = err instanceof HttpError ? err.message : "Could not save camera";

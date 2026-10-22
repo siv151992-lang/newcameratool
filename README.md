@@ -162,7 +162,7 @@ displays decimal units (GB), so a card shown as 121942 MB by the camera appears 
 | `npm run lint` | ESLint for both packages |
 | `npm run build` | Compile the server and build the web app |
 | `npm run migrate` | Apply database migrations |
-| `npm run create-admin -- --username <name> [--role admin\|operator\|viewer]` | Create a user from the CLI |
+| `npm run create-admin -- --username <name> [--email <address>]` | Create a system administrator (Org Admin of the first organization) from the CLI |
 | `npm run status` | Print every camera's status (online/offline, storage used/free, last error) in the terminal |
 | `npm run status -- --check` | Check all monitored cameras now, then print the table (`--json` for machine-readable output) |
 

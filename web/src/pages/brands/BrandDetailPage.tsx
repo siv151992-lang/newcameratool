@@ -15,7 +15,7 @@ import { AUTH_LABELS, CREDENTIAL_LABELS, TestResultView, TestTargetFields, useTe
 export function BrandDetailPage() {
   const { key = "" } = useParams();
   const { can } = useAuth();
-  const admin = can("settings:write");
+  const admin = can("system:manage");
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -25,7 +25,8 @@ export function BrandDetailPage() {
   const [camPage, setCamPage] = useState(1);
   const [testPage, setTestPage] = useState(1);
   const cameras = useQuery({ queryKey: ["integrations", key, "cameras", camPage], queryFn: () => api<Page<IntegrationCamera>>(`/integrations/${key}/cameras?page=${camPage}&pageSize=10`) });
-  const tests = useQuery({ queryKey: ["integrations", key, "tests", testPage], queryFn: () => api<Page<IntegrationTestRecord>>(`/integrations/${key}/tests?page=${testPage}&pageSize=10`) });
+  // Test history names test cameras from every organization: the system administrator's view only.
+  const tests = useQuery({ queryKey: ["integrations", key, "tests", testPage], queryFn: () => api<Page<IntegrationTestRecord>>(`/integrations/${key}/tests?page=${testPage}&pageSize=10`), enabled: admin });
   const d = detail.data;
   const target = useTestTarget(key, { protocol: d?.defaultProtocol ?? "http", ports: d?.defaultPorts ?? { http: 80, https: 443 } });
 
@@ -216,7 +217,7 @@ export function BrandDetailPage() {
         )}
       </Card>
 
-      <Card title="Test history">
+      {admin && <Card title="Test history">
         {tests.data && tests.data.total === 0 ? (
           <EmptyState title="No API tests yet" />
         ) : (
@@ -240,7 +241,7 @@ export function BrandDetailPage() {
             {tests.data && tests.data.total > 10 && <Pagination page={testPage} pageSize={10} total={tests.data.total} onPage={setTestPage} />}
           </>
         )}
-      </Card>
+      </Card>}
 
       <ConfirmDialog
         open={dialog === "disable"}

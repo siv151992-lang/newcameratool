@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { actorOf, requirePermission } from "../auth/middleware.js";
+import { actorOf, orgOf, requirePermission } from "../auth/middleware.js";
 import { registry } from "../integrations/registry.js";
 import { HttpError } from "../lib/errors.js";
 import { param, parse } from "../lib/validate.js";
@@ -34,13 +34,13 @@ const write = requirePermission("cameras:write");
 const check = requirePermission("cameras:check");
 
 camerasRouter.get("/", read, async (req, res) => {
-  res.json(await listCameras(parse(listQuerySchema, req.query)));
+  res.json(await listCameras(orgOf(req), parse(listQuerySchema, req.query)));
 });
 
 camerasRouter.get("/report", read, async (req, res) => {
   const q = parse(listQuerySchema, req.query);
   const { timeZone } = parse(z.object({ timeZone: z.string().min(1).max(64).default("UTC") }), { timeZone: req.query.timeZone });
-  const { csv, rows } = await cameraReportCsv(q, timeZone);
+  const { csv, rows } = await cameraReportCsv(orgOf(req), q, timeZone);
   const filters = Object.fromEntries(
     Object.entries(q).filter(([k, v]) => !["page", "pageSize", "sort", "order"].includes(k) && v !== undefined && v !== ""),
   );
@@ -52,21 +52,21 @@ camerasRouter.get("/report", read, async (req, res) => {
 });
 
 camerasRouter.get("/ids", read, async (req, res) => {
-  res.json(await listCameraIds(parse(listQuerySchema, req.query)));
+  res.json(await listCameraIds(orgOf(req), parse(listQuerySchema, req.query)));
 });
 
-camerasRouter.get("/summary", read, async (_req, res) => {
-  res.json(await getSummary());
+camerasRouter.get("/summary", read, async (req, res) => {
+  res.json(await getSummary(orgOf(req)));
 });
 
-camerasRouter.get("/locations", read, async (_req, res) => {
-  res.json(await listLocations());
+camerasRouter.get("/locations", read, async (req, res) => {
+  res.json(await listLocations(orgOf(req)));
 });
 
 camerasRouter.post("/", write, async (req, res) => {
   const input = parse(cameraInputSchema, req.body);
-  const id = await createCamera(input, actorOf(req), req.ip);
-  res.status(201).json(await getCamera(id));
+  const id = await createCamera(orgOf(req), input, actorOf(req), req.ip);
+  res.status(201).json(await getCamera(id, orgOf(req)));
 });
 
 // Test an unsaved configuration from the Add Camera form.
@@ -83,7 +83,7 @@ camerasRouter.get("/import/template", read, (_req, res) => {
 
 camerasRouter.post("/import/validate", write, importLimiter, async (req, res) => {
   const { rows, options } = parse(importRequestSchema, req.body);
-  const results = publicValidation(await validateImport(rows, options));
+  const results = publicValidation(await validateImport(orgOf(req), rows, options));
   res.json({
     results,
     summary: {
@@ -97,39 +97,39 @@ camerasRouter.post("/import/validate", write, importLimiter, async (req, res) =>
 
 camerasRouter.post("/import", write, importLimiter, async (req, res) => {
   const { rows, options } = parse(importRequestSchema, req.body);
-  res.json(await commitImport(rows, options, actorOf(req), req.ip));
+  res.json(await commitImport(orgOf(req), rows, options, actorOf(req), req.ip));
 });
 
 camerasRouter.post("/bulk-delete", write, async (req, res) => {
   const { ids } = parse(z.object({ ids: z.array(z.string()).min(1).max(500) }), req.body);
-  res.json(await removeCameras(ids, actorOf(req), req.ip));
+  res.json(await removeCameras(orgOf(req), ids, actorOf(req), req.ip));
 });
 
 camerasRouter.post("/bulk-local-storage", write, async (req, res) => {
   const { ids, localStorage } = parse(z.object({ ids: z.array(z.string().uuid()).min(1).max(500), localStorage: z.boolean() }).strict(), req.body);
-  res.json(await setLocalStorage(ids, localStorage, actorOf(req), req.ip));
+  res.json(await setLocalStorage(orgOf(req), ids, localStorage, actorOf(req), req.ip));
 });
 
 camerasRouter.get("/:id", read, async (req, res) => {
-  res.json(await getCamera(param(req)));
+  res.json(await getCamera(param(req), orgOf(req)));
 });
 
 camerasRouter.patch("/:id", write, async (req, res) => {
   const patch = parse(cameraUpdateSchema, req.body);
-  await updateCamera(param(req), patch, actorOf(req), req.ip);
-  res.json(await getCamera(param(req)));
+  await updateCamera(orgOf(req), param(req), patch, actorOf(req), req.ip);
+  res.json(await getCamera(param(req), orgOf(req)));
 });
 
 camerasRouter.delete("/:id", write, async (req, res) => {
-  const result = await removeCameras([param(req)], actorOf(req), req.ip);
+  const result = await removeCameras(orgOf(req), [param(req)], actorOf(req), req.ip);
   if (result.removed.length === 0) throw new HttpError(404, "NOT_FOUND", "Camera not found");
   res.status(204).end();
 });
 
 camerasRouter.post("/:id/monitoring", write, async (req, res) => {
   const { enabled } = parse(z.object({ enabled: z.boolean() }), req.body);
-  await setMonitoring(param(req), enabled, actorOf(req), req.ip);
-  res.json(await getCamera(param(req)));
+  await setMonitoring(orgOf(req), param(req), enabled, actorOf(req), req.ip);
+  res.json(await getCamera(param(req), orgOf(req)));
 });
 
 // Test a saved camera, optionally with unsaved edits applied (blank password keeps the stored one).
@@ -138,18 +138,18 @@ camerasRouter.post("/:id/test-connection", check, deviceLimiter, async (req, res
   if (Object.keys(overrides).length > 0 && !req.auth!.user.permissions.includes("cameras:write")) {
     throw new HttpError(403, "FORBIDDEN", "Testing modified settings requires camera edit permission");
   }
-  res.json(await testSavedCamera(param(req), overrides));
+  res.json(await testSavedCamera(orgOf(req), param(req), overrides));
 });
 
 camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) => {
-  await getCamera(param(req)); // 404 for unknown cameras
+  await getCamera(param(req), orgOf(req)); // 404 for unknown cameras and other organizations' cameras
   const outcome = await runCheck(param(req), "manual", { registry, notifier });
   if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
-  res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req)) });
+  res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req), orgOf(req)) });
 });
 
 camerasRouter.get("/:id/storage", read, async (req, res) => {
-  const cam = await getCamera(param(req));
+  const cam = await getCamera(param(req), orgOf(req));
   res.json({
     cameraId: cam.id,
     checkedAt: cam.status.lastSuccessAt,
@@ -168,5 +168,5 @@ camerasRouter.get("/:id/history", read, async (req, res) => {
     z.object({ hours: z.coerce.number().int().min(1).max(24 * 365).default(168), limit: z.coerce.number().int().min(1).max(5000).default(1000) }),
     req.query,
   );
-  res.json(await getHistory(param(req), q));
+  res.json(await getHistory(orgOf(req), param(req), q));
 });

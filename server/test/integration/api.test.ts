@@ -10,8 +10,8 @@ const app = createApp();
 const cam = new MockHikvisionCamera("admin", "Cam-Pass-123");
 let port: number;
 
-async function signIn(role: "admin" | "operator" | "viewer") {
-  const { username } = await createTestUser(role);
+async function signIn(role: "admin" | "operator" | "viewer", opts: { systemAdmin?: boolean } = {}) {
+  const { username } = await createTestUser(role, undefined, undefined, opts);
   const agent = request.agent(app);
   const res = await agent.post("/api/auth/login").send({ username, password: PASSWORD }).expect(200);
   return { agent, csrf: res.body.csrfToken as string };
@@ -164,8 +164,12 @@ describe("cameras", () => {
     const initial = await operator.agent.get("/api/settings/networks").expect(200);
     expect(initial.body).toMatchObject({ isDefault: true, allowedNetworks: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], camerasOutside: [] });
     await operator.agent.patch("/api/settings/networks").set("X-CSRF-Token", operator.csrf).send({ allowedNetworks: ["10.10.15.0/24"] }).expect(403);
+    // Org Admins cannot either: camera networks protect the whole server.
+    const orgAdmin = await signIn("admin");
+    await orgAdmin.agent.patch("/api/settings/networks").set("X-CSRF-Token", orgAdmin.csrf).send({ allowedNetworks: ["10.10.15.0/24"] }).expect(403);
 
-    const { agent, csrf } = await signIn("admin");
+    await pool.query("UPDATE users SET is_system_admin = true WHERE username = 'admin-user'");
+    const { agent, csrf } = orgAdmin;
     const office = await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Office 57", host: "10.10.15.57" }).expect(201);
     const bad = await agent.patch("/api/settings/networks").set("X-CSRF-Token", csrf).send({ allowedNetworks: ["10.10.15.0/24", "0.0.0.0/0"] }).expect(400);
     expect(bad.body.error.details[0]).toMatchObject({ field: "allowedNetworks.1", message: expect.stringMatching(/too broad/) });

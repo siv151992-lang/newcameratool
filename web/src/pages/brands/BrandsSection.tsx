@@ -17,9 +17,9 @@ export function BrandsSection() {
   return (
     <Routes>
       <Route index element={<BrandList />} />
-      {can("settings:write") && <Route path="new" element={<BrandWizard />} />}
+      {can("system:manage") && <Route path="new" element={<BrandWizard />} />}
       <Route path=":key" element={<BrandDetailPage />} />
-      {can("settings:write") && <Route path=":key/edit" element={<BrandWizard />} />}
+      {can("system:manage") && <Route path=":key/edit" element={<BrandWizard />} />}
       <Route path="*" element={<Navigate to="/settings/brands" replace />} />
     </Routes>
   );
@@ -47,7 +47,7 @@ function BrandList() {
           <strong className="font-medium text-ink">Custom adapters</strong> are built into the application and maintained in code.{" "}
           <strong className="font-medium text-ink">Configurable API</strong> integrations are defined here for brands whose storage API is a single HTTP request returning JSON or XML.
         </p>
-        {can("settings:write") && (
+        {can("system:manage") && (
           <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate("new")}>
             Add brand
           </Button>

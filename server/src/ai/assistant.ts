@@ -94,7 +94,7 @@ const textOf = (m: Message) =>
  */
 export async function runAssistant(
   input: ChatInput,
-  user: { permissions: readonly string[] },
+  user: { permissions: readonly string[]; organizationId: string },
   deps: { model?: AssistantModel; now?: number; insights?: () => Promise<FleetInsights> } = {},
   extraSystem?: string,
 ): Promise<AssistantAnswer> {
@@ -103,8 +103,9 @@ export async function runAssistant(
   let insights: Promise<FleetInsights> | undefined;
   const ctx: ToolContext = {
     permissions: user.permissions,
+    organizationId: user.organizationId,
     now,
-    insights: () => (insights ??= (deps.insights ?? (() => getFleetInsights()))()),
+    insights: () => (insights ??= (deps.insights ?? (() => getFleetInsights(user.organizationId)))()),
   };
   const tools = toolsFor(user.permissions);
   const system: Anthropic.Beta.Messages.BetaTextBlockParam[] = [

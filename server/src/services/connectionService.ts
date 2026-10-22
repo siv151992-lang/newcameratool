@@ -56,9 +56,9 @@ export async function testCameraConfig(adapter: CameraBrandAdapter, input: Testa
 }
 
 /** Tests a saved camera, optionally with edits from the form applied (blank password = keep stored). */
-export async function testSavedCamera(id: string, overrides: CameraUpdate = {}): Promise<ConnectionResult> {
+export async function testSavedCamera(orgId: string, id: string, overrides: CameraUpdate = {}): Promise<ConnectionResult> {
   const settings = await getMonitoringSettings();
-  const row = await getCameraRow(id);
+  const row = await getCameraRow(id, orgId);
   const brand = overrides.brand ?? row.brand_key;
   let stored: CameraConfig;
   try {

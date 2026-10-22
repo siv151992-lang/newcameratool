@@ -18,6 +18,9 @@ import { formatZodError } from "../lib/validate.js";
 import { redactSecrets } from "../security/redact.js";
 import { audit, type Actor } from "./auditService.js";
 import { getCameraConfig } from "./cameraService.js";
+
+/** Integrations serve every organization: their audit entries are server-wide. */
+const serverWide = (actor: Actor): Actor => ({ ...actor, organizationId: null });
 import { getMonitoringSettings } from "./settingsService.js";
 
 /**
@@ -231,22 +234,24 @@ function summarize(r: Record<string, any>): IntegrationSummary {
   };
 }
 
+/** $1 is the organization whose cameras are counted (null: every organization). */
 const SUMMARY_SQL = `
   SELECT b.*, av.version AS active_version, av.config AS active_config,
          lv.version AS latest_version, lv.config AS latest_config, lv.test_status AS latest_test_status,
-         (SELECT count(*)::int FROM cameras c WHERE c.brand_key = b.key AND c.deleted_at IS NULL) AS camera_count
+         (SELECT count(*)::int FROM cameras c WHERE c.brand_key = b.key AND c.deleted_at IS NULL
+            AND ($1::uuid IS NULL OR c.organization_id = $1)) AS camera_count
   FROM camera_brands b
   LEFT JOIN brand_integration_versions av ON av.id = b.active_version_id
   LEFT JOIN LATERAL (SELECT * FROM brand_integration_versions v WHERE v.brand_key = b.key ORDER BY version DESC LIMIT 1) lv ON true
   WHERE b.deleted_at IS NULL AND b.support_status <> 'planned'`;
 
-export async function listIntegrations(): Promise<IntegrationSummary[]> {
-  const { rows } = await pool.query(`${SUMMARY_SQL} ORDER BY b.integration_type, lower(b.display_name)`);
+export async function listIntegrations(orgId: string | null): Promise<IntegrationSummary[]> {
+  const { rows } = await pool.query(`${SUMMARY_SQL} ORDER BY b.integration_type, lower(b.display_name)`, [orgId]);
   return rows.map(summarize);
 }
 
-export async function getIntegration(key: string) {
-  const { rows } = await pool.query(`${SUMMARY_SQL} AND b.key = $1`, [key]);
+export async function getIntegration(key: string, orgId: string | null) {
+  const { rows } = await pool.query(`${SUMMARY_SQL} AND b.key = $2`, [orgId, key]);
   if (!rows[0]) throw notFound("Brand integration");
   const r = rows[0];
   const versions = await pool.query(
@@ -270,15 +275,20 @@ export async function getIntegration(key: string) {
   };
 }
 
-export async function listIntegrationCameras(key: string, page: number, pageSize: number) {
+/** Cameras using the integration, in `orgId` (null: every organization, for the system administrator). */
+export async function listIntegrationCameras(key: string, orgId: string | null, page: number, pageSize: number) {
   await brandRow(key);
-  const total = (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM cameras WHERE brand_key = $1 AND deleted_at IS NULL", [key])).rows[0]!.n;
+  const total = (await pool.query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM cameras WHERE brand_key = $1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR organization_id = $2)",
+    [key, orgId],
+  )).rows[0]!.n;
   const { rows } = await pool.query(
     `SELECT c.id, c.name, c.host, c.port, c.location, c.monitoring_enabled AS "monitoringEnabled",
             s.connection_status AS "connectionStatus", s.storage_health AS "storageHealth", s.last_success_at AS "lastSuccessAt"
      FROM cameras c JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.brand_key = $1 AND c.deleted_at IS NULL ORDER BY lower(c.name) LIMIT $2 OFFSET $3`,
-    [key, pageSize, (page - 1) * pageSize],
+     WHERE c.brand_key = $1 AND c.deleted_at IS NULL AND ($4::uuid IS NULL OR c.organization_id = $4)
+     ORDER BY lower(c.name) LIMIT $2 OFFSET $3`,
+    [key, pageSize, (page - 1) * pageSize, orgId],
   );
   return { items: rows, total, page, pageSize };
 }
@@ -320,11 +330,11 @@ export async function createIntegration(input: z.infer<typeof createIntegrationS
       "INSERT INTO brand_integration_versions (brand_key, version, config, change_note, created_by) VALUES ($1, 1, $2, $3, $4)",
       [key, JSON.stringify(config), input.changeNote ?? "Initial configuration", actor.id],
     );
-    await audit({ actor, ip, action: "integration.created", entityType: "integration", entityId: key, details: { displayName: d.displayName, version: 1 } }, db);
+    await audit({ actor: serverWide(actor), ip, action: "integration.created", entityType: "integration", entityId: key, details: { displayName: d.displayName, version: 1 } }, db);
     return key;
   });
   await registry.refresh();
-  return getIntegration(key);
+  return getIntegration(key, null);
 }
 
 export async function updateIntegration(key: string, input: z.infer<typeof updateIntegrationSchema>, actor: Actor, ip?: string) {
@@ -367,12 +377,12 @@ export async function updateIntegration(key: string, input: z.infer<typeof updat
     sets.push(`updated_by = $${params.push(actor.id)}`, "updated_at = now()");
     await db.query(`UPDATE camera_brands SET ${sets.join(", ")} WHERE key = $1`, params);
     await audit(
-      { actor, ip, action: "integration.updated", entityType: "integration", entityId: key, details: { fields: Object.keys(d), newVersion: newVersion ?? null } },
+      { actor: serverWide(actor), ip, action: "integration.updated", entityType: "integration", entityId: key, details: { fields: Object.keys(d), newVersion: newVersion ?? null } },
       db,
     );
   });
   await registry.refresh();
-  return getIntegration(key);
+  return getIntegration(key, null);
 }
 
 // ------------------------------------------------------------------ preview and test
@@ -569,7 +579,7 @@ export async function testIntegration(key: string, input: z.infer<typeof testInt
         if (latest?.id === version.id) await db.query("UPDATE camera_brands SET status = 'tested', support_status = 'unverified' WHERE key = $1", [key]);
       }
     }
-    await audit({ actor, ip, action: "integration.tested", entityType: "integration", entityId: key, details: { version: version?.version ?? null, ok: result.ok, outcome: result.outcome, host: camera.host } }, db);
+    await audit({ actor: serverWide(actor), ip, action: "integration.tested", entityType: "integration", entityId: key, details: { version: version?.version ?? null, ok: result.ok, outcome: result.outcome, host: camera.host } }, db);
   });
 
   return { ...result, outcomeLabel: OUTCOME_LABELS[result.outcome], durationMs, versionId: version?.id ?? null, version: version?.version ?? null };
@@ -610,10 +620,10 @@ export async function enableIntegration(key: string, versionId: string | undefin
     } else {
       await db.query("UPDATE camera_brands SET status = 'enabled', updated_by = $2, updated_at = now() WHERE key = $1", [key, actor.id]);
     }
-    await audit({ actor, ip, action: row.status === "enabled" ? "integration.version_activated" : "integration.enabled", entityType: "integration", entityId: key, details: { version } }, db);
+    await audit({ actor: serverWide(actor), ip, action: row.status === "enabled" ? "integration.version_activated" : "integration.enabled", entityType: "integration", entityId: key, details: { version } }, db);
   });
   await registry.refresh();
-  return getIntegration(key);
+  return getIntegration(key, null);
 }
 
 export async function disableIntegration(key: string, actor: Actor, ip?: string) {
@@ -621,10 +631,10 @@ export async function disableIntegration(key: string, actor: Actor, ip?: string)
   const affected = await impact(key);
   await withTransaction(async (db) => {
     await db.query("UPDATE camera_brands SET status = 'disabled', updated_by = $2, updated_at = now() WHERE key = $1", [key, actor.id]);
-    await audit({ actor, ip, action: "integration.disabled", entityType: "integration", entityId: key, details: { previousStatus: row.status, ...affected } }, db);
+    await audit({ actor: serverWide(actor), ip, action: "integration.disabled", entityType: "integration", entityId: key, details: { previousStatus: row.status, ...affected } }, db);
   });
   await registry.refresh();
-  return { integration: await getIntegration(key), impact: affected };
+  return { integration: await getIntegration(key, null), impact: affected };
 }
 
 export async function getImpact(key: string) {
@@ -655,7 +665,7 @@ export async function reassignCameras(key: string, toKey: string, actor: Actor, 
     if (clash.rowCount) throw conflict(`"${clash.rows[0].name}" already exists under the target integration with the same address and port`);
     const r = await db.query("UPDATE cameras SET brand_key = $2, updated_at = now() WHERE brand_key = $1 AND deleted_at IS NULL RETURNING id", [key, toKey]);
     await db.query("UPDATE camera_status SET next_check_at = now() WHERE camera_id = ANY($1::uuid[])", [r.rows.map((x) => x.id)]);
-    await audit({ actor, ip, action: "integration.cameras_reassigned", entityType: "integration", entityId: key, details: { to: toKey, cameras: r.rowCount } }, db);
+    await audit({ actor: serverWide(actor), ip, action: "integration.cameras_reassigned", entityType: "integration", entityId: key, details: { to: toKey, cameras: r.rowCount } }, db);
     return r.rowCount ?? 0;
   });
   return { moved };
@@ -675,7 +685,7 @@ export async function deleteIntegration(key: string, actor: Actor, ip?: string) 
     // Removed cameras keep their history, which references the brand: keep the row, hidden.
     if (removed) await db.query("UPDATE camera_brands SET deleted_at = now(), status = 'disabled', updated_by = $2 WHERE key = $1", [key, actor.id]);
     else await db.query("DELETE FROM camera_brands WHERE key = $1", [key]);
-    await audit({ actor, ip, action: "integration.deleted", entityType: "integration", entityId: key, details: { displayName: row.display_name } }, db);
+    await audit({ actor: serverWide(actor), ip, action: "integration.deleted", entityType: "integration", entityId: key, details: { displayName: row.display_name } }, db);
   });
   await registry.refresh();
 }

@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { z } from "zod";
-import { actorOf, requirePermission } from "../auth/middleware.js";
+import { actorOf, orgOf, requirePermission } from "../auth/middleware.js";
+import { SYSTEM_PERMISSION } from "../auth/sessions.js";
+import { HttpError } from "../lib/errors.js";
 import { pool } from "../db/pool.js";
 import { registry } from "../integrations/registry.js";
 import { hostGuard } from "../security/hostGuardInstance.js";
@@ -17,74 +19,122 @@ import {
   updateChannel,
 } from "../services/notificationChannelService.js";
 import { camerasOutside, getNetworkSettings, networkSettingsSchema, updateNetworkSettings } from "../services/networkSettings.js";
-import { getMonitoringSettings, monitoringSettingsSchema, updateMonitoringSettings } from "../services/settingsService.js";
-import { createUser, createUserSchema, listUsers, updateUser, updateUserSchema } from "../services/userService.js";
+import {
+  createOrganization,
+  createOrganizationSchema,
+  listMembers,
+  listOrganizations,
+  removeMember,
+  updateMember,
+  updateMemberSchema,
+  updateOrganization,
+  updateOrganizationSchema,
+} from "../services/organizationService.js";
+import {
+  getMonitoringSettings,
+  monitoringSettingsSchema,
+  ORGANIZATION_SETTING_KEYS,
+  serverWideKeys,
+  updateMonitoringSettings,
+} from "../services/settingsService.js";
+import { createUser, createUserSchema } from "../services/userService.js";
+
+const isSystemAdmin = (req: Request) => req.auth!.user.isSystemAdmin;
 
 export const brandsRouter = Router();
-brandsRouter.get("/", requirePermission("cameras:read"), async (_req, res) => {
+brandsRouter.get("/", requirePermission("cameras:read"), async (req, res) => {
   const { rows } = await pool.query<{ brand_key: string; n: number }>(
-    "SELECT brand_key, count(*)::int AS n FROM cameras WHERE deleted_at IS NULL GROUP BY brand_key",
+    "SELECT brand_key, count(*)::int AS n FROM cameras WHERE organization_id = $1 AND deleted_at IS NULL GROUP BY brand_key",
+    [orgOf(req)],
   );
   const counts = new Map(rows.map((r) => [r.brand_key, r.n]));
   res.json(registry.list().map((b) => ({ ...b, cameraCount: counts.get(b.key) ?? 0 })));
 });
 
 export const settingsRouter = Router();
-settingsRouter.get("/monitoring", requirePermission("settings:read"), async (_req, res) => {
-  res.json(await getMonitoringSettings());
+// Thresholds and detection are the organization's; worker capacity, timeouts and retention are server-wide.
+settingsRouter.get("/monitoring", requirePermission("settings:read"), async (req, res) => {
+  res.setHeader("X-Organization-Settings", ORGANIZATION_SETTING_KEYS.join(","));
+  res.json(await getMonitoringSettings(orgOf(req)));
 });
 settingsRouter.patch("/monitoring", requirePermission("settings:write"), async (req, res) => {
   const patch = parse(monitoringSettingsSchema.partial(), req.body);
-  const updated = await updateMonitoringSettings(patch, req.auth!.user.id);
+  const serverWide = serverWideKeys(patch);
+  if (serverWide.length && !isSystemAdmin(req)) {
+    throw new HttpError(403, "FORBIDDEN", `Only the system administrator can change server-wide settings (${serverWide.join(", ")})`);
+  }
+  const updated = await updateMonitoringSettings(orgOf(req), patch, req.auth!.user.id);
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.monitoring_updated", entityType: "settings", entityId: "monitoring", details: patch });
   res.json(updated);
 });
-settingsRouter.get("/networks", requirePermission("settings:read"), async (_req, res) => {
+// Camera networks protect the whole server: everyone may read them, only the system administrator changes them.
+settingsRouter.get("/networks", requirePermission("settings:read"), async (req, res) => {
   const s = await getNetworkSettings();
-  res.json({ ...s, camerasOutside: await camerasOutside(s.allowedNetworks) });
+  res.json({ ...s, camerasOutside: await camerasOutside(s.allowedNetworks, isSystemAdmin(req) ? null : orgOf(req)) });
 });
-settingsRouter.patch("/networks", requirePermission("settings:write"), async (req, res) => {
+settingsRouter.patch("/networks", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
   const before = await getNetworkSettings();
   const updated = await updateNetworkSettings(parse(networkSettingsSchema, req.body), req.auth!.user.id);
   hostGuard.invalidate();
   await audit({
     actor: actorOf(req), ip: req.ip, action: "settings.networks_updated", entityType: "settings", entityId: "networks",
-    details: { from: before.allowedNetworks, to: updated.allowedNetworks },
+    details: { from: before.allowedNetworks, to: updated.allowedNetworks }, organizationId: null,
   });
   res.json({ ...updated, camerasOutside: await camerasOutside(updated.allowedNetworks) });
 });
-settingsRouter.get("/notifications", requirePermission("settings:read"), async (_req, res) => {
-  res.json(await listChannels());
+settingsRouter.get("/notifications", requirePermission("settings:read"), async (req, res) => {
+  res.json(await listChannels(orgOf(req)));
 });
 settingsRouter.post("/notifications", requirePermission("settings:write"), async (req, res) => {
-  res.status(201).json(await createChannel(notifier, parse(channelInputSchema, req.body), actorOf(req), req.ip));
+  res.status(201).json(await createChannel(orgOf(req), notifier, parse(channelInputSchema, req.body), actorOf(req), req.ip));
 });
 settingsRouter.patch("/notifications/:id", requirePermission("settings:write"), async (req, res) => {
-  res.json(await updateChannel(notifier, param(req), parse(channelUpdateSchema, req.body), actorOf(req), req.ip));
+  res.json(await updateChannel(orgOf(req), notifier, param(req), parse(channelUpdateSchema, req.body), actorOf(req), req.ip));
 });
 settingsRouter.delete("/notifications/:id", requirePermission("settings:write"), async (req, res) => {
-  await deleteChannel(param(req), actorOf(req), req.ip);
+  await deleteChannel(orgOf(req), param(req), actorOf(req), req.ip);
   res.status(204).end();
 });
 settingsRouter.post("/notifications/:id/test", requirePermission("settings:write"), async (req, res) => {
-  res.json(await testChannel(notifier, param(req)));
+  res.json(await testChannel(orgOf(req), notifier, param(req)));
 });
 
+/** Members of the current organization, managed by its Org Admins. */
 export const usersRouter = Router();
 usersRouter.use(requirePermission("users:manage"));
-usersRouter.get("/", async (_req, res) => {
-  res.json(await listUsers());
+usersRouter.get("/", async (req, res) => {
+  res.json(await listMembers(orgOf(req)));
 });
 usersRouter.post("/", async (req, res) => {
-  const id = await createUser(parse(createUserSchema, req.body), actorOf(req), req.ip);
+  const id = await createUser(orgOf(req), parse(createUserSchema, req.body), actorOf(req), req.ip);
   res.status(201).json({ id });
 });
 usersRouter.patch("/:id", async (req, res) => {
-  await updateUser(param(req), parse(updateUserSchema, req.body), actorOf(req), req.ip);
+  await updateMember(orgOf(req), param(req), parse(updateMemberSchema, req.body), { ...actorOf(req), isSystemAdmin: isSystemAdmin(req) }, req.ip);
+  res.status(204).end();
+});
+usersRouter.delete("/:id", async (req, res) => {
+  await removeMember(orgOf(req), param(req), actorOf(req), req.ip);
+  res.status(204).end();
+});
+
+/** Organizations, managed by the system administrator. */
+export const organizationsRouter = Router();
+organizationsRouter.use(requirePermission(SYSTEM_PERMISSION));
+organizationsRouter.get("/", async (_req, res) => {
+  res.json(await listOrganizations());
+});
+organizationsRouter.post("/", async (req, res) => {
+  res.status(201).json({ id: await createOrganization(parse(createOrganizationSchema, req.body), actorOf(req), req.ip) });
+});
+organizationsRouter.patch("/:id", async (req, res) => {
+  await updateOrganization(param(req), parse(updateOrganizationSchema, req.body), actorOf(req), req.ip);
   res.status(204).end();
 });
 
 export const auditRouter = Router();
+/** The organization's entries; the system administrator also sees server-wide ones. */
+const auditScope = (req: Request) => ({ organizationId: orgOf(req), includeServerWide: isSystemAdmin(req) });
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 auditRouter.get("/export", requirePermission("audit:read"), async (req, res) => {
   const q = parse(
@@ -92,7 +142,7 @@ auditRouter.get("/export", requirePermission("audit:read"), async (req, res) => 
       .refine((v) => !v.from || !v.to || v.from <= v.to, { message: "From must not be after To", path: ["from"] }),
     req.query,
   );
-  const { csv, rows, truncated } = await exportAuditCsv(q);
+  const { csv, rows, truncated } = await exportAuditCsv(auditScope(req), q);
   await audit({ actor: actorOf(req), ip: req.ip, action: "audit.exported", entityType: "audit", details: { from: q.from ?? "start", to: q.to ?? "now", rows } });
   const name = `audit-log${q.from ? `-${q.from}` : ""}${q.to ? `-to-${q.to}` : ""}.csv`;
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -110,5 +160,5 @@ auditRouter.get("/", requirePermission("audit:read"), async (req, res) => {
     }),
     req.query,
   );
-  res.json(await listAudit(q));
+  res.json(await listAudit(auditScope(req), q));
 });

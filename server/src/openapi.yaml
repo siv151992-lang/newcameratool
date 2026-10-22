@@ -9,6 +9,12 @@ info:
     Every state-changing request (POST/PATCH/DELETE) must also send the `X-CSRF-Token` header with
     the `csrfToken` returned by login or `GET /api/auth/me`.
 
+    **Organizations**: cameras, alerts, notification channels, organization settings and the audit log belong
+    to an organization. Every request works in the session's current organization (`POST /api/auth/organization`
+    switches it); records of other organizations answer 404. A user in no organization gets 403 `NO_ORGANIZATION`.
+    Brand integrations, camera networks and worker capacity, timeouts and retention are server-wide and changed
+    only by the system administrator (`system:manage`).
+
     **Roles**: `admin` (everything), `operator` (cameras:read, cameras:check, alerts, settings:read),
     `viewer` (read-only). Each endpoint lists the permission it needs.
 
@@ -52,11 +58,11 @@ paths:
               type: object
               required: [username, password]
               properties:
-                username: { type: string }
+                username: { type: string, description: Username or the account's email address }
                 password: { type: string, format: password }
       responses:
         "200":
-          description: Signed in; sets the session cookie
+          description: Signed in; sets the session cookie. The session opens in the organization the user last worked in.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
@@ -66,14 +72,45 @@ paths:
   /auth/me:
     get:
       tags: [Auth]
-      summary: Current user and CSRF token
+      summary: Current user, CSRF token and the organizations the user belongs to
+      description: >
+        `user.organizationId` is the organization this session works in (null when the user is in none);
+        `user.role` and `user.permissions` come from the role there. The system administrator also has `system:manage`.
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Session" }
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Session" }
+                  - type: object
+                    properties:
+                      organizations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            name: { type: string }
+                            role: { type: string, enum: [admin, operator, viewer] }
         "401": { $ref: "#/components/responses/Error" }
+  /auth/organization:
+    post:
+      tags: [Auth]
+      summary: Switch this session to another organization the user belongs to
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organizationId]
+              properties:
+                organizationId: { type: string, format: uuid }
+      responses:
+        "204": { description: Switched }
+        "404": { description: Not a member of that organization, or it is deactivated }
   /auth/logout:
     post:
       tags: [Auth]
@@ -601,12 +638,12 @@ paths:
   /users:
     get:
       tags: [Admin]
-      summary: List users (users:manage)
+      summary: Members of the current organization (users:manage, Org Admin)
       responses:
         "200": { description: OK }
     post:
       tags: [Admin]
-      summary: Create a user (users:manage)
+      summary: Add a new account with a password to the current organization (users:manage)
       requestBody:
         required: true
         content:
@@ -617,16 +654,21 @@ paths:
               properties:
                 username: { type: string }
                 displayName: { type: string }
+                email: { type: string, format: email }
                 password: { type: string, format: password, minLength: 10 }
-                role: { type: string, enum: [admin, operator, viewer] }
+                role: { type: string, enum: [admin, operator, viewer], description: admin is the Org Admin }
       responses:
         "201": { description: Created }
+        "409": { description: Username or email already taken }
   /users/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     patch:
       tags: [Admin]
-      summary: Change role, enable/disable, or reset password (users:manage)
+      summary: Change a member's role; for accounts only in this organization also enable/disable or reset password (users:manage)
+      description: >
+        An account that also belongs to another organization can only be changed by the system administrator (403 SHARED_ACCOUNT).
+        The last active Org Admin cannot lose that role (400 LAST_ADMIN).
       requestBody:
         content:
           application/json:
@@ -637,6 +679,54 @@ paths:
                 role: { type: string, enum: [admin, operator, viewer] }
                 isActive: { type: boolean }
                 password: { type: string, format: password }
+      responses:
+        "204": { description: Updated }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { description: Not a member of the current organization }
+    delete:
+      tags: [Admin]
+      summary: Remove a member from the current organization (the account is kept)
+      responses:
+        "204": { description: Removed }
+        "400": { description: The last Org Admin, or yourself as Org Admin }
+        "404": { description: Not a member of the current organization }
+  /organizations:
+    get:
+      tags: [Admin]
+      summary: All organizations with member, Org Admin and camera counts (system:manage)
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Admin]
+      summary: Create an organization; the creator becomes its first Org Admin (system:manage)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+      responses:
+        "201": { description: Created }
+        "409": { description: An active organization already has this name }
+  /organizations/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin]
+      summary: Rename, deactivate or reactivate an organization (system:manage)
+      description: A deactivated organization cannot be opened and its cameras are not checked; nothing is deleted.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                isActive: { type: boolean }
       responses:
         "204": { description: Updated }
   /ai/status:

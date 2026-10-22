@@ -5,12 +5,36 @@ export type StorageHealth = "healthy" | "warning" | "critical" | "unknown";
 export type Severity = "info" | "warning" | "critical";
 export type RecordingState = "recording" | "idle" | "error" | "unknown";
 
+export type Role = "admin" | "operator" | "viewer";
+
 export interface User {
   id: string;
   username: string;
   displayName: string | null;
-  role: "admin" | "operator" | "viewer";
+  email: string | null;
+  /** Role in the current organization; null when the user is not in one. */
+  role: Role | null;
   permissions: string[];
+  isSystemAdmin: boolean;
+  organizationId: string | null;
+  organizationName: string | null;
+}
+
+/** An organization the signed-in user belongs to. */
+export interface Membership {
+  id: string;
+  name: string;
+  role: Role;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  members: number;
+  admins: number;
+  cameras: number;
 }
 
 export interface Camera {
@@ -230,15 +254,19 @@ export interface NotificationChannel {
   notifyOnRecovery: boolean;
 }
 
+/** A member of the current organization (Settings → Members). */
 export interface ManagedUser {
   id: string;
   username: string;
   displayName: string | null;
-  role: User["role"];
+  email: string | null;
+  role: Role;
   isActive: boolean;
   lastLoginAt: string | null;
   locked: boolean;
-  createdAt: string;
+  joinedAt: string;
+  /** Also a member of another organization: only the system administrator changes their account. */
+  otherOrganizations: boolean;
 }
 
 export interface AuditEntry {

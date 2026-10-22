@@ -46,6 +46,8 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   AI_MODEL: z.string().default("claude-opus-5-5"),
   AI_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
+  /** Name of the organization created for the first administrator on a new installation. */
+  DEFAULT_ORGANIZATION_NAME: z.string().trim().min(1).max(120).default("My organization"),
   BOOTSTRAP_ADMIN_USERNAME: z.string().optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().optional(),
 });

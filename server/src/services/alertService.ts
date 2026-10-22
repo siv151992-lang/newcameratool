@@ -123,17 +123,17 @@ const SELECT_ALERT = `
   LEFT JOIN users ua ON ua.id = a.acknowledged_by
   LEFT JOIN users ur ON ur.id = a.resolved_by`;
 
-export async function listAlerts(q: z.infer<typeof alertListQuery>) {
-  const where: string[] = [];
-  const params: unknown[] = [];
+export async function listAlerts(orgId: string, q: z.infer<typeof alertListQuery>) {
+  const params: unknown[] = [orgId];
+  const where: string[] = ["c.organization_id = $1"];
   const p = (v: unknown) => `$${params.push(v)}`;
   if (q.status === "open") where.push("a.status <> 'resolved'");
   else if (q.status !== "all") where.push(`a.status = ${p(q.status)}`);
   if (q.severity) where.push(`a.severity = ${p(q.severity)}`);
   if (q.type) where.push(`a.type = ${p(q.type)}`);
   if (q.cameraId) where.push(`a.camera_id = ${p(q.cameraId)}`);
-  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM alerts a ${clause}`, params)).rows[0]!.n;
+  const clause = `WHERE ${where.join(" AND ")}`;
+  const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM alerts a JOIN cameras c ON c.id = a.camera_id ${clause}`, params)).rows[0]!.n;
   const { rows } = await pool.query(
     `${SELECT_ALERT} ${clause}
      ORDER BY (a.status = 'resolved'), CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.last_seen_at DESC
@@ -143,9 +143,9 @@ export async function listAlerts(q: z.infer<typeof alertListQuery>) {
   return { items: rows, total, page: q.page, pageSize: q.pageSize };
 }
 
-export async function getAlert(id: string) {
-  if (!/^\d+$/.test(id)) throw notFound("Alert");
-  const { rows } = await pool.query(`${SELECT_ALERT} WHERE a.id = $1`, [id]);
+export async function getAlert(orgId: string, id: string) {
+  if (!/^\d{1,18}$/.test(id)) throw notFound("Alert");
+  const { rows } = await pool.query(`${SELECT_ALERT} WHERE a.id = $1 AND c.organization_id = $2`, [id, orgId]);
   if (!rows[0]) throw notFound("Alert");
   const events = await pool.query(
     `SELECT e.event_type AS "eventType", e.severity, e.message, u.username AS actor, e.created_at AS "createdAt"
@@ -155,8 +155,8 @@ export async function getAlert(id: string) {
   return { ...rows[0], events: events.rows };
 }
 
-export async function acknowledgeAlert(id: string, actor: Actor, note: string | undefined, ip?: string | null) {
-  await getAlert(id);
+export async function acknowledgeAlert(orgId: string, id: string, actor: Actor, note: string | undefined, ip?: string | null) {
+  await getAlert(orgId, id);
   await withTransaction(async (db) => {
     const res = await db.query(
       `UPDATE alerts SET status = 'acknowledged', acknowledged_at = now(), acknowledged_by = $2
@@ -172,8 +172,8 @@ export async function acknowledgeAlert(id: string, actor: Actor, note: string | 
   });
 }
 
-export async function resolveAlert(id: string, actor: Actor, note: string | undefined, ip?: string | null) {
-  await getAlert(id);
+export async function resolveAlert(orgId: string, id: string, actor: Actor, note: string | undefined, ip?: string | null) {
+  await getAlert(orgId, id);
   await withTransaction(async (db) => {
     const res = await db.query(
       `UPDATE alerts SET status = 'resolved', resolved_at = now(), resolved_by = $2, resolution_note = $3

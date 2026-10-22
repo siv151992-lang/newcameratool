@@ -1,6 +1,7 @@
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { z } from "zod";
-import { actorOf, requirePermission } from "../auth/middleware.js";
+import { actorOf, orgOf, requirePermission } from "../auth/middleware.js";
+import { SYSTEM_PERMISSION } from "../auth/sessions.js";
 import { param, parse } from "../lib/validate.js";
 import {
   createIntegration,
@@ -25,16 +26,19 @@ import {
 import { integrationLimiter } from "./limits.js";
 
 /**
- * Brand integration management. Reading needs settings:read; everything that changes an
- * integration or contacts a camera is administrator-only (settings:write) and audited.
+ * Brand integration management. Integrations serve every organization, so only the system
+ * administrator changes them; Org Admins (settings:read) can look. Every change is audited.
  */
 export const integrationsRouter = Router();
 const read = requirePermission("settings:read");
-const write = requirePermission("settings:write");
+const write = requirePermission(SYSTEM_PERMISSION);
+const system = requirePermission(SYSTEM_PERMISSION);
+/** Org Admins see their own organization's cameras; the system administrator sees every organization's. */
+const cameraScope = (req: Request) => (req.auth!.user.isSystemAdmin ? null : orgOf(req));
 const pageQuery = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) });
 
-integrationsRouter.get("/", read, async (_req, res) => {
-  res.json(await listIntegrations());
+integrationsRouter.get("/", read, async (req, res) => {
+  res.json(await listIntegrations(cameraScope(req)));
 });
 integrationsRouter.post("/validate", write, async (req, res) => {
   const v = validateConfig(req.body?.config);
@@ -47,7 +51,7 @@ integrationsRouter.post("/", write, async (req, res) => {
   res.status(201).json(await createIntegration(parse(createIntegrationSchema, req.body), actorOf(req), req.ip));
 });
 integrationsRouter.get("/:key", read, async (req, res) => {
-  res.json(await getIntegration(param(req, "key")));
+  res.json(await getIntegration(param(req, "key"), cameraScope(req)));
 });
 integrationsRouter.patch("/:key", write, async (req, res) => {
   res.json(await updateIntegration(param(req, "key"), parse(updateIntegrationSchema, req.body), actorOf(req), req.ip));
@@ -56,14 +60,14 @@ integrationsRouter.delete("/:key", write, async (req, res) => {
   await deleteIntegration(param(req, "key"), actorOf(req), req.ip);
   res.status(204).end();
 });
-integrationsRouter.get("/:key/impact", read, async (req, res) => {
+integrationsRouter.get("/:key/impact", system, async (req, res) => {
   res.json(await getImpact(param(req, "key")));
 });
 integrationsRouter.get("/:key/cameras", read, async (req, res) => {
   const q = parse(pageQuery, req.query);
-  res.json(await listIntegrationCameras(param(req, "key"), q.page, q.pageSize));
+  res.json(await listIntegrationCameras(param(req, "key"), cameraScope(req), q.page, q.pageSize));
 });
-integrationsRouter.get("/:key/tests", read, async (req, res) => {
+integrationsRouter.get("/:key/tests", system, async (req, res) => {
   const q = parse(pageQuery, req.query);
   res.json(await listIntegrationTests(param(req, "key"), q.page, q.pageSize));
 });

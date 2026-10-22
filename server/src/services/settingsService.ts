@@ -56,11 +56,26 @@ function checkOrdering(s: MonitoringSettings) {
   }
 }
 
-export async function getMonitoringSettings(db: Queryable = pool): Promise<MonitoringSettings> {
-  const { rows } = await db.query<{ value: Partial<MonitoringSettings> }>(
-    "SELECT value FROM app_settings WHERE key = 'monitoring'",
+/**
+ * Settings each organization chooses for its own cameras. The rest (worker capacity, timeouts,
+ * retention) apply to the whole server and only the system administrator changes them.
+ */
+export const ORGANIZATION_SETTING_KEYS = [
+  "pollIntervalSeconds", "offlineFailureThreshold", "authFailureThreshold", "storageUnavailableMinutes",
+  "warningThresholdPercent", "criticalThresholdPercent", "fullThresholdPercent", "recoveryHysteresisPercent",
+  "storageUsageAlertsEnabled", "recordingAlertsEnabled",
+] as const satisfies readonly (keyof MonitoringSettings)[];
+const isOrgKey = (k: string) => (ORGANIZATION_SETTING_KEYS as readonly string[]).includes(k);
+
+/** Server-wide values merged with `orgId`'s own (defaults where nothing is stored). */
+export async function getMonitoringSettings(orgId: string | null = null, db: Queryable = pool): Promise<MonitoringSettings> {
+  const { rows } = await db.query<{ global: Partial<MonitoringSettings> | null; org: Partial<MonitoringSettings> | null }>(
+    `SELECT (SELECT value FROM app_settings WHERE key = 'monitoring') AS global,
+            (SELECT value FROM organization_settings WHERE organization_id = $1 AND key = 'monitoring') AS org`,
+    [orgId],
   );
-  const merged = { ...DEFAULT_MONITORING_SETTINGS, ...(rows[0]?.value ?? {}) };
+  const own = Object.fromEntries(Object.entries(rows[0]?.org ?? {}).filter(([k]) => isOrgKey(k)));
+  const merged = { ...DEFAULT_MONITORING_SETTINGS, ...(rows[0]?.global ?? {}), ...own };
   // Ignore unknown/invalid stored keys rather than failing monitoring.
   const parsed = monitoringSettingsSchema.safeParse(
     Object.fromEntries(Object.keys(DEFAULT_MONITORING_SETTINGS).map((k) => [k, merged[k as keyof MonitoringSettings]])),
@@ -68,18 +83,31 @@ export async function getMonitoringSettings(db: Queryable = pool): Promise<Monit
   return parsed.success ? parsed.data : DEFAULT_MONITORING_SETTINGS;
 }
 
+/** The server-wide keys a patch would change (only the system administrator may). */
+export const serverWideKeys = (patch: Partial<MonitoringSettings>) => Object.keys(patch).filter((k) => !isOrgKey(k));
+
+/** Saves organization keys for `orgId` and server-wide keys for everyone. */
 export async function updateMonitoringSettings(
+  orgId: string,
   patch: Partial<MonitoringSettings>,
   userId: string | null,
   db: Queryable = pool,
 ): Promise<MonitoringSettings> {
-  const current = await getMonitoringSettings(db);
+  const current = await getMonitoringSettings(orgId, db);
   const next = monitoringSettingsSchema.parse({ ...current, ...patch });
   checkOrdering(next);
+  const pick = (org: boolean) => Object.fromEntries(Object.entries(next).filter(([k]) => isOrgKey(k) === org));
   await db.query(
-    `INSERT INTO app_settings (key, value, updated_by) VALUES ('monitoring', $1, $2)
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-    [JSON.stringify(next), userId],
+    `INSERT INTO organization_settings (organization_id, key, value, updated_by) VALUES ($1, 'monitoring', $2, $3)
+     ON CONFLICT (organization_id, key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+    [orgId, JSON.stringify(pick(true)), userId],
   );
+  if (serverWideKeys(patch).length) {
+    await db.query(
+      `INSERT INTO app_settings (key, value, updated_by) VALUES ('monitoring', $1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      [JSON.stringify(pick(false)), userId],
+    );
+  }
   return next;
 }

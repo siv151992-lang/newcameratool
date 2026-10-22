@@ -3,7 +3,7 @@ import { pool } from "../../src/db/pool.js";
 import { Notifier } from "../../src/notifications/notifier.js";
 import type { NotificationChannel, NotificationDriver, NotificationEvent } from "../../src/notifications/types.js";
 import { createCamera } from "../../src/services/cameraService.js";
-import { createTestUser, prepareDb, resetData } from "../helpers.js";
+import { createTestUser, prepareDb, resetData, testOrgId } from "../helpers.js";
 
 class FakeDriver implements NotificationDriver {
   readonly type = "email" as const;
@@ -28,13 +28,15 @@ beforeEach(async () => {
   await resetData();
   const actor = await createTestUser("admin");
   cameraId = await createCamera(
+    testOrgId,
     { name: "Lobby", host: "10.0.0.5", port: 80, protocol: "http", brand: "hikvision", model: null, location: null, username: "a", password: "b",
       monitoringEnabled: true, warningThreshold: null, criticalThreshold: null, caCertificate: null },
     actor,
   );
   alertId = (await pool.query("INSERT INTO alerts (camera_id, type, severity, status, title, description) VALUES ($1, 'storage_usage', 'warning', 'active', 't', 'd') RETURNING id", [cameraId])).rows[0].id;
   await pool.query(
-    "INSERT INTO notification_channels (type, name, config, min_severity, cooldown_minutes, notify_on_recovery) VALUES ('email', 'IT', '{\"recipients\":[\"it@example.com\"]}', 'warning', 60, true)",
+    "INSERT INTO notification_channels (type, name, config, min_severity, cooldown_minutes, notify_on_recovery, organization_id) VALUES ('email', 'IT', '{\"recipients\":[\"it@example.com\"]}', 'warning', 60, true, $1)",
+    [testOrgId],
   );
 });
 
