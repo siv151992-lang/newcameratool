@@ -39,6 +39,22 @@
   --accent-soft: 16 66 129;    /* #104281 */
 }
 
+/* Color themes (Settings → Account & theme): only the accent changes; status colors stay fixed. */
+[data-palette="zoho"] { --accent: 34 109 180; --accent-ink: 26 84 144; --accent-soft: 211 229 246; }
+[data-palette="zoho"].dark { --accent: 58 138 214; --accent-ink: 140 188 234; --accent-soft: 18 61 102; }
+[data-palette="emerald"] { --accent: 15 138 74; --accent-ink: 11 107 57; --accent-soft: 205 238 219; }
+[data-palette="emerald"].dark { --accent: 30 150 88; --accent-ink: 127 211 165; --accent-soft: 13 74 43; }
+[data-palette="violet"] { --accent: 109 79 216; --accent-ink: 85 55 184; --accent-soft: 227 220 251; }
+[data-palette="violet"].dark { --accent: 124 96 230; --accent-ink: 188 170 247; --accent-soft: 54 38 110; }
+[data-palette="teal"] { --accent: 14 124 134; --accent-ink: 10 95 103; --accent-soft: 205 238 240; }
+[data-palette="teal"].dark { --accent: 22 140 150; --accent-ink: 132 214 220; --accent-soft: 12 68 73; }
+[data-palette="sunset"] { --accent: 194 83 15; --accent-ink: 154 64 10; --accent-soft: 251 224 204; }
+[data-palette="sunset"].dark { --accent: 208 98 30; --accent-ink: 245 180 138; --accent-soft: 90 42 12; }
+[data-palette="rose"] { --accent: 192 48 90; --accent-ink: 155 34 70; --accent-soft: 249 215 225; }
+[data-palette="rose"].dark { --accent: 208 64 106; --accent-ink: 242 166 189; --accent-soft: 92 26 46; }
+[data-palette="graphite"] { --accent: 63 70 82; --accent-ink: 44 50 59; --accent-soft: 223 226 231; }
+[data-palette="graphite"].dark { --accent: 98 110 128; --accent-ink: 195 202 213; --accent-soft: 47 52 60; }
+
 html, body { background: rgb(var(--page)); color: rgb(var(--ink)); }
 body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .tabular { font-variant-numeric: tabular-nums; }

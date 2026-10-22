@@ -5,21 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { SignInOptions } from "../../api/types";
 import { Button } from "../../components/ui";
+import { ZOHO, ZohoBand } from "../../components/ZohoBand";
 import { useTheme } from "../../hooks/theme";
-
-/** Zoho brand colors. */
-const ZOHO = { red: "#E42527", green: "#089949", blue: "#226DB4", yellow: "#F9B21D" };
-
-/** The four Zoho colors as a thin band. */
-function ZohoBand({ className = "" }: { className?: string }) {
-  return (
-    <div aria-hidden className={`flex ${className}`}>
-      {[ZOHO.red, ZOHO.green, ZOHO.blue, ZOHO.yellow].map((c) => (
-        <span key={c} className="flex-1" style={{ background: c }} />
-      ))}
-    </div>
-  );
-}
 
 const FEATURES = [
   { icon: HardDrive, color: ZOHO.green, title: "Storage and recording", text: "SD card health, free space and days of recordings for every camera." },

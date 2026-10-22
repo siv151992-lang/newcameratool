@@ -3,7 +3,7 @@ import { useTheme } from "./theme";
 
 /** Resolves theme tokens to concrete colors for SVG attributes (which cannot read CSS variables). */
 export function useThemeColors() {
-  const { theme } = useTheme();
+  const { theme, palette } = useTheme();
   return useMemo(() => {
     const style = getComputedStyle(document.documentElement);
     const rgb = (name: string) => `rgb(${style.getPropertyValue(`--${name}`).trim().split(/\s+/).join(",")})`;
@@ -19,5 +19,5 @@ export function useThemeColors() {
       bad: rgb("bad"),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theme]);
+  }, [theme, palette]);
 }

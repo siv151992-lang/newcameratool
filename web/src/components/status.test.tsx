@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ThemeProvider, useTheme } from "../hooks/theme";
 import { ConnectionBadge, HealthBadge, RecordingBadge, UsageMeter } from "./status";
@@ -45,8 +45,14 @@ describe("status indicators", () => {
 });
 
 function Toggle() {
-  const { theme, toggle } = useTheme();
-  return <button onClick={toggle}>{theme}</button>;
+  const { theme, toggle, setPalette, setTheme } = useTheme();
+  return (
+    <>
+      <button onClick={toggle}>{theme}</button>
+      <button onClick={() => setPalette("zoho")}>zoho</button>
+      <button onClick={() => setTheme("system")}>system</button>
+    </>
+  );
 }
 
 describe("theme", () => {
@@ -54,11 +60,25 @@ describe("theme", () => {
     window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {} })) as never;
     localStorage.clear();
     render(<ThemeProvider><Toggle /></ThemeProvider>);
-    const btn = screen.getByRole("button");
+    const btn = screen.getAllByRole("button")[0]!;
     expect(btn.textContent).toBe("light");
     act(() => fireEvent.click(btn));
     expect(btn.textContent).toBe("dark");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(localStorage.getItem("cctv-theme")).toBe("dark");
+  });
+
+  it("applies a color theme and can follow the operating system", () => {
+    cleanup();
+    const dark = true;
+    window.matchMedia = ((q: string) => ({ matches: dark, media: q, addEventListener: () => {}, removeEventListener: () => {} })) as never;
+    localStorage.clear();
+    render(<ThemeProvider><Toggle /></ThemeProvider>);
+    act(() => fireEvent.click(screen.getByText("zoho")));
+    expect(document.documentElement.dataset.palette).toBe("zoho");
+    expect(localStorage.getItem("cctv-palette")).toBe("zoho");
+    act(() => fireEvent.click(screen.getByText("system")));
+    expect(document.documentElement.classList.contains("dark")).toBe(dark);
+    expect(localStorage.getItem("cctv-theme")).toBe("system");
   });
 });

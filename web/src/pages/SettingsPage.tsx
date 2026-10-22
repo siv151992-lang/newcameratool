@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, Boxes, Building2, ChevronRight, Clock, Download, Gauge, Mail, Network, Palette, Plus, ScrollText, Send, Sparkles, Trash2, Users as UsersIcon } from "lucide-react";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Activity, AlertTriangle, Archive, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, Users as UsersIcon } from "lucide-react";
+import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
 import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NetworkSettings, NotificationChannel, Page } from "../api/types";
@@ -9,7 +9,8 @@ import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage
 import { useToast } from "../components/toast";
 import { useAiStatus } from "../hooks/ai";
 import { ROLE_LABELS, useAuth } from "../hooks/auth";
-import { useTheme } from "../hooks/theme";
+import { PALETTES, type ThemeMode, useTheme } from "../hooks/theme";
+import { ZohoBand } from "../components/ZohoBand";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
 import { InvitationsCard, useInvitations } from "./InvitationsPanel";
@@ -37,7 +38,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Members", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
-    { path: "account", label: "Account & theme", description: "Change your password and the light or dark theme.", icon: <Palette className={icon} />, element: <AccountTab /> },
+    { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, and your password.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
   ];
   return all.filter(Boolean) as Section[];
@@ -688,9 +689,93 @@ function UsersTab() {
 
 // ------------------------------------------------------------------ Account
 
+const MODES: { key: ThemeMode; label: string; icon: ReactNode }[] = [
+  { key: "light", label: "Light", icon: <Sun className="h-4 w-4" /> },
+  { key: "dark", label: "Dark", icon: <Moon className="h-4 w-4" /> },
+  { key: "system", label: "Match system", icon: <Monitor className="h-4 w-4" /> },
+];
+
+/** Light, dark or the operating system's choice, and a color theme with a small preview of each. */
+function AppearanceCard() {
+  const { mode, setTheme, palette, setPalette } = useTheme();
+  return (
+    <Card title="Appearance">
+      <div className="space-y-5 p-4 text-sm">
+        <div>
+          <div className="mb-2 font-medium">Mode</div>
+          <div role="radiogroup" aria-label="Mode" className="inline-flex rounded-md border border-line bg-raised p-0.5">
+            {MODES.map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                role="radio"
+                aria-checked={mode === m.key}
+                onClick={() => setTheme(m.key)}
+                className={clsx(
+                  "flex items-center gap-1.5 rounded px-3 py-1.5 font-medium",
+                  mode === m.key ? "bg-accent text-white" : "text-ink-secondary hover:text-ink",
+                )}
+              >
+                <span aria-hidden>{m.icon}</span>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 font-medium">Color theme</div>
+          <div role="radiogroup" aria-label="Color theme" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {PALETTES.map((p) => {
+              const selected = palette === p.key;
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setPalette(p.key)}
+                  className={clsx(
+                    "group overflow-hidden rounded-lg border text-left transition",
+                    selected ? "border-transparent ring-2 ring-offset-2 ring-offset-surface" : "border-line hover:border-line-strong",
+                  )}
+                  style={selected ? ({ "--tw-ring-color": p.swatch } as CSSProperties) : undefined}
+                >
+                  <ThemePreview color={p.swatch} brand={"brand" in p} />
+                  <div className="flex items-center justify-between gap-2 px-3 py-2">
+                    <span className="font-medium">{p.label}</span>
+                    {selected && <Check className="h-4 w-4" style={{ color: p.swatch }} aria-hidden />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <p className="text-xs text-ink-muted">Saved in this browser. Status colors (online, warning, critical) stay the same in every theme.</p>
+      </div>
+    </Card>
+  );
+}
+
+/** A miniature of the app in a color: sidebar, highlighted item, a chart line and a button. */
+function ThemePreview({ color, brand }: { color: string; brand: boolean }) {
+  return (
+    <div aria-hidden className="relative h-20 border-b border-line bg-page">
+      {brand && <ZohoBand className="absolute inset-x-0 top-0 h-1" />}
+      <div className="absolute inset-y-0 left-0 w-1/4 border-r border-line bg-surface p-1.5">
+        <div className="mb-1 h-1.5 rounded-sm" style={{ background: color, opacity: 0.25 }} />
+        <div className="mb-1 h-1.5 rounded-sm bg-line" />
+        <div className="h-1.5 rounded-sm bg-line" />
+      </div>
+      <svg className="absolute bottom-3 left-[32%] h-8 w-[45%]" viewBox="0 0 100 30" preserveAspectRatio="none">
+        <polyline points="0,26 20,20 40,22 60,12 80,14 100,4" fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" />
+      </svg>
+      <div className="absolute right-2 top-3 h-3 w-8 rounded-sm" style={{ background: color }} />
+    </div>
+  );
+}
+
 function AccountTab() {
   const { user } = useAuth();
-  const { theme, setTheme } = useTheme();
   const toast = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -709,18 +794,9 @@ function AccountTab() {
   });
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      <Card title="Appearance">
-        <div className="space-y-3 p-4 text-sm">
-          <p className="text-ink-secondary">Your choice is saved in this browser. Until you choose, the theme follows your operating system.</p>
-          <div role="radiogroup" aria-label="Theme" className="flex gap-2">
-            {(["light", "dark"] as const).map((t) => (
-              <Button key={t} role="radio" aria-checked={theme === t} variant={theme === t ? "primary" : "secondary"} onClick={() => setTheme(t)}>
-                {t === "light" ? "Light" : "Dark"}
-              </Button>
-            ))}
-          </div>
-        </div>
-      </Card>
+      <div className="lg:col-span-2">
+        <AppearanceCard />
+      </div>
       <Card title={`Change password (${user?.username})`}>
         <form
           className="space-y-3 p-4"

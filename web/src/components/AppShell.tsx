@@ -10,6 +10,7 @@ import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
 import { useToast } from "./toast";
 import { Button, Select } from "./ui";
+import { ZohoBand } from "./ZohoBand";
 
 const SIDEBAR_KEY = "cctv-sidebar-collapsed";
 
@@ -99,7 +100,7 @@ function OrganizationSwitcher() {
 
 export function AppShell() {
   const { user, logout } = useAuth();
-  const { theme, toggle } = useTheme();
+  const { theme, toggle, palette } = useTheme();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsed);
   useEffect(() => {
@@ -127,6 +128,7 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen lg:flex">
+      {palette === "zoho" && <ZohoBand className="fixed inset-x-0 top-0 z-50 h-1" />}
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-raised focus:px-3 focus:py-2">
         Skip to content
       </a>
