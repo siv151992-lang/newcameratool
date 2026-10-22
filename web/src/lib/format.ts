@@ -8,6 +8,13 @@ const CAPABILITY_LABELS: Record<string, string> = {
 };
 export const capabilityLabel = (c: string) => CAPABILITY_LABELS[c] ?? c;
 
+/** Days of recordings: "Under 1 day", "3.5 days", "42 days". */
+export function formatDays(days: number | null | undefined): string {
+  if (days === null || days === undefined) return "—";
+  if (days < 1) return "Under 1 day";
+  return days < 10 ? `${days.toFixed(1)} days` : `${Math.round(days)} days`;
+}
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "—";
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];

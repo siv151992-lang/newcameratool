@@ -48,7 +48,16 @@ export interface Camera {
     nextCheckAt: string | null;
     checkInProgress: boolean;
     openAlerts: number;
-    recording: { state: RecordingState; detail: string | null; checkedAt: string | null };
+    recording: {
+      state: RecordingState;
+      detail: string | null;
+      checkedAt: string | null;
+      /** Days of recordings on the camera's storage, from its oldest recording; null when not known. */
+      daysAvailable: number | null;
+      /** Oldest recording, camera wall-clock time (YYYY-MM-DDTHH:MM:SS). */
+      oldest: string | null;
+      rangeCheckedAt: string | null;
+    };
   };
   device: { model: string | null; serialNumber: string | null; firmwareVersion: string | null };
 }

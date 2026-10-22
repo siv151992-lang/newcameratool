@@ -8,6 +8,7 @@ import {
   type CameraConfig,
   type ConnectionResult,
   type DeviceInfo,
+  type RecordingRange,
   type RecordingReading,
   type StorageReading,
 } from "../types.js";
@@ -17,6 +18,7 @@ import {
   parseRecordingStatusXml,
   parseResponseStatus,
   parseSearchLatestEnd,
+  parseSearchOldestStart,
   parseStorageXml,
   parseTrackSchedule,
   RECORDING_RECENT_MINUTES,
@@ -24,6 +26,7 @@ import {
   searchRequestXml,
   toLocalWallClock,
   type TrackSchedule,
+  wallClockText,
 } from "./parser.js";
 
 export const HIKVISION_STORAGE_PATH = "/ISAPI/ContentMgmt/Storage";
@@ -35,6 +38,8 @@ export const HIKVISION_TRACK_PATH = "/ISAPI/ContentMgmt/record/tracks/101";
 
 /** Recordings are searched from this long before the camera's time now (a few minutes after, too). */
 const SEARCH_WINDOW_MINUTES = 30;
+/** How far back the search for the oldest recording looks (a large card at a low bitrate holds months). */
+const RANGE_LOOKBACK_DAYS = 400;
 /** A camera without Recording/status is not asked again for this long (saves two requests a check). */
 const NO_STATUS_TTL_MS = 6 * 3600_000;
 
@@ -132,6 +137,26 @@ export class HikvisionAdapter implements CameraBrandAdapter {
       schedule = await this.getXml(camera, HIKVISION_TRACK_PATH).then(parseTrackSchedule, () => undefined);
     }
     return recordingFromSegments(nowMs, latest, schedule);
+  }
+
+  /**
+   * Days of recordings on the camera: one search over the last RANGE_LOOKBACK_DAYS asking for the
+   * first few segments (the camera lists them oldest first). Whether replies are in local time or
+   * UTC is told from the newest segment, as for the recording status.
+   */
+  async getRecordingRange(camera: CameraConfig): Promise<RecordingRange | null> {
+    const { nowMs, offsetMinutes } = parseCameraTime(await this.step("reading the camera's clock", () => this.getXml(camera, HIKVISION_TIME_PATH)));
+    const search = (from: number, to: number, max: number) =>
+      this.step("searching its recordings", () => this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(from, to, randomUUID().toUpperCase(), max)));
+    const oldest = parseSearchOldestStart(await search(nowMs - RANGE_LOOKBACK_DAYS * 86_400_000, nowMs + 5 * 60_000, 5));
+    if (oldest === undefined) return null;
+    let shiftMs = 0;
+    if (offsetMinutes) {
+      const latest = parseSearchLatestEnd(await search(nowMs - SEARCH_WINDOW_MINUTES * 60_000, nowMs + 5 * 60_000, 40));
+      if (latest !== undefined && toLocalWallClock(latest, nowMs, offsetMinutes) !== latest) shiftMs = offsetMinutes * 60_000;
+    }
+    const oldestLocal = oldest + shiftMs;
+    return { oldest: wallClockText(oldestLocal), days: Math.max(0, Math.round(((nowMs - oldestLocal) / 86_400_000) * 100) / 100) };
   }
 
   /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */

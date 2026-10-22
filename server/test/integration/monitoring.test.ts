@@ -283,6 +283,26 @@ describe("scheduler", () => {
     expect(await rows()).toHaveLength(5);
   });
 
+  it("reads how many days of recordings the camera holds, at most every 6 hours unless checked manually", async () => {
+    cam.recordingStatusApi = false;
+    cam.recordedDays = 12.5;
+    try {
+      const id = await addCamera();
+      await runCheck(id, "scheduled", deps);
+      const first = await status(id);
+      expect(Number(first.recording_days)).toBeCloseTo(12.5, 1);
+      expect(first.recording_oldest).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+      cam.recordedDays = 20;
+      await runCheck(id, "scheduled", deps); // within 6 hours: not read again
+      expect(Number((await status(id)).recording_days)).toBeCloseTo(12.5, 1);
+      await runCheck(id, "manual", deps); // Refresh now: read again
+      expect(Number((await status(id)).recording_days)).toBeCloseTo(20, 1);
+    } finally {
+      cam.recordingStatusApi = true;
+      cam.recordedDays = 30;
+    }
+  });
+
   it("reclaims cameras whose lease expired (worker crash recovery)", async () => {
     const id = await addCamera();
     await pool.query("UPDATE camera_status SET check_lock_until = now() - interval '1 second', check_lock_owner = 'dead-worker' WHERE camera_id = $1", [id]);

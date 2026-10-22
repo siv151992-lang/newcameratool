@@ -14,7 +14,7 @@ import { CameraForecastPanel } from "./AiPage";
 import { Button, Card, Dialog, EmptyState, ErrorMessage, Spinner } from "../components/ui";
 import { useAuth } from "../hooks/auth";
 import { useCheckNow, useRemoveCameras, useSetMonitoring, useTestSavedCamera } from "../hooks/cameras";
-import { absoluteTime, ALERT_TYPE_LABELS, ERROR_LABELS, errorCategory, formatBytes, formatPercent, relativeTime } from "../lib/format";
+import { absoluteTime, ALERT_TYPE_LABELS, ERROR_LABELS, errorCategory, formatBytes, formatDays, formatPercent, relativeTime } from "../lib/format";
 
 const RANGES = [
   { hours: 24, label: "24 hours" },
@@ -270,6 +270,27 @@ export function CameraDetailPage() {
                 )}
               </Info>
             </div>
+            {c.localStorage !== false && (
+              <div className="col-span-2">
+                <Info label="Recordings available">
+                  {s.recording.daysAvailable !== null ? (
+                    <>
+                      <span className="font-medium">{formatDays(s.recording.daysAvailable)}</span>
+                      {s.recording.oldest && (
+                        <span className="block text-ink-secondary">Oldest recording {s.recording.oldest.replace("T", " ").slice(0, 16)} (camera time)</span>
+                      )}
+                    </>
+                  ) : s.recording.rangeCheckedAt ? (
+                    <span className="text-ink-secondary">No recordings found on the camera's storage, or this brand does not report them yet</span>
+                  ) : (
+                    <span className="text-ink-secondary">Not read yet</span>
+                  )}
+                  {s.recording.rangeCheckedAt && (
+                    <span className="block text-xs text-ink-muted" title={absoluteTime(s.recording.rangeCheckedAt)}>Checked {relativeTime(s.recording.rangeCheckedAt)}</span>
+                  )}
+                </Info>
+              </div>
+            )}
             <div className="col-span-2">
               <Info label="Most recent error">
                 {s.lastErrorCode ? (

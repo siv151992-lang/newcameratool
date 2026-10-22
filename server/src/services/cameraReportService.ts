@@ -30,6 +30,8 @@ interface ReportRow {
   free_bytes: number | null;
   used_percentage: number | null;
   recording_state: string | null;
+  recording_days: number | null;
+  recording_oldest: string | null;
   devices: number;
   unhealthy: number;
   degraded: number;
@@ -56,6 +58,7 @@ export async function cameraReportCsv(q: ListQuery, timeZone: string): Promise<{
     `SELECT c.name, c.host, c.port, b.display_name AS brand_name, c.model, c.location, c.monitoring_enabled, c.local_storage,
             s.connection_status, s.storage_health, s.last_attempt_at, s.last_success_at, s.last_error_message,
             s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage, s.recording_state,
+            s.recording_days, s.recording_oldest,
             coalesce(d.devices, 0)::int AS devices, coalesce(d.unhealthy, 0)::int AS unhealthy, coalesce(d.degraded, 0)::int AS degraded,
             d.device_statuses
      FROM cameras c
@@ -74,6 +77,7 @@ export async function cameraReportCsv(q: ListQuery, timeZone: string): Promise<{
   const lines: unknown[][] = [[
     "Camera", "IP address", "Port", "Brand", "Model", "Location", "Monitoring", "Connection", "SD card status",
     "SD card details (from camera)", "Storage health", "Capacity (GB)", "Used (GB)", "Free (GB)", "Used %", "Recording",
+    "Recordings available (days)", "Oldest recording (camera time)",
     `Last successful check (${timeZone})`, `Last check attempt (${timeZone})`, "Last error",
   ]];
   for (const r of rows) {
@@ -88,6 +92,8 @@ export async function cameraReportCsv(q: ListQuery, timeZone: string): Promise<{
       r.local_storage ? gb(r.total_bytes) : "", r.local_storage ? gb(r.used_bytes) : "", r.local_storage ? gb(r.free_bytes) : "",
       r.local_storage && r.used_percentage !== null ? Number(r.used_percentage).toFixed(1) : "",
       r.local_storage ? RECORDING[r.recording_state ?? "unknown"] ?? r.recording_state : "",
+      r.local_storage && r.recording_days !== null ? Number(r.recording_days).toFixed(1) : "",
+      r.local_storage && r.recording_oldest ? r.recording_oldest.replace("T", " ") : "",
       time(r.last_success_at), time(r.last_attempt_at),
       r.last_error_message, // cleared by the next successful check
     ]);

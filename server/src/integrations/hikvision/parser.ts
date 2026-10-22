@@ -197,7 +197,7 @@ export function wallClockMs(raw: string | undefined): number | undefined {
   return Number.isNaN(ms) ? undefined : ms;
 }
 
-const wallClockText = (ms: number) => new Date(ms).toISOString().slice(0, 19);
+export const wallClockText = (ms: number) => new Date(ms).toISOString().slice(0, 19);
 
 /** GET /ISAPI/System/time → the camera's wall-clock time now and its UTC offset when stated. */
 export function parseCameraTime(xml: string): { nowMs: number; offsetMinutes?: number } {
@@ -210,13 +210,13 @@ export function parseCameraTime(xml: string): { nowMs: number; offsetMinutes?: n
 }
 
 /** Body of POST /ISAPI/ContentMgmt/search for track 101 between two wall-clock times. */
-export function searchRequestXml(fromMs: number, toMs: number, searchId: string): string {
+export function searchRequestXml(fromMs: number, toMs: number, searchId: string, maxResults = 40): string {
   const t = (ms: number) => `${wallClockText(ms)}Z`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <CMSearchDescription><searchID>${searchId}</searchID>
 <trackIDList><trackID>101</trackID></trackIDList>
 <timeSpanList><timeSpan><startTime>${t(fromMs)}</startTime><endTime>${t(toMs)}</endTime></timeSpan></timeSpanList>
-<maxResults>40</maxResults><searchResultPostion>0</searchResultPostion>
+<maxResults>${maxResults}</maxResults><searchResultPostion>0</searchResultPostion>
 <metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList>
 </CMSearchDescription>`;
 }
@@ -246,6 +246,18 @@ export function parseSearchLatestEnd(xml: string): number | undefined {
     .map((item) => wallClockMs(text(item.timeSpan as XmlNode, "endTime")))
     .filter((v): v is number => v !== undefined);
   return ends.length ? Math.max(...ends) : undefined;
+}
+
+/** POST /ISAPI/ContentMgmt/search → the start of the oldest recorded segment returned (as sent), if any. */
+export function parseSearchOldestStart(xml: string): number | undefined {
+  const root = findRoot(parseXml(xml), "CMSearchResult");
+  if (text(root, "responseStatus") === "false" && !/^no\s*match/i.test(text(root, "responseStatusStrg") ?? "")) {
+    throw new CameraApiError("API_ERROR", `Recording search failed: ${text(root, "responseStatusStrg") ?? "no reason given"}`);
+  }
+  const starts = list(root, "matchList", "searchMatchItem")
+    .map((item) => wallClockMs(text(item.timeSpan as XmlNode, "startTime")))
+    .filter((v): v is number => v !== undefined);
+  return starts.length ? Math.min(...starts) : undefined;
 }
 
 export interface TrackSchedule {

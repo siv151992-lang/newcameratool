@@ -109,6 +109,13 @@ export interface RecordingReading {
   detail?: string;
 }
 
+export interface RecordingRange {
+  /** Oldest recording, camera wall-clock time (YYYY-MM-DDTHH:MM:SS). */
+  oldest: string;
+  /** Days of recordings available: from the oldest recording to the camera's time now. */
+  days: number;
+}
+
 export interface DeviceInfo {
   deviceName?: string;
   model?: string;
@@ -165,4 +172,6 @@ export interface CameraBrandAdapter {
   getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo>;
   /** Optional: brands without a recording-status API leave it out and report "unknown". */
   getRecordingStatus?(camera: CameraConfig): Promise<RecordingReading>;
+  /** How far back the recordings on the camera's own storage go; null when it holds none. */
+  getRecordingRange?(camera: CameraConfig): Promise<RecordingRange | null>;
 }

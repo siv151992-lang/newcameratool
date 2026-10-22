@@ -80,6 +80,8 @@ export class MockHikvisionCamera {
   searchRepliesUtc = false;
   /** Delay before every reply, to behave like a real camera on a network (load tests). */
   latencyMs = 0;
+  /** Search mode: how many days of recordings the card holds (the oldest segment starts then). */
+  recordedDays = 30;
   requests: { path: string; authorized: boolean }[] = [];
   private server?: http.Server;
   private readonly nonces = new Set<string>();
@@ -122,14 +124,16 @@ export class MockHikvisionCamera {
   }
 
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
-    if (this.latencyMs > 0) {
-      setTimeout(() => this.respond(req, res), this.latencyMs);
-      return;
-    }
-    this.respond(req, res);
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      if (this.latencyMs > 0) setTimeout(() => this.respond(req, res, body), this.latencyMs);
+      else this.respond(req, res, body);
+    });
   }
 
-  private respond(req: http.IncomingMessage, res: http.ServerResponse) {
+  private respond(req: http.IncomingMessage, res: http.ServerResponse, body = "") {
     const path = req.url ?? "/";
     if (this.mode === "hang") return; // never respond: exercises timeouts
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
@@ -144,7 +148,7 @@ export class MockHikvisionCamera {
     const routes: Record<string, () => string> = {
       "/ISAPI/ContentMgmt/Storage": () => this.storage,
       "/ISAPI/System/deviceInfo": () => this.deviceInfo,
-      ...(this.recordingStatusApi ? { "/ISAPI/ContentMgmt/Recording/status": () => recordingXml(this.recording) } : this.searchRoutes()),
+      ...(this.recordingStatusApi ? { "/ISAPI/ContentMgmt/Recording/status": () => recordingXml(this.recording) } : this.searchRoutes(body)),
     };
     if (this.mode === "not-found" || !routes[path]) {
       res.statusCode = 404;
@@ -155,7 +159,7 @@ export class MockHikvisionCamera {
     res.end(routes[path]!());
   }
 
-  private searchRoutes(): Record<string, () => string> {
+  private searchRoutes(searchBody: string): Record<string, () => string> {
     const wall = (ms: number) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
     const offsetMs = this.utcOffsetMinutes * 60_000;
     const now = Date.now() + offsetMs; // camera local wall clock
@@ -167,10 +171,20 @@ export class MockHikvisionCamera {
     const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     return {
       "/ISAPI/System/time": () => `<?xml version="1.0" encoding="UTF-8"?><Time version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><timeMode>NTP</timeMode><localTime>${wall(now).slice(0, 19)}${tz}</localTime></Time>`,
-      "/ISAPI/ContentMgmt/search": () =>
-        lastEnd !== undefined && this.recording === "recording"
-          ? `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>true</responseStatus><responseStatusStrg>OK</responseStatusStrg><numOfMatches>1</numOfMatches><matchList><searchMatchItem><trackID>101</trackID><timeSpan><startTime>${reply(lastEnd - 3600_000)}</startTime><endTime>${reply(lastEnd)}</endTime></timeSpan></searchMatchItem></matchList></CMSearchResult>`
-          : `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>false</responseStatus><responseStatusStrg>NO MATCHES</responseStatusStrg><numOfMatches>0</numOfMatches></CMSearchResult>`,
+      "/ISAPI/ContentMgmt/search": () => {
+        // Segments: the oldest (recordedDays ago) when the requested period reaches back to it, and
+        // the one being written (recording) or last written (error).
+        const from = Date.parse(/<startTime>([^<]+)<\/startTime>/.exec(searchBody)?.[1] ?? "") || now;
+        const oldestStart = now - this.recordedDays * 86_400_000;
+        const items: [number, number][] = [];
+        if (this.recording !== "idle" && from <= oldestStart) items.push([oldestStart, oldestStart + 3600_000]);
+        if (lastEnd !== undefined && this.recording === "recording") items.push([lastEnd - 3600_000, lastEnd]);
+        if (items.length === 0) {
+          return `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>false</responseStatus><responseStatusStrg>NO MATCHES</responseStatusStrg><numOfMatches>0</numOfMatches></CMSearchResult>`;
+        }
+        const matches = items.map(([a, b]) => `<searchMatchItem><trackID>101</trackID><timeSpan><startTime>${reply(a)}</startTime><endTime>${reply(b)}</endTime></timeSpan></searchMatchItem>`).join("");
+        return `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>true</responseStatus><responseStatusStrg>OK</responseStatusStrg><numOfMatches>${items.length}</numOfMatches><matchList>${matches}</matchList></CMSearchResult>`;
+      },
       "/ISAPI/ContentMgmt/record/tracks/101": () =>
         `<?xml version="1.0" encoding="UTF-8"?><Track version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><id>101</id><Enable>${this.recording === "idle" ? "false" : "true"}</Enable><TrackSchedule><ScheduleBlockList><ScheduleBlock>${days
           .map((d) => `<ScheduleAction><id>1</id><ScheduleActionStartTime><DayOfWeek>${d}</DayOfWeek><TimeOfDay>00:00:00</TimeOfDay></ScheduleActionStartTime><ScheduleActionEndTime><DayOfWeek>${d}</DayOfWeek><TimeOfDay>24:00:00</TimeOfDay></ScheduleActionEndTime><Actions><Record>true</Record><ActionRecordingMode>CMR</ActionRecordingMode></Actions></ScheduleAction>`)

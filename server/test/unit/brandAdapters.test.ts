@@ -462,6 +462,25 @@ describe("Hikvision recording from the recordings on storage (DS-2CD3563G2-IS)",
     }
   });
 
+  it("reports days of recordings from the oldest segment, local-time replies (DS-2CD3563G2-IS)", async () => {
+    // Oldest segment starts 2026-10-20 19:56:02; camera time 2026-10-21 13:25:02 → 0.73 days.
+    expect(await new HikvisionAdapter(http).getRecordingRange(ctx.config)).toEqual({ oldest: "2026-10-20T19:56:02", days: 0.73 });
+    const posts = cam.requests.filter((q) => q.path === HIKVISION_SEARCH_PATH && q.headers.authorization);
+    expect(posts[0]!.body).toContain("<startTime>2025-09-16T13:25:02Z</startTime>"); // 400 days back
+    expect(posts[0]!.body).toContain("<maxResults>5</maxResults>");
+  });
+
+  it("reports days of recordings for firmware that replies in UTC (DS-2CD2563G2-IS)", async () => {
+    localTime = "2026-10-21T19:14:19+05:30";
+    search = () => DS2CD2563G2_SEARCH_UTC; // oldest 2026-10-20T20:18:27Z = 2026-10-21 01:48:27 local
+    expect(await new HikvisionAdapter(http).getRecordingRange(ctx.config)).toEqual({ oldest: "2026-10-21T01:48:27", days: 0.73 });
+  });
+
+  it("reports no range when the card holds no recordings", async () => {
+    search = () => SEARCH_NO_MATCHES;
+    expect(await new HikvisionAdapter(http).getRecordingRange(ctx.config)).toBeNull();
+  });
+
   it("still prefers Recording/status where the camera provides it", async () => {
     const live = new MockBrandCamera().route(HIKVISION_RECORDING_PATH, { body: "<RecordingStatus><status>recording</status></RecordingStatus>" });
     const port = await live.start();

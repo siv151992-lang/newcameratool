@@ -149,6 +149,7 @@ export async function runCheck(
         ? await readRecording(adapter, cfg)
         : { state: "unknown", channels: [], detail: "No local storage: this camera records elsewhere (e.g. an NVR)" };
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
+      if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);
     } catch (err) {
       attempts = (err as { attempts?: number }).attempts ?? attempts;
       result = toFailure(err, [config?.password]);
@@ -209,6 +210,36 @@ async function refreshDeviceInfo(
     return await adapter.getDeviceInfo(cfg);
   } catch {
     return undefined; // optional; storage monitoring does not depend on it
+  }
+}
+
+/** Days of recordings are read at most this often per camera (and on every manual check). */
+const RECORDING_RANGE_REFRESH_MS = 6 * 3600_000;
+
+/**
+ * Updates how many days of recordings the camera holds. Optional, like device information: a
+ * failure leaves the last value and is retried after an hour.
+ */
+async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapter, cfg: CameraConfig, trigger: "scheduled" | "manual") {
+  if (!adapter.getRecordingRange) {
+    // Marks it as looked at, so the camera page says the brand does not report it.
+    await pool.query("UPDATE camera_status SET recording_range_at = now() WHERE camera_id = $1 AND recording_range_at IS NULL", [cameraId]);
+    return;
+  }
+  const { rows } = await pool.query("SELECT recording_range_at FROM camera_status WHERE camera_id = $1", [cameraId]);
+  const last = rows[0]?.recording_range_at as Date | null;
+  if (trigger === "scheduled" && last && Date.now() - last.getTime() < RECORDING_RANGE_REFRESH_MS) return;
+  try {
+    const range = await adapter.getRecordingRange(cfg);
+    await pool.query(
+      "UPDATE camera_status SET recording_days = $2, recording_oldest = $3, recording_range_at = now() WHERE camera_id = $1",
+      [cameraId, range?.days ?? null, range?.oldest ?? null],
+    );
+  } catch {
+    await pool.query(
+      "UPDATE camera_status SET recording_range_at = now() - make_interval(secs => $2) WHERE camera_id = $1",
+      [cameraId, (RECORDING_RANGE_REFRESH_MS - 3600_000) / 1000],
+    );
   }
 }
 

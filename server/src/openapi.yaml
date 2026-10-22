@@ -721,7 +721,7 @@ paths:
   /cameras/report:
     get:
       tags: [Cameras]
-      summary: Camera status report as CSV (cameras:read) - connection and SD card status per camera, for the same filters and order as GET /cameras. The export is audited.
+      summary: Camera status report as CSV (cameras:read) - connection, SD card status and days of recordings per camera, for the same filters and order as GET /cameras. The export is audited.
       parameters:
         - { name: status, in: query, schema: { type: string } }
         - { name: search, in: query, schema: { type: string } }

@@ -8,13 +8,13 @@ import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
 import { useCheckNow, useDownloadCameraReport, useRemoveCameras, useSetLocalStorage, useSetMonitoring } from "../hooks/cameras";
 import { useColumnVisibility } from "../hooks/columns";
-import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, relativeTime } from "../lib/format";
+import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, formatDays, relativeTime } from "../lib/format";
 import { ColumnsMenu } from "./ColumnsMenu";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
 import { ConnectionBadge, HealthBadge, NoLocalStorageBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
-type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess";
+type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays";
 
 const USAGE_FILTERS: Record<string, { minUsage?: number; maxUsage?: number; label: string }> = {
   "": { label: "Any usage" },
@@ -65,6 +65,21 @@ const COLUMNS: ColumnDef[] = [
     sortKey: "recording",
     cellClassName: "",
     render: (c) => (c.localStorage === false ? <span className="text-ink-muted">—</span> : <RecordingBadge state={c.status.recording.state} detail={c.status.recording.detail} />),
+  },
+  {
+    key: "recordingDays",
+    label: "Recordings",
+    sortKey: "recordingDays",
+    align: "right",
+    cellClassName: "tabular whitespace-nowrap text-right",
+    render: (c) =>
+      c.localStorage === false || c.status.recording.daysAvailable === null ? (
+        <span className="text-ink-muted">—</span>
+      ) : (
+        <span title={c.status.recording.oldest ? `Oldest recording ${c.status.recording.oldest.replace("T", " ")} (camera time)` : undefined}>
+          {formatDays(c.status.recording.daysAvailable)}
+        </span>
+      ),
   },
   { key: "health", label: "Storage health", sortKey: "health", cellClassName: "", render: (c) => (c.localStorage === false ? <NoLocalStorageBadge /> : <HealthBadge health={c.status.storageHealth} />) },
   {
