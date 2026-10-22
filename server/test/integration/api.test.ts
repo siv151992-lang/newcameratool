@@ -186,6 +186,34 @@ describe("cameras", () => {
     }
   });
 
+  it("downloads a camera status report with connection and SD card status, filtered and audited", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const ok = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Lobby" }).expect(201)).body.id;
+    await agent.post(`/api/cameras/${ok}/check-storage`).set("X-CSRF-Token", csrf).expect(200);
+    const nvr = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Car park", host: "10.1.0.9", localStorage: false }).expect(201)).body.id;
+    const down = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Gate", host: "10.1.0.10" }).expect(201)).body.id;
+    await pool.query("UPDATE camera_status SET connection_status = 'offline', last_success_at = now(), last_error_message = 'Camera did not respond' WHERE camera_id = $1", [down]);
+    void nvr;
+
+    const res = await agent.get("/api/cameras/report?timeZone=Asia/Calcutta&sort=name").expect(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.headers["content-disposition"]).toMatch(/attachment; filename="camera-status-report-\d{4}-\d{2}-\d{2}\.csv"/);
+    const [header, ...rows] = res.text.replace(/^\uFEFF/, "").trim().split("\r\n");
+    expect(header).toContain("Camera,IP address,Port,Brand,Model,Location,Monitoring,Connection,SD card status");
+    expect(header).toContain("Last successful check (Asia/Calcutta)");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatch(/^Car park,10\.1\.0\.9,.*,On,Not checked yet,No local storage \(records elsewhere\),/);
+    expect(rows[1]).toMatch(/^Gate,10\.1\.0\.10,.*,On,Offline,No SD card \(last known; camera offline\),.*Camera did not respond$/);
+    expect(rows[2]).toMatch(/^Lobby,127\.0\.0\.1,.*,On,Online,Card OK,.*,Healthy,127\.9,/);
+    expect(res.text).not.toContain("Cam-Pass-123");
+
+    const offline = await agent.get("/api/cameras/report?status=offline").expect(200);
+    expect(offline.text.trim().split("\r\n")).toHaveLength(2);
+    const logged = (await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.report_exported' ORDER BY id")).rows;
+    expect(logged.map((r) => r.details)).toEqual([{ rows: 3 }, { rows: 1, status: "offline" }]);
+    await agent.get("/api/cameras/report?timeZone=Mars/Olympus").expect(400);
+  });
+
   it("lists the IDs of all cameras matching the filters, for Select all", async () => {
     const { agent, csrf } = await signIn("admin");
     const made: string[] = [];

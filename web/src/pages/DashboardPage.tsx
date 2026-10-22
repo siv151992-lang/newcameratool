@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, HardDrive, Plus, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, Download, HardDrive, Plus, WifiOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -7,6 +7,7 @@ import type { Alert, Page, Summary } from "../api/types";
 import { SeverityBadge } from "../components/status";
 import { Button, Card, EmptyState, ErrorMessage, PageHeader } from "../components/ui";
 import { useAuth } from "../hooks/auth";
+import { useDownloadCameraReport } from "../hooks/cameras";
 import { formatBytes, relativeTime } from "../lib/format";
 
 function StatTile({ label, value, icon, hint, to }: { label: string; value: ReactNode; icon: ReactNode; hint?: ReactNode; to?: string }) {
@@ -33,6 +34,7 @@ export function DashboardPage() {
   const { can } = useAuth();
   const navigate = useNavigate();
   const summary = useQuery({ queryKey: ["summary"], queryFn: () => api<Summary>("/cameras/summary"), refetchInterval: 30_000 });
+  const report = useDownloadCameraReport();
   const alerts = useQuery({
     queryKey: ["alerts", "dashboard"],
     queryFn: () => api<Page<Alert>>("/alerts?status=open&pageSize=5"),
@@ -45,7 +47,15 @@ export function DashboardPage() {
   return (
     <>
       {/* Adding, importing and listing cameras live on the Cameras page; each tile opens it filtered. */}
-      <PageHeader title="Dashboard" description="Storage health across all registered cameras. Select a tile to see those cameras." />
+      <PageHeader
+        title="Dashboard"
+        description="Storage health across all registered cameras. Select a tile to see those cameras."
+        actions={
+          <Button icon={<Download className="h-4 w-4" />} onClick={() => report.download()} loading={report.downloading}>
+            Download status report
+          </Button>
+        }
+      />
       <ErrorMessage error={summary.error} className="mb-4" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">

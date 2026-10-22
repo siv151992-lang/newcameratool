@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api/client";
+import { useState } from "react";
+import { api, downloadFile, toQuery } from "../api/client";
 import type { CameraDetail, ConnectionResult, HistoryCheck } from "../api/types";
 import { useToast } from "../components/toast";
 
@@ -90,3 +91,27 @@ export function useTestSavedCamera() {
 }
 
 export type { HistoryCheck };
+
+/**
+ * Downloads the camera status report (CSV for Excel): connection and SD card status per camera,
+ * for the cameras matching `filters` (none = all), times in the browser's time zone.
+ */
+export function useDownloadCameraReport() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [downloading, setDownloading] = useState(false);
+  const download = async (filters: Record<string, string | number | undefined> = {}) => {
+    setDownloading(true);
+    try {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      await downloadFile(`/cameras/report${toQuery({ ...filters, page: undefined, pageSize: undefined, timeZone })}`, "camera-status-report.csv");
+      void queryClient.invalidateQueries({ queryKey: ["audit"] }); // the export is audited
+    } catch (e) {
+      toast("error", (e as Error).message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return { download, downloading };
+}
+

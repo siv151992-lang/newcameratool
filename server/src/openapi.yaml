@@ -718,6 +718,25 @@ paths:
         - { name: entityId, in: query, schema: { type: string } }
       responses:
         "200": { description: OK }
+  /cameras/report:
+    get:
+      tags: [Cameras]
+      summary: Camera status report as CSV (cameras:read) - connection and SD card status per camera, for the same filters and order as GET /cameras. The export is audited.
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: timeZone, in: query, description: IANA time zone for the check times, schema: { type: string, default: UTC } }
+      responses:
+        "200":
+          description: CSV file (UTF-8 with BOM)
+          content:
+            text/csv: {}
+  /cameras/ids:
+    get:
+      tags: [Cameras]
+      summary: IDs of every camera matching the GET /cameras filters (cameras:read), for selecting them all
+      responses:
+        "200": { description: "{ ids, total }" }
   /audit/export:
     get:
       tags: [Admin]

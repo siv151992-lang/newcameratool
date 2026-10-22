@@ -238,7 +238,7 @@ export const listQuerySchema = z.object({
 });
 export type ListQuery = z.infer<typeof listQuerySchema>;
 
-const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
+export const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
   name: "lower(c.name)",
   host: "c.host",
   brand: "c.brand_key",
@@ -251,7 +251,7 @@ const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
 };
 
 /** WHERE clause (over cameras c LEFT JOIN camera_status s) for the camera list filters. */
-function listFilter(q: Omit<ListQuery, "page" | "pageSize" | "sort" | "order">) {
+export function listFilter(q: Omit<ListQuery, "page" | "pageSize" | "sort" | "order">) {
   const where = ["c.deleted_at IS NULL"];
   const params: unknown[] = [];
   const p = (v: unknown) => `$${params.push(v)}`;

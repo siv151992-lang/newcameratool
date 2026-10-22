@@ -6,6 +6,8 @@ import { HttpError } from "../lib/errors.js";
 import { param, parse } from "../lib/validate.js";
 import { runCheck } from "../monitoring/checkService.js";
 import { notifier } from "../notifications/notifier.js";
+import { audit } from "../services/auditService.js";
+import { cameraReportCsv } from "../services/cameraReportService.js";
 import {
   cameraInputSchema,
   cameraUpdateSchema,
@@ -33,6 +35,20 @@ const check = requirePermission("cameras:check");
 
 camerasRouter.get("/", read, async (req, res) => {
   res.json(await listCameras(parse(listQuerySchema, req.query)));
+});
+
+camerasRouter.get("/report", read, async (req, res) => {
+  const q = parse(listQuerySchema, req.query);
+  const { timeZone } = parse(z.object({ timeZone: z.string().min(1).max(64).default("UTC") }), { timeZone: req.query.timeZone });
+  const { csv, rows } = await cameraReportCsv(q, timeZone);
+  const filters = Object.fromEntries(
+    Object.entries(q).filter(([k, v]) => !["page", "pageSize", "sort", "order"].includes(k) && v !== undefined && v !== ""),
+  );
+  await audit({ actor: actorOf(req), ip: req.ip, action: "camera.report_exported", entityType: "camera", details: { rows, ...filters } });
+  const day = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="camera-status-report-${day}.csv"`);
+  res.send(csv);
 });
 
 camerasRouter.get("/ids", read, async (req, res) => {

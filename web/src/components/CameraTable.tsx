@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, Camera as CameraIcon, Eye, HardDrive, HardDriveDownload, Pause, Pencil, Play, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, HardDrive, HardDriveDownload, Pause, Pencil, Play, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
-import { useCheckNow, useRemoveCameras, useSetLocalStorage, useSetMonitoring } from "../hooks/cameras";
+import { useCheckNow, useDownloadCameraReport, useRemoveCameras, useSetLocalStorage, useSetMonitoring } from "../hooks/cameras";
 import { useColumnVisibility } from "../hooks/columns";
 import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, relativeTime } from "../lib/format";
 import { ColumnsMenu } from "./ColumnsMenu";
@@ -201,6 +201,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
   const filtered = !!(debouncedSearch || brand || status || location || usage || recording);
   const total = cameras.data?.total ?? 0;
   const [selectingAll, setSelectingAll] = useState(false);
+  const report = useDownloadCameraReport();
   /** Selects every camera matching the current filters, across all pages. */
   const selectAllMatching = async () => {
     setSelectingAll(true);
@@ -274,7 +275,16 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
             </option>
           ))}
         </Select>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            icon={<Download className="h-4 w-4" />}
+            onClick={() => report.download(params)}
+            loading={report.downloading}
+            disabled={cameras.isSuccess && total === 0}
+            title={filtered ? "Status report (CSV) of the cameras matching these filters" : "Status report (CSV) of all cameras"}
+          >
+            {filtered ? `Download report (${total})` : "Download report"}
+          </Button>
           <ColumnsMenu columns={COLUMNS} {...columnVisibility} />
         </div>
         {canWrite && selected.size > 0 && (
