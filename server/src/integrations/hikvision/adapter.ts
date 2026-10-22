@@ -38,8 +38,11 @@ export const HIKVISION_TRACK_PATH = "/ISAPI/ContentMgmt/record/tracks/101";
 
 /** Recordings are searched from this long before the camera's time now (a few minutes after, too). */
 const SEARCH_WINDOW_MINUTES = 30;
-/** How far back the search for the oldest recording looks (a large card at a low bitrate holds months). */
-const RANGE_LOOKBACK_DAYS = 400;
+/**
+ * How far back the search for the oldest recording looks (a large card at a low bitrate holds
+ * months). A camera that rejects or times out on a long search is asked again over a shorter one.
+ */
+const RANGE_LOOKBACK_DAYS = [400, 90, 30];
 /** A camera without Recording/status is not asked again for this long (saves two requests a check). */
 const NO_STATUS_TTL_MS = 6 * 3600_000;
 
@@ -140,23 +143,40 @@ export class HikvisionAdapter implements CameraBrandAdapter {
   }
 
   /**
-   * Days of recordings on the camera: one search over the last RANGE_LOOKBACK_DAYS asking for the
-   * first few segments (the camera lists them oldest first). Whether replies are in local time or
+   * Days of recordings on the camera: one search over the last 400 days (shorter if the camera
+   * refuses) asking for the first few segments (the camera lists them oldest first). Whether replies are in local time or
    * UTC is told from the newest segment, as for the recording status.
    */
   async getRecordingRange(camera: CameraConfig): Promise<RecordingRange | null> {
     const { nowMs, offsetMinutes } = parseCameraTime(await this.step("reading the camera's clock", () => this.getXml(camera, HIKVISION_TIME_PATH)));
-    const search = (from: number, to: number, max: number) =>
-      this.step("searching its recordings", () => this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(from, to, randomUUID().toUpperCase(), max)));
-    const oldest = parseSearchOldestStart(await search(nowMs - RANGE_LOOKBACK_DAYS * 86_400_000, nowMs + 5 * 60_000, 5));
+    // The reply is parsed inside the step too: a camera reports a refused search in the reply body.
+    const search = <T,>(from: number, to: number, max: number, parse: (xml: string) => T) =>
+      this.step("searching its recordings", async () =>
+        parse(await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(from, to, randomUUID().toUpperCase(), max))),
+      );
+    let oldest: number | undefined;
+    let lookback = 0;
+    for (const [i, days] of RANGE_LOOKBACK_DAYS.entries()) {
+      try {
+        oldest = await search(nowMs - days * 86_400_000, nowMs + 5 * 60_000, 5, parseSearchOldestStart);
+        lookback = days;
+        break;
+      } catch (err) {
+        const retryable = err instanceof CameraApiError && ["API_ERROR", "API_UNAVAILABLE", "INVALID_RESPONSE", "TIMEOUT"].includes(err.code);
+        if (!retryable || i === RANGE_LOOKBACK_DAYS.length - 1) throw err;
+      }
+    }
     if (oldest === undefined) return null;
     let shiftMs = 0;
     if (offsetMinutes) {
-      const latest = parseSearchLatestEnd(await search(nowMs - SEARCH_WINDOW_MINUTES * 60_000, nowMs + 5 * 60_000, 40));
+      const latest = await search(nowMs - SEARCH_WINDOW_MINUTES * 60_000, nowMs + 5 * 60_000, 40, parseSearchLatestEnd);
       if (latest !== undefined && toLocalWallClock(latest, nowMs, offsetMinutes) !== latest) shiftMs = offsetMinutes * 60_000;
     }
     const oldestLocal = oldest + shiftMs;
-    return { oldest: wallClockText(oldestLocal), days: Math.max(0, Math.round(((nowMs - oldestLocal) / 86_400_000) * 100) / 100) };
+    const days = Math.max(0, Math.round(((nowMs - oldestLocal) / 86_400_000) * 100) / 100);
+    // Recordings from the very start of a shortened search: the card may hold more.
+    const atLeast = lookback < RANGE_LOOKBACK_DAYS[0]! && days >= lookback - 1;
+    return { oldest: wallClockText(oldestLocal), days, ...(atLeast ? { atLeast } : {}) };
   }
 
   /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */

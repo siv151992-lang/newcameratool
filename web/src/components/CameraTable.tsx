@@ -74,9 +74,12 @@ const COLUMNS: ColumnDef[] = [
     cellClassName: "tabular whitespace-nowrap text-right",
     render: (c) =>
       c.localStorage === false || c.status.recording.daysAvailable === null ? (
-        <span className="text-ink-muted">—</span>
+        <span className="text-ink-muted" title={c.status.recording.rangeError ?? undefined}>
+          {c.status.recording.rangeError ? "Not read" : "—"}
+        </span>
       ) : (
         <span title={c.status.recording.oldest ? `Oldest recording ${c.status.recording.oldest.replace("T", " ")} (camera time)` : undefined}>
+          {c.status.recording.daysAtLeast && "≥ "}
           {formatDays(c.status.recording.daysAvailable)}
         </span>
       ),

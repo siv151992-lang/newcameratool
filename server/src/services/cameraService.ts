@@ -144,7 +144,7 @@ const SELECT_CAMERA = `
          s.last_attempt_at, s.last_success_at, s.consecutive_failures, s.consecutive_auth_failures,
          s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
          s.recording_state, s.recording_detail, s.recording_checked_at,
-         s.recording_days, s.recording_oldest, s.recording_range_at,
+         s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least,
          s.device_model, s.device_serial, s.firmware_version, s.next_check_at,
          (s.check_lock_until IS NOT NULL AND s.check_lock_until > now()) AS check_in_progress,
          (SELECT count(*)::int FROM alerts a WHERE a.camera_id = c.id AND a.status <> 'resolved') AS open_alerts
@@ -217,6 +217,9 @@ export function toCameraView(r: CameraRow) {
         daysAvailable: r.recording_days ?? null,
         oldest: r.recording_oldest ?? null,
         rangeCheckedAt: r.recording_range_at ?? null,
+        /** Why the days could not be read; daysAtLeast: the value is a lower bound. */
+        rangeError: r.recording_range_error ?? null,
+        daysAtLeast: r.recording_days_at_least ?? false,
       },
     },
     device: {

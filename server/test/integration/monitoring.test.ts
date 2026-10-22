@@ -303,6 +303,30 @@ describe("scheduler", () => {
     }
   });
 
+  it("falls back to shorter searches, and shows why when none is answered", async () => {
+    cam.recordingStatusApi = false;
+    cam.recordedDays = 45;
+    cam.searchMaxDays = 31; // refuses the 400- and 90-day searches
+    try {
+      const id = await addCamera();
+      await runCheck(id, "manual", deps);
+      let s = await status(id);
+      expect(Number(s.recording_days)).toBeCloseTo(30, 0); // the 30-day search starts in recordings…
+      expect(s.recording_days_at_least).toBe(true); // …so it is at least 30 days
+      expect(s.recording_range_error).toBeNull();
+
+      cam.searchMaxDays = 5; // refuses every search
+      await runCheck(id, "manual", deps);
+      s = await status(id);
+      expect(s.recording_range_error).toMatch(/Invalid Content \(badParameters\) \(while searching its recordings\)/);
+      expect(Number(s.recording_days)).toBeCloseTo(30, 0); // last value kept
+    } finally {
+      cam.recordingStatusApi = true;
+      cam.recordedDays = 30;
+      cam.searchMaxDays = Infinity;
+    }
+  });
+
   it("reclaims cameras whose lease expired (worker crash recovery)", async () => {
     const id = await addCamera();
     await pool.query("UPDATE camera_status SET check_lock_until = now() - interval '1 second', check_lock_owner = 'dead-worker' WHERE camera_id = $1", [id]);

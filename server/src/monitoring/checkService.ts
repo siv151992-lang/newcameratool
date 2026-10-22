@@ -226,20 +226,20 @@ async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapt
     await pool.query("UPDATE camera_status SET recording_range_at = now() WHERE camera_id = $1 AND recording_range_at IS NULL", [cameraId]);
     return;
   }
-  const { rows } = await pool.query("SELECT recording_range_at FROM camera_status WHERE camera_id = $1", [cameraId]);
+  const { rows } = await pool.query("SELECT recording_range_at, recording_range_error FROM camera_status WHERE camera_id = $1", [cameraId]);
   const last = rows[0]?.recording_range_at as Date | null;
-  if (trigger === "scheduled" && last && Date.now() - last.getTime() < RECORDING_RANGE_REFRESH_MS) return;
+  const wait = rows[0]?.recording_range_error ? 3600_000 : RECORDING_RANGE_REFRESH_MS; // a failure is retried after an hour
+  if (trigger === "scheduled" && last && Date.now() - last.getTime() < wait) return;
   try {
     const range = await adapter.getRecordingRange(cfg);
     await pool.query(
-      "UPDATE camera_status SET recording_days = $2, recording_oldest = $3, recording_range_at = now() WHERE camera_id = $1",
-      [cameraId, range?.days ?? null, range?.oldest ?? null],
+      `UPDATE camera_status SET recording_days = $2, recording_oldest = $3, recording_days_at_least = $4,
+              recording_range_error = NULL, recording_range_at = now() WHERE camera_id = $1`,
+      [cameraId, range?.days ?? null, range?.oldest ?? null, range?.atLeast ?? false],
     );
-  } catch {
-    await pool.query(
-      "UPDATE camera_status SET recording_range_at = now() - make_interval(secs => $2) WHERE camera_id = $1",
-      [cameraId, (RECORDING_RANGE_REFRESH_MS - 3600_000) / 1000],
-    );
+  } catch (err) {
+    const msg = err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : "unexpected error";
+    await pool.query("UPDATE camera_status SET recording_range_error = $2, recording_range_at = now() WHERE camera_id = $1", [cameraId, msg.slice(0, 500)]);
   }
 }
 

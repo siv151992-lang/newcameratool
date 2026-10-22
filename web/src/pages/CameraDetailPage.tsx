@@ -275,11 +275,16 @@ export function CameraDetailPage() {
                 <Info label="Recordings available">
                   {s.recording.daysAvailable !== null ? (
                     <>
-                      <span className="font-medium">{formatDays(s.recording.daysAvailable)}</span>
+                      <span className="font-medium">
+                        {s.recording.daysAtLeast && "At least "}
+                        {formatDays(s.recording.daysAvailable)}
+                      </span>
                       {s.recording.oldest && (
                         <span className="block text-ink-secondary">Oldest recording {s.recording.oldest.replace("T", " ").slice(0, 16)} (camera time)</span>
                       )}
                     </>
+                  ) : s.recording.rangeError ? (
+                    <span className="text-ink-secondary">Could not be read: {s.recording.rangeError}</span>
                   ) : s.recording.rangeCheckedAt ? (
                     <span className="text-ink-secondary">No recordings found on the camera's storage, or this brand does not report them yet</span>
                   ) : (

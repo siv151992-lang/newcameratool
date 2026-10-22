@@ -82,6 +82,8 @@ export class MockHikvisionCamera {
   latencyMs = 0;
   /** Search mode: how many days of recordings the card holds (the oldest segment starts then). */
   recordedDays = 30;
+  /** Search mode: longest period (days) one search may cover; longer ones are refused, as some firmware does. */
+  searchMaxDays = Infinity;
   requests: { path: string; authorized: boolean }[] = [];
   private server?: http.Server;
   private readonly nonces = new Set<string>();
@@ -172,12 +174,19 @@ export class MockHikvisionCamera {
     return {
       "/ISAPI/System/time": () => `<?xml version="1.0" encoding="UTF-8"?><Time version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><timeMode>NTP</timeMode><localTime>${wall(now).slice(0, 19)}${tz}</localTime></Time>`,
       "/ISAPI/ContentMgmt/search": () => {
-        // Segments: the oldest (recordedDays ago) when the requested period reaches back to it, and
-        // the one being written (recording) or last written (error).
+        // Segments: the first one in the requested period (the oldest, recordedDays ago, when the
+        // period reaches back to it) and the one being written (recording) or last written (error).
         const from = Date.parse(/<startTime>([^<]+)<\/startTime>/.exec(searchBody)?.[1] ?? "") || now;
+        if (now - from > this.searchMaxDays * 86_400_000) {
+          return `<?xml version="1.0" encoding="UTF-8"?><ResponseStatus version="1.0" xmlns="http://www.hikvision.com/ver10/XMLSchema"><requestURL>/ISAPI/ContentMgmt/search</requestURL><statusCode>6</statusCode><statusString>Invalid Content</statusString><subStatusCode>badParameters</subStatusCode></ResponseStatus>`;
+        }
         const oldestStart = now - this.recordedDays * 86_400_000;
         const items: [number, number][] = [];
+        // Recording is continuous: a period starting inside the recordings begins with the segment
+        // that covers its start.
+        const stopped = this.recording === "error" ? lastEnd! : now; // error: recording stopped at lastEnd
         if (this.recording !== "idle" && from <= oldestStart) items.push([oldestStart, oldestStart + 3600_000]);
+        else if (this.recording !== "idle" && from < stopped) items.push([from - 1800_000, Math.min(from + 1800_000, stopped)]);
         if (lastEnd !== undefined && this.recording === "recording") items.push([lastEnd - 3600_000, lastEnd]);
         if (items.length === 0) {
           return `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>false</responseStatus><responseStatusStrg>NO MATCHES</responseStatusStrg><numOfMatches>0</numOfMatches></CMSearchResult>`;

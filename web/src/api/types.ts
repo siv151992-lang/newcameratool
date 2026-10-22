@@ -57,6 +57,10 @@ export interface Camera {
       /** Oldest recording, camera wall-clock time (YYYY-MM-DDTHH:MM:SS). */
       oldest: string | null;
       rangeCheckedAt: string | null;
+      /** Why the days of recordings could not be read. */
+      rangeError: string | null;
+      /** The camera only answered a shorter search: at least daysAvailable. */
+      daysAtLeast: boolean;
     };
   };
   device: { model: string | null; serialNumber: string | null; firmwareVersion: string | null };

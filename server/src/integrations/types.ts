@@ -114,6 +114,8 @@ export interface RecordingRange {
   oldest: string;
   /** Days of recordings available: from the oldest recording to the camera's time now. */
   days: number;
+  /** The camera only answered a shorter search, which found recordings from its very start: at least `days`. */
+  atLeast?: boolean;
 }
 
 export interface DeviceInfo {
