@@ -202,6 +202,7 @@ export interface MonitoringSettings {
   recordingAlertsEnabled: boolean;
   deviceInfoRefreshHours: number;
   historyRetentionDays: number;
+  historyIntervalMinutes: number;
   auditRetentionDays: number;
 }
 
@@ -341,7 +342,10 @@ export interface CameraInsight {
 export interface FleetInsights {
   generatedAt: string;
   historyDays: number;
+  /** Cameras needing attention plus those closest to critical; the summary covers all of them. */
   cameras: CameraInsight[];
+  camerasShown: number;
+  camerasTotal: number;
   actions: RecommendedAction[];
   summary: {
     cameras: number;

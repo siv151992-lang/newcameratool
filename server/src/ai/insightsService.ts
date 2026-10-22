@@ -23,6 +23,9 @@ export const HISTORY_DAYS = 14;
 /** Measurements are averaged into 15-minute buckets before fitting. */
 const BUCKET = "15 minutes";
 const CACHE_MS = 60_000;
+/** Above this many cameras the analysis is refreshed every 10 minutes, in the background. */
+const LARGE_FLEET = 2000;
+const LARGE_FLEET_CACHE_MS = 10 * 60_000;
 
 export interface CameraInsight {
   camera: CameraSnapshot & { totalBytes: number | null; usedBytes: number | null; freeBytes: number | null; lastAttemptAt: number | null };
@@ -140,14 +143,41 @@ function analyse(cam: Awaited<ReturnType<typeof loadSnapshots>>[number], points:
 }
 
 let cache: { at: number; value: FleetInsights } | undefined;
+let computing: Promise<FleetInsights> | undefined;
+/** Cameras whose history is held in memory at once (14 days of 15-minute points each). */
+const HISTORY_BATCH = 500;
 
-/** Analysis of every camera. Cached briefly: the data changes at most once per check interval. */
+/**
+ * Analysis of every camera. Cached briefly: the data changes at most once per check interval.
+ * History is read in batches so memory stays bounded with tens of thousands of cameras, and
+ * concurrent callers share one computation.
+ */
 export async function getFleetInsights(opts: { fresh?: boolean } = {}): Promise<FleetInsights> {
-  if (!opts.fresh && cache && Date.now() - cache.at < CACHE_MS) return cache.value;
+  const start = () =>
+    (computing ??= computeFleetInsights().finally(() => {
+      computing = undefined;
+    }));
+  if (!opts.fresh && cache) {
+    // Large fleets take a while to analyse: serve the last result and refresh it in the background.
+    const maxAge = cache.value.cameras.length > LARGE_FLEET ? LARGE_FLEET_CACHE_MS : CACHE_MS;
+    if (Date.now() - cache.at < maxAge) return cache.value;
+    if (cache.value.cameras.length > LARGE_FLEET) {
+      start().catch(() => undefined);
+      return cache.value;
+    }
+  }
+  return start();
+}
+
+async function computeFleetInsights(): Promise<FleetInsights> {
   const now = Date.now();
   const cams = await loadSnapshots();
-  const history = await loadHistory(cams.map((c) => c.id));
-  const cameras = cams.map((c) => analyse(c, history.get(c.id) ?? [], now));
+  const cameras: CameraInsight[] = [];
+  for (let i = 0; i < cams.length; i += HISTORY_BATCH) {
+    const batch = cams.slice(i, i + HISTORY_BATCH);
+    const history = await loadHistory(batch.map((c) => c.id));
+    for (const c of batch) cameras.push(analyse(c, history.get(c.id) ?? [], now));
+  }
   const monitored = cameras.filter((c) => c.camera.monitoringEnabled);
   const scored = monitored.filter((c) => c.health.grade !== "unknown");
   const value: FleetInsights = {
@@ -171,8 +201,32 @@ export async function getFleetInsights(opts: { fresh?: boolean } = {}): Promise<
   return value;
 }
 
+/** Most cameras sent to the browser besides those needing attention (the soonest to critical). */
+export const INSIGHTS_FORECAST_LIMIT = 500;
+const INSIGHTS_ACTION_LIMIT = 200;
+
+/**
+ * What the AI page needs: the INSIGHTS_FORECAST_LIMIT cameras most in need of attention (lowest
+ * health, or an anomaly), plus as many monitored cameras closest to critical. With 20 000 cameras the full
+ * analysis is tens of megabytes, too much for a browser to download every minute.
+ */
+export function insightsForClient(ins: FleetInsights): FleetInsights & { camerasShown: number; camerasTotal: number } {
+  const needsLook = (c: CameraInsight) => c.anomalies.length > 0 || c.health.grade === "fair" || c.health.grade === "poor";
+  const soonest = ins.cameras
+    .filter((c) => c.camera.monitoringEnabled && !needsLook(c))
+    .sort((a, b) => (a.forecast.daysToCritical ?? Infinity) - (b.forecast.daysToCritical ?? Infinity) || a.camera.name.localeCompare(b.camera.name))
+    .slice(0, INSIGHTS_FORECAST_LIMIT);
+  const attention = ins.cameras
+    .filter(needsLook)
+    .sort((a, b) => a.health.score - b.health.score)
+    .slice(0, INSIGHTS_FORECAST_LIMIT);
+  const cameras = [...attention, ...soonest];
+  return { ...ins, cameras, actions: ins.actions.slice(0, INSIGHTS_ACTION_LIMIT), camerasShown: cameras.length, camerasTotal: ins.cameras.length };
+}
+
 export function clearInsightsCache() {
   cache = undefined;
+  computing = undefined;
 }
 
 export interface CameraForecastView extends CameraInsight {

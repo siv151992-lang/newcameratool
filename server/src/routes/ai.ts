@@ -2,7 +2,7 @@ import { type NextFunction, type Request, type Response, Router } from "express"
 import { z } from "zod";
 import { aiSettingsSchema, assistantAvailability, getAiSettings, requireAiEnabled, updateAiSettings } from "../ai/aiSettings.js";
 import { chatSchema, runAssistant } from "../ai/assistant.js";
-import { getCameraForecast, getFleetInsights } from "../ai/insightsService.js";
+import { getCameraForecast, getFleetInsights, insightsForClient } from "../ai/insightsService.js";
 import { buildReport, REPORT_PERIODS, summarizeReport, type ReportPeriod } from "../ai/report.js";
 import { actorOf, requirePermission } from "../auth/middleware.js";
 import { param, parse } from "../lib/validate.js";
@@ -33,7 +33,7 @@ aiRouter.patch("/settings", requirePermission("settings:write"), async (req, res
 });
 
 aiRouter.get("/insights", requirePermission("cameras:read"), whenEnabled, async (_req, res) => {
-  res.json(await getFleetInsights());
+  res.json(insightsForClient(await getFleetInsights()));
 });
 
 aiRouter.get("/cameras/:id/forecast", requirePermission("cameras:read"), whenEnabled, async (req, res) => {

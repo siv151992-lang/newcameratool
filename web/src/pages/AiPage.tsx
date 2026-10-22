@@ -262,7 +262,17 @@ function ForecastsTab() {
   const current = rows.find((r) => r.camera.id === selected);
   return (
     <div className="space-y-5">
-      <Card title="Storage forecasts" actions={<span className="text-xs text-ink-muted">Select a camera to see its chart</span>}>
+      <Card
+        title="Storage forecasts"
+        actions={
+          <span className="text-xs text-ink-muted">
+            {insights.data && insights.data.camerasShown < insights.data.camerasTotal
+              ? `Showing the ${rows.length} cameras closest to critical or needing attention, of ${insights.data.summary.monitored} monitored. `
+              : ""}
+            Select a camera to see its chart
+          </span>
+        }
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line text-xs text-ink-secondary">

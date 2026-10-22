@@ -149,6 +149,50 @@ password.
 Configured in **Settings → Retention**: monitoring history (default 90 days) and audit log / resolved alerts
 (default 365 days). The worker purges older rows hourly.
 
+**Keep a history point every** (default 15 minutes): a routine successful check is written to the
+history at most this often per camera. Failures, changes of storage health or recording state,
+reconnections and manual checks are always written. Charts and forecasts average history into
+15-minute points, so 15 loses nothing visible; 0 keeps every check.
+
+## Large fleets (thousands of cameras)
+
+Measured with 20 000 simulated Hikvision cameras (100 ms network delay per request, the recording
+search used by most IP cameras) on a 4-core, 16 GB machine:
+
+| | Result |
+|---|---|
+| Checks needed at a 2-minute interval | 167 per second (10 000 per minute) |
+| One worker, 10 concurrent checks (the default) | 430 checks per minute: a full round takes 47 minutes |
+| One worker, 300 concurrent checks | ~9 000 per minute (the worker uses a full CPU core) |
+| Two workers, 300 concurrent checks each | ~10 000–14 000 per minute: every camera checked every 2 minutes |
+| History written, keeping every check | ~8 GB per day (14 million rows) |
+| History written, one point per 15 minutes | ~1 GB per day |
+| Camera list, filters, summary, camera page | 10–350 ms |
+| "Select all N matching" (20 000 cameras) | 0.06 s |
+| AI insights | first analysis after a restart ~1 minute (in the background), then 0.2 s; refreshed every 10 minutes |
+
+Recommended settings for 5 000+ cameras:
+
+1. **Settings → Schedule → Concurrent checks: 300** (up to 1000). Raise it until *overdue* cameras
+   stay near zero; real cameras that answer slowly need more.
+2. **Polling interval**: 5 minutes halves the load of 2 minutes. Each check of a Hikvision camera
+   makes 4–6 requests.
+3. **Run two workers** and give each a larger database pool, in `.env`:
+   ```
+   WORKER_DATABASE_POOL_SIZE=30
+   ```
+   then `docker compose up -d --scale worker=2`. Workers share the cameras safely (each camera is
+   claimed by one worker at a time).
+4. **Database**: PostgreSQL allows 100 connections by default (API 15 + workers). For 20 000 cameras
+   give it more memory, e.g. in `docker-compose.yml` under `db`:
+   `command: ["postgres", "-c", "shared_buffers=1GB", "-c", "max_connections=150"]`.
+5. **History**: keep a point every 15 minutes (default) or 60 minutes, and choose retention by disk:
+   with 20 000 cameras, one point per 15 minutes for 90 days is about 90 GB; per 60 minutes, about 25 GB.
+6. Bulk actions apply to any number of selected cameras (sent in batches of 500).
+
+The load test can be repeated: `npm run mock-camera` has a `--search-recording` mode, and
+`MockHikvisionCamera.latencyMs` adds a network delay.
+
 ## Troubleshooting
 
 | Symptom | Likely cause and fix |

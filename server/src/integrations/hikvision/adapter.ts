@@ -35,6 +35,8 @@ export const HIKVISION_TRACK_PATH = "/ISAPI/ContentMgmt/record/tracks/101";
 
 /** Recordings are searched from this long before the camera's time now (a few minutes after, too). */
 const SEARCH_WINDOW_MINUTES = 30;
+/** A camera without Recording/status is not asked again for this long (saves two requests a check). */
+const NO_STATUS_TTL_MS = 6 * 3600_000;
 
 export class HikvisionAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
@@ -52,6 +54,9 @@ export class HikvisionAdapter implements CameraBrandAdapter {
       "the camera's own clock, so it is shown as recording when a recording ended within the last 10 minutes.",
     compatibility: "Recording search confirmed on DS-2CD3563G2-IS.",
   };
+
+  /** host:port of cameras known to lack Recording/status, with when to try it again. */
+  private readonly noStatusApi = new Map<string, number>();
 
   constructor(private readonly http: CameraHttpClient) {}
 
@@ -91,12 +96,20 @@ export class HikvisionAdapter implements CameraBrandAdapter {
    * answer it with 404) inferred from the newest recorded segment on the camera's storage.
    */
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
-    try {
-      const live = parseRecordingStatusXml(await this.getXml(camera, HIKVISION_RECORDING_PATH));
-      if (live.state !== "unknown") return live;
-    } catch (err) {
-      // Some firmware answers a missing Recording/status with 403 rather than 404.
-      if (!(err instanceof CameraApiError) || !["API_UNAVAILABLE", "INVALID_RESPONSE", "PERMISSION_DENIED"].includes(err.code)) throw err;
+    const key = `${camera.host}:${camera.port}`;
+    if ((this.noStatusApi.get(key) ?? 0) < Date.now()) {
+      try {
+        const live = parseRecordingStatusXml(await this.getXml(camera, HIKVISION_RECORDING_PATH));
+        if (live.state !== "unknown") return live;
+      } catch (err) {
+        // Some firmware answers a missing Recording/status with 403 rather than 404.
+        if (!(err instanceof CameraApiError) || !["API_UNAVAILABLE", "INVALID_RESPONSE", "PERMISSION_DENIED"].includes(err.code)) throw err;
+        if (err.code !== "INVALID_RESPONSE") {
+          // Missing or refused is a property of the firmware; a garbled reply may be a one-off.
+          if (this.noStatusApi.size > 100_000) this.noStatusApi.clear();
+          this.noStatusApi.set(key, Date.now() + NO_STATUS_TTL_MS);
+        }
+      }
     }
     return this.recordingFromSearch(camera);
   }

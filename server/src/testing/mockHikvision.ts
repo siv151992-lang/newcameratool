@@ -78,6 +78,8 @@ export class MockHikvisionCamera {
   /** Search mode: the camera's UTC offset, and whether search replies are in UTC (as some firmware does). */
   utcOffsetMinutes = 0;
   searchRepliesUtc = false;
+  /** Delay before every reply, to behave like a real camera on a network (load tests). */
+  latencyMs = 0;
   requests: { path: string; authorized: boolean }[] = [];
   private server?: http.Server;
   private readonly nonces = new Set<string>();
@@ -97,6 +99,7 @@ export class MockHikvisionCamera {
 
   private challenge(res: http.ServerResponse) {
     const nonce = randomBytes(16).toString("hex");
+    if (this.nonces.size > 200_000) this.nonces.clear(); // bounded for long load tests
     this.nonces.add(nonce);
     if (this.mode === "basic-only") {
       res.setHeader("WWW-Authenticate", `Basic realm="${this.realm}"`);
@@ -119,6 +122,14 @@ export class MockHikvisionCamera {
   }
 
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (this.latencyMs > 0) {
+      setTimeout(() => this.respond(req, res), this.latencyMs);
+      return;
+    }
+    this.respond(req, res);
+  }
+
+  private respond(req: http.IncomingMessage, res: http.ServerResponse) {
     const path = req.url ?? "/";
     if (this.mode === "hang") return; // never respond: exercises timeouts
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");

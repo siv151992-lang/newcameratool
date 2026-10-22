@@ -8,12 +8,17 @@ import { type CheckDeps, INSTANCE_ID, leaseSeconds, runCheck } from "./checkServ
  * time-limited lease, so several workers can run safely, a camera is never checked twice at
  * once, and cameras claimed by a crashed worker are picked up again when the lease expires.
  * In-flight checks are capped by the configured concurrency; a slow or dead camera only
- * occupies one slot until its timeout.
+ * occupies one slot until its timeout. A finished check frees its slot within REFILL_MS rather
+ * than at the next regular tick, so throughput is concurrency ÷ check duration (with 20 000
+ * cameras a 5-second tick alone capped it at concurrency ÷ 5 per second).
  */
+const REFILL_MS = 250;
 export class Scheduler {
   private readonly inflight = new Map<string, Promise<unknown>>();
   private timer?: NodeJS.Timeout;
   private running = false;
+  private ticking = false;
+  private nextTickAt = 0;
   private lastHousekeeping = 0;
 
   constructor(
@@ -50,7 +55,10 @@ export class Scheduler {
     for (const { camera_id } of rows) {
       const p = runCheck(camera_id, "scheduled", this.deps, { leaseHeld: true })
         .catch((err) => logger.error({ cameraId: camera_id, err: (err as Error).message }, "Scheduled check failed"))
-        .finally(() => this.inflight.delete(camera_id));
+        .finally(() => {
+          this.inflight.delete(camera_id);
+          this.wake();
+        });
       this.inflight.set(camera_id, p);
     }
     return rows.map((r) => r.camera_id);
@@ -78,20 +86,39 @@ export class Scheduler {
   start() {
     if (this.running) return;
     this.running = true;
-    const loop = async () => {
-      if (!this.running) return;
-      try {
-        await this.tick();
-        if (Date.now() - this.lastHousekeeping > 3600_000) {
-          this.lastHousekeeping = Date.now();
-          await this.housekeeping();
-        }
-      } catch (err) {
-        logger.error({ err: (err as Error).message }, "Scheduler tick failed");
+    this.schedule(0);
+  }
+
+  private schedule(ms: number) {
+    if (!this.running) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.nextTickAt = Date.now() + ms;
+    this.timer = setTimeout(() => void this.loop(), ms);
+  }
+
+  /** A slot was freed: tick soon instead of waiting for the regular tick. */
+  private wake() {
+    if (!this.running || this.ticking || this.nextTickAt - Date.now() <= REFILL_MS) return;
+    this.schedule(REFILL_MS);
+  }
+
+  private async loop() {
+    if (!this.running || this.ticking) return;
+    this.ticking = true;
+    let started = 0;
+    try {
+      started = (await this.tick()).length;
+      if (Date.now() - this.lastHousekeeping > 3600_000) {
+        this.lastHousekeeping = Date.now();
+        await this.housekeeping();
       }
-      if (this.running) this.timer = setTimeout(loop, this.opts.tickMs ?? 5000);
-    };
-    void loop();
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, "Scheduler tick failed");
+    } finally {
+      this.ticking = false;
+    }
+    // While cameras keep coming due, refill quickly; otherwise poll at the regular interval.
+    this.schedule(started > 0 ? REFILL_MS : (this.opts.tickMs ?? 5000));
   }
 
   async stop() {

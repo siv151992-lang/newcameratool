@@ -7,7 +7,7 @@ pg.types.setTypeParser(20, (v) => Number(v));
 // numeric columns (percentages)
 pg.types.setTypeParser(1700, (v) => Number(v));
 
-export const pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: 15 });
+export const pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: config.DATABASE_POOL_SIZE });
 pool.on("error", (err) => logger.error({ err: err.message }, "Postgres pool error"));
 
 export type Queryable = pg.Pool | pg.PoolClient;

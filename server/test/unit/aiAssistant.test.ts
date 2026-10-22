@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 import { forecastUsage } from "../../src/ai/forecast.js";
 import { type AssistantModel, chatSchema, runAssistant } from "../../src/ai/assistant.js";
-import type { CameraInsight, FleetInsights } from "../../src/ai/insightsService.js";
+import { type CameraInsight, type FleetInsights, INSIGHTS_FORECAST_LIMIT, insightsForClient } from "../../src/ai/insightsService.js";
 import { runTool, toolsFor } from "../../src/ai/tools.js";
 
 type Msg = Anthropic.Beta.Messages.BetaMessage;
@@ -126,3 +126,21 @@ describe("runAssistant", () => {
     expect(chatSchema.safeParse({ messages: [{ role: "user", content: "hi" }], extra: 1 }).success).toBe(false);
   });
 });
+
+describe("insights sent to the browser", () => {
+  it("keeps the cameras most in need of attention and closest to critical, not all 20 000", () => {
+    const poor = Array.from({ length: 700 }, (_, i) => ({ ...insight(`Poor ${i}`, `10.1.${i >> 8}.${i & 255}`), health: { score: i, grade: "poor" as const, factors: [] } }));
+    const healthy = Array.from({ length: 2000 }, (_, i) => insight(`Fine ${i}`, `10.2.${i >> 8}.${i & 255}`, {}, (i % 20) / 10));
+    const out = insightsForClient({ ...fleet, cameras: [...healthy, ...poor] });
+    expect(out.camerasTotal).toBe(2700);
+    expect(out.camerasShown).toBe(2 * INSIGHTS_FORECAST_LIMIT);
+    const shownPoor = out.cameras.filter((c) => c.health.grade === "poor");
+    expect(shownPoor).toHaveLength(INSIGHTS_FORECAST_LIMIT);
+    expect(Math.max(...shownPoor.map((c) => c.health.score))).toBe(INSIGHTS_FORECAST_LIMIT - 1); // the worst ones
+    const days = out.cameras.filter((c) => c.health.grade === "good").map((c) => c.forecast.daysToCritical ?? Infinity);
+    const unshown = healthy.filter((h) => !out.cameras.includes(h)).map((c) => c.forecast.daysToCritical ?? Infinity);
+    expect(Math.max(...days)).toBeLessThanOrEqual(Math.min(...unshown)); // the soonest to critical
+    expect(out.summary).toBe(fleet.summary); // the summary still covers every camera
+  });
+});
+

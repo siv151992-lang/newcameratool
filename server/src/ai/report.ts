@@ -31,11 +31,17 @@ export interface MonitoringReport {
   forecasts: { name: string; ip: string; link: string; usedPercent: number | null; daysToCritical: number; confidence: string | null }[];
   anomalies: { name: string; link: string; title: string; severity: string; explanation: string }[];
   actions: FleetInsights["actions"];
+  /** Full counts of the lists above, which hold at most REPORT_LIST_LIMIT entries each. */
+  totals: { byCamera: number; attention: number; forecasts: number; anomalies: number; actions: number };
   markdown: string;
   aiSummary?: string;
 }
 
 const pct = (n: number | null) => (n === null ? "—" : `${Math.round(n * 10) / 10}%`);
+
+/** Longest list in a report; with thousands of cameras the rest is summarised as "…and N more". */
+export const REPORT_LIST_LIMIT = 100;
+const top = <T,>(list: T[]) => list.slice(0, REPORT_LIST_LIMIT);
 
 export async function buildReport(period: ReportPeriod, deps: { insights?: FleetInsights } = {}): Promise<MonitoringReport> {
   const hours = REPORT_PERIODS[period];
@@ -76,17 +82,19 @@ export async function buildReport(period: ReportPeriod, deps: { insights?: Fleet
     generatedAt: now.toISOString(),
     from: from.toISOString(),
     summary: ins.summary,
-    incidents: { alertsOpened: sum("opened"), alertsResolved: sum("resolved"), disconnections: sum("drops"), failedChecks: sum("failed"), byCamera },
-    attention,
-    forecasts,
-    anomalies,
-    actions: ins.actions,
+    incidents: { alertsOpened: sum("opened"), alertsResolved: sum("resolved"), disconnections: sum("drops"), failedChecks: sum("failed"), byCamera: top(byCamera) },
+    attention: top(attention),
+    forecasts: top(forecasts),
+    anomalies: top(anomalies),
+    actions: top(ins.actions),
+    totals: { byCamera: byCamera.length, attention: attention.length, forecasts: forecasts.length, anomalies: anomalies.length, actions: ins.actions.length },
   };
   return { ...report, markdown: toMarkdown(report, ins) };
 }
 
 function toMarkdown(r: Omit<MonitoringReport, "markdown">, ins: FleetInsights): string {
   const s = r.summary;
+  const more = (shown: number, total: number) => (total > shown ? [`- _…and ${total - shown} more._`] : []);
   const lines: string[] = [
     `# ${r.title}`,
     "",
@@ -107,10 +115,12 @@ function toMarkdown(r: Omit<MonitoringReport, "markdown">, ins: FleetInsights): 
   if (r.incidents.byCamera.length) {
     lines.push("", "| Camera | IP | Alerts opened | Disconnections | Failed checks |", "| --- | --- | --- | --- | --- |");
     for (const c of r.incidents.byCamera) lines.push(`| [${c.name}](${c.link}) | ${c.ip} | ${c.alertsOpened} | ${c.disconnections} | ${c.failedChecks} |`);
+    if (r.totals.byCamera > r.incidents.byCamera.length) lines.push("", `_…and ${r.totals.byCamera - r.incidents.byCamera.length} more cameras with incidents._`);
   }
   lines.push("", "## Cameras needing attention", "");
   if (r.attention.length === 0) lines.push("None: every monitored camera has a good health score.");
   for (const c of r.attention) lines.push(`- **[${c.name}](${c.link})** (${c.ip}): health ${c.score}/100 — ${c.reasons.join("; ")}`);
+  lines.push(...more(r.attention.length, r.totals.attention));
 
   lines.push("", "## Storage forecast (estimated)", "");
   if (r.forecasts.length === 0) lines.push("No camera is projected to reach its critical threshold within 30 days.");
@@ -121,16 +131,19 @@ function toMarkdown(r: Omit<MonitoringReport, "markdown">, ins: FleetInsights): 
         : `- [${f.name}](${f.link}) (${f.ip}): ${pct(f.usedPercent)} used, projected to reach critical in about ${f.daysToCritical} days (${f.confidence ?? "unknown"} confidence)`,
     );
   }
+  lines.push(...more(r.forecasts.length, r.totals.forecasts));
   const noHistory = ins.cameras.filter((c) => c.camera.monitoringEnabled && c.forecast.status === "insufficient_data").length;
   if (noHistory) lines.push("", `_${noHistory} camera(s) do not have enough history for a forecast yet._`);
 
   lines.push("", "## Anomalies (detected)", "");
   if (r.anomalies.length === 0) lines.push("None detected.");
   for (const a of r.anomalies) lines.push(`- **${a.title}** on [${a.name}](${a.link}) (${a.severity}): ${a.explanation}`);
+  lines.push(...more(r.anomalies.length, r.totals.anomalies));
 
   lines.push("", "## Recommended actions", "");
   if (r.actions.length === 0) lines.push("No action needed.");
   for (const a of r.actions) lines.push(`- **${a.priority}** — ${a.action} _${a.reason}_`);
+  lines.push(...more(r.actions.length, r.totals.actions));
 
   const total = ins.cameras.reduce((t, c) => t + (c.camera.totalBytes ?? 0), 0);
   const used = ins.cameras.reduce((t, c) => t + (c.camera.usedBytes ?? 0), 0);

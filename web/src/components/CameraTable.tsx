@@ -205,12 +205,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
   const selectAllMatching = async () => {
     setSelectingAll(true);
     try {
-      const ids: string[] = [];
-      for (let p = 1; ids.length < total && p <= 50; p++) {
-        const res = await api<Page<Camera>>(`/cameras${toQuery({ ...params, page: p, pageSize: 200 })}`);
-        ids.push(...res.items.map((c) => c.id));
-        if (res.items.length < 200) break;
-      }
+      const { ids } = await api<{ ids: string[] }>(`/cameras/ids${toQuery({ ...params, page: undefined, pageSize: undefined })}`);
       setSelected(new Set(ids));
     } finally {
       setSelectingAll(false);

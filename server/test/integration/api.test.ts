@@ -186,6 +186,16 @@ describe("cameras", () => {
     }
   });
 
+  it("lists the IDs of all cameras matching the filters, for Select all", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const made: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      made.push((await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: `Gate ${i}`, host: `10.1.0.${i + 1}`, location: i < 2 ? "Gate" : "Lobby" }).expect(201)).body.id);
+    }
+    expect((await agent.get("/api/cameras/ids?location=Gate&sort=name").expect(200)).body).toEqual({ ids: made.slice(0, 2), total: 2 });
+    expect((await agent.get("/api/cameras/ids").expect(200)).body.total).toBe(3);
+  });
+
   it("enables/disables monitoring and bulk-removes cameras", async () => {
     const { agent, csrf } = await signIn("admin");
     const a = await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send(cameraBody()).expect(201);

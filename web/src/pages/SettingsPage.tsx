@@ -163,6 +163,12 @@ const GROUPS: { key: string; title: string; fields: { key: NumKey; label: string
     title: "Retention",
     fields: [
       { key: "historyRetentionDays", label: "Monitoring history", unit: "days" },
+      {
+        key: "historyIntervalMinutes",
+        label: "Keep a history point every",
+        unit: "minutes",
+        hint: "Per camera, for routine successful checks; failures and changes are always kept. 0 keeps every check. 15 or more is recommended for thousands of cameras.",
+      },
       { key: "auditRetentionDays", label: "Audit log and resolved alerts", unit: "days" },
     ],
   },

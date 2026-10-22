@@ -4,7 +4,7 @@ import { pool, type Queryable } from "../db/pool.js";
 export const monitoringSettingsSchema = z
   .object({
     pollIntervalSeconds: z.number().int().min(60).max(86400),
-    concurrency: z.number().int().min(1).max(100),
+    concurrency: z.number().int().min(1).max(1000),
     requestTimeoutMs: z.number().int().min(1000).max(60000),
     maxRetries: z.number().int().min(0).max(5),
     retryBaseDelayMs: z.number().int().min(100).max(30000),
@@ -19,6 +19,8 @@ export const monitoringSettingsSchema = z
     recordingAlertsEnabled: z.boolean(),
     deviceInfoRefreshHours: z.number().int().min(1).max(720),
     historyRetentionDays: z.number().int().min(1).max(3650),
+    /** Routine successful checks are kept in history at most this often per camera; 0 keeps every check. */
+    historyIntervalMinutes: z.number().int().min(0).max(1440),
     auditRetentionDays: z.number().int().min(30).max(3650),
   })
   .strict();
@@ -42,6 +44,7 @@ export const DEFAULT_MONITORING_SETTINGS: MonitoringSettings = {
   recordingAlertsEnabled: true,
   deviceInfoRefreshHours: 24,
   historyRetentionDays: 90,
+  historyIntervalMinutes: 15,
   auditRetentionDays: 365,
 };
 

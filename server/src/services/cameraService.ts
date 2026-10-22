@@ -250,7 +250,8 @@ const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
   lastSuccess: "s.last_success_at",
 };
 
-export async function listCameras(q: ListQuery) {
+/** WHERE clause (over cameras c LEFT JOIN camera_status s) for the camera list filters. */
+function listFilter(q: Omit<ListQuery, "page" | "pageSize" | "sort" | "order">) {
   const where = ["c.deleted_at IS NULL"];
   const params: unknown[] = [];
   const p = (v: unknown) => `$${params.push(v)}`;
@@ -273,7 +274,11 @@ export async function listCameras(q: ListQuery) {
   if (q.maxUsage !== undefined) where.push(`s.used_percentage <= ${p(q.maxUsage)}`);
   if (q.recording) where.push(`c.monitoring_enabled AND s.recording_state = ${p(q.recording)}`);
 
-  const clause = where.join(" AND ");
+  return { clause: where.join(" AND "), params, p };
+}
+
+export async function listCameras(q: ListQuery) {
+  const { clause, params, p } = listFilter(q);
   const base = `FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause}`;
   const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n ${base}`, params)).rows[0]!.n;
   const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
@@ -284,6 +289,17 @@ export async function listCameras(q: ListQuery) {
     params,
   );
   return { items: rows.map(toCameraView), total, page: q.page, pageSize: q.pageSize };
+}
+
+/** IDs of every camera matching the list filters ("Select all N matching"), in list order. */
+export async function listCameraIds(q: ListQuery): Promise<{ ids: string[]; total: number }> {
+  const { clause, params } = listFilter(q);
+  const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT c.id FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause} ORDER BY ${order}`,
+    params,
+  );
+  return { ids: rows.map((r) => r.id), total: rows.length };
 }
 
 export async function listLocations(): Promise<string[]> {

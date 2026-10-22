@@ -72,12 +72,18 @@ function describeDetails(details: Record<string, unknown>): string {
 }
 
 /** Wall-clock parts of an instant in a time zone; throws a 400 for a zone the runtime does not know. */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
 function zonedParts(ms: number, timeZone: string) {
-  let fmt: Intl.DateTimeFormat;
-  try {
-    fmt = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  } catch {
-    throw badRequest(`Unknown time zone "${timeZone}"`);
+  let fmt = formatters.get(timeZone);
+  if (!fmt) {
+    try {
+      fmt = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch {
+      throw badRequest(`Unknown time zone "${timeZone}"`);
+    }
+    if (formatters.size > 50) formatters.clear();
+    formatters.set(timeZone, fmt);
   }
   const p = Object.fromEntries(fmt.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
   return { text: `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`, asUtcMs: Date.UTC(+p.year!, +p.month! - 1, +p.day!, +p.hour!, +p.minute!, +p.second!) };

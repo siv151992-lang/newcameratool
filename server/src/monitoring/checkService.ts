@@ -41,7 +41,9 @@ export interface CheckOutcome {
 
 /** Lease long enough for every retry to time out, plus margin. Expired leases are reclaimed after a crash. */
 export function leaseSeconds(s: MonitoringSettings) {
-  const worstCase = (s.maxRetries + 1) * s.requestTimeoutMs * 2 + s.retryBaseDelayMs * 2 ** (s.maxRetries + 1);
+  // Storage with retries (two requests each for Digest), then up to six requests for recording
+  // status and device information.
+  const worstCase = (s.maxRetries + 1) * s.requestTimeoutMs * 2 + s.retryBaseDelayMs * 2 ** (s.maxRetries + 1) + 6 * s.requestTimeoutMs;
   return Math.ceil(worstCase / 1000) + 30;
 }
 
@@ -225,7 +227,7 @@ async function persist(
     const { rows } = await db.query(
       `SELECT c.id, c.name, c.host, c.created_at, c.warning_threshold, c.critical_threshold, c.local_storage,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
-              (SELECT max(checked_at) FROM storage_checks sc WHERE sc.camera_id = c.id AND sc.outcome = 'success') AS last_storage_success
+              s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
     );
@@ -263,7 +265,13 @@ async function persist(
     const lastStorageSuccess: Date = cam.last_storage_success ?? cam.created_at;
     const minutesWithoutStorage = result.ok ? 0 : (Date.now() - new Date(lastStorageSuccess).getTime()) / 60000;
 
-    await db.query(
+    // Every check updates camera_status; the history keeps failures, changes and manual checks,
+    // and routine successful checks at most once per historyIntervalMinutes.
+    const keepHistory =
+      settings.historyIntervalMinutes === 0 || trigger !== "scheduled" || !result.ok || !cam.last_history_at ||
+      Date.now() - new Date(cam.last_history_at).getTime() >= settings.historyIntervalMinutes * 60_000 - 5_000 ||
+      prevConnection !== "online" || (health ?? null) !== cam.storage_health || (recording?.state ?? "unknown") !== cam.recording_state;
+    if (keepHistory) await db.query(
       `INSERT INTO storage_checks (camera_id, trigger, outcome, duration_ms, attempts, storage_health,
                                    total_bytes, used_bytes, free_bytes, used_percentage, devices, error_message, recording_state, integration_version)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
@@ -274,6 +282,7 @@ async function persist(
         integrationVersion ?? null,
       ],
     );
+    if (keepHistory) await db.query("UPDATE camera_status SET last_history_at = now() WHERE camera_id = $1", [cameraId]);
     if (result.ok) {
       await db.query(`UPDATE camera_brands SET last_success_at = now()
          WHERE key = (SELECT brand_key FROM cameras WHERE id = $1) AND (last_success_at IS NULL OR last_success_at < now() - interval '1 minute')`, [cameraId]);

@@ -243,6 +243,46 @@ describe("scheduler", () => {
     expect(timeouts).toBe(4);
   });
 
+  it("refills a freed slot without waiting for the regular tick", async () => {
+    await updateMonitoringSettings({ concurrency: 1 }, null);
+    const ids = [await addCamera(), await addCamera({ name: "Second", host: "127.0.0.2" }), await addCamera({ name: "Third", host: "127.0.0.3" })];
+    const scheduler = new Scheduler(deps, { owner: "refill-worker", tickMs: 60_000 });
+    scheduler.start();
+    try {
+      // One at a time, yet all three are checked within a few seconds although the tick is a minute.
+      const deadline = Date.now() + 5000;
+      let checked = 0;
+      while (Date.now() < deadline && checked < 3) {
+        await new Promise((r) => setTimeout(r, 100));
+        checked = (await pool.query("SELECT count(*)::int AS n FROM camera_status WHERE last_attempt_at IS NOT NULL AND camera_id = ANY($1)", [ids])).rows[0].n;
+      }
+      expect(checked).toBe(3);
+    } finally {
+      await scheduler.stop();
+    }
+  });
+
+  it("keeps routine checks in history once per interval, and failures and changes always", async () => {
+    const id = await addCamera();
+    const rows = async () => (await pool.query("SELECT outcome FROM storage_checks WHERE camera_id = $1 ORDER BY checked_at", [id])).rows.map((r) => r.outcome);
+    await runCheck(id, "scheduled", deps); // first check: kept
+    await runCheck(id, "scheduled", deps); // same state within 15 minutes: not kept
+    await runCheck(id, "manual", deps); // manual: kept
+    expect(await rows()).toEqual(["success", "success"]);
+    expect((await status(id)).last_success_at).not.toBeNull();
+
+    cam.setDisks([{ id: 1, status: "ok", capacityMb: 1000, freeMb: 50, property: "RW" }]); // 95%: health changes
+    await runCheck(id, "scheduled", deps);
+    expect(await rows()).toHaveLength(3);
+    await pool.query("UPDATE camera_status SET last_history_at = now() - interval '16 minutes' WHERE camera_id = $1", [id]);
+    await runCheck(id, "scheduled", deps); // interval elapsed: kept
+    expect(await rows()).toHaveLength(4);
+
+    await updateMonitoringSettings({ historyIntervalMinutes: 0 }, null);
+    await runCheck(id, "scheduled", deps); // 0 keeps every check
+    expect(await rows()).toHaveLength(5);
+  });
+
   it("reclaims cameras whose lease expired (worker crash recovery)", async () => {
     const id = await addCamera();
     await pool.query("UPDATE camera_status SET check_lock_until = now() - interval '1 second', check_lock_owner = 'dead-worker' WHERE camera_id = $1", [id]);

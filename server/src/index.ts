@@ -1,3 +1,5 @@
+import { getAiSettings } from "./ai/aiSettings.js";
+import { getFleetInsights } from "./ai/insightsService.js";
 import { createApp } from "./app.js";
 import { config } from "./config.js";
 import { pool } from "./db/pool.js";
@@ -19,6 +21,12 @@ async function main() {
   // Other API instances or the worker may change integrations: reload them periodically too.
   setInterval(() => void registry.refresh().catch((err) => logger.warn({ err: (err as Error).message }, "Could not reload brand integrations")), 30_000).unref();
   const server = createApp().listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));
+  // With thousands of cameras the first AI analysis takes a while: start it now, not on the first visit.
+  setTimeout(() => {
+    void getAiSettings()
+      .then((s) => (s.enabled ? getFleetInsights() : undefined))
+      .catch((err) => logger.warn({ err: (err as Error).message }, "Could not prepare AI insights"));
+  }, 10_000).unref();
   const shutdown = () => server.close(() => pool.end().then(() => process.exit(0)));
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

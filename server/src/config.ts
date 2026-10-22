@@ -17,6 +17,8 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   // File holding the database password (Docker Compose generates one); added to DATABASE_URL.
   DATABASE_PASSWORD_FILE: z.string().optional(),
+  // Connections per process. The worker needs more with many concurrent checks (see operations.md).
+  DATABASE_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(15),
   // base64-encoded 32-byte keys. CREDENTIAL_ENCRYPTION_KEYS allows rotation: "2:<key>,1:<oldkey>".
   CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
   CREDENTIAL_ENCRYPTION_KEYS: z.string().optional(),

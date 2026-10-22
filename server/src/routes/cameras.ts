@@ -17,6 +17,7 @@ import {
   listLocations,
   listQuerySchema,
   removeCameras,
+  listCameraIds,
   setLocalStorage,
   setMonitoring,
   updateCamera,
@@ -32,6 +33,10 @@ const check = requirePermission("cameras:check");
 
 camerasRouter.get("/", read, async (req, res) => {
   res.json(await listCameras(parse(listQuerySchema, req.query)));
+});
+
+camerasRouter.get("/ids", read, async (req, res) => {
+  res.json(await listCameraIds(parse(listQuerySchema, req.query)));
 });
 
 camerasRouter.get("/summary", read, async (_req, res) => {
