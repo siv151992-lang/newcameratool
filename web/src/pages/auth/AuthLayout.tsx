@@ -7,16 +7,30 @@ import type { SignInOptions } from "../../api/types";
 import { Button } from "../../components/ui";
 import { useTheme } from "../../hooks/theme";
 
+/** Zoho brand colors. */
+const ZOHO = { red: "#E42527", green: "#089949", blue: "#226DB4", yellow: "#F9B21D" };
+
+/** The four Zoho colors as a thin band. */
+function ZohoBand({ className = "" }: { className?: string }) {
+  return (
+    <div aria-hidden className={`flex ${className}`}>
+      {[ZOHO.red, ZOHO.green, ZOHO.blue, ZOHO.yellow].map((c) => (
+        <span key={c} className="flex-1" style={{ background: c }} />
+      ))}
+    </div>
+  );
+}
+
 const FEATURES = [
-  { icon: HardDrive, title: "Storage and recording", text: "SD card health, free space and days of recordings for every camera." },
-  { icon: BellRing, title: "Alerts that matter", text: "Offline cameras, full cards and recording errors, by email as they happen." },
-  { icon: Building2, title: "Organizations", text: "Each team sees only its own cameras, with the roles you choose." },
+  { icon: HardDrive, color: ZOHO.green, title: "Storage and recording", text: "SD card health, free space and days of recordings for every camera." },
+  { icon: BellRing, color: ZOHO.red, title: "Alerts that matter", text: "Offline cameras, full cards and recording errors, by email as they happen." },
+  { icon: Building2, color: ZOHO.yellow, title: "Organizations", text: "Each team sees only its own cameras, with the roles you choose." },
 ];
 
 /** Six camera tiles with status lights: the monitoring wall the product is about. */
 function CameraWall() {
   const tiles = ["good", "good", "warn", "good", "bad", "good"] as const;
-  const light = { good: "bg-emerald-400", warn: "bg-amber-300", bad: "bg-rose-400" };
+  const light = { good: ZOHO.green, warn: ZOHO.yellow, bad: ZOHO.red };
   return (
     <div aria-hidden className="grid grid-cols-3 gap-2.5">
       {tiles.map((t, i) => (
@@ -25,7 +39,7 @@ function CameraWall() {
             <div className="h-1 rounded-full bg-white/50" style={{ width: `${[46, 62, 88, 35, 97, 54][i]}%` }} />
           </div>
           <Cctv className="absolute left-2 top-2 h-3.5 w-3.5 text-white/40" />
-          <span className={`absolute right-2 top-2 h-2 w-2 rounded-full ${light[t]} shadow-[0_0_8px_currentColor]`} />
+          <span className="absolute right-2 top-2 h-2 w-2 rounded-full" style={{ background: light[t], boxShadow: `0 0 8px ${light[t]}` }} />
         </div>
       ))}
     </div>
@@ -42,12 +56,15 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
     <div className="flex min-h-screen">
       <aside
         className="relative hidden w-[46%] max-w-[640px] flex-col justify-between overflow-hidden p-10 text-white lg:flex xl:p-14"
-        style={{ background: "linear-gradient(150deg, #0b1f3a 0%, #123764 45%, #1c5cab 100%)" }}
+        style={{ background: `linear-gradient(150deg, #0c2340 0%, #164a80 50%, ${ZOHO.blue} 100%)` }}
       >
+        <ZohoBand className="absolute inset-x-0 top-0 h-1.5" />
         {/* Fine dot grid and a soft light, behind everything. */}
         <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60" style={{ backgroundImage: "radial-gradient(rgb(255 255 255 / 0.10) 1px, transparent 1px)", backgroundSize: "22px 22px" }} />
-        <div aria-hidden className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-sky-400/20 blur-3xl" />
-        <div aria-hidden className="pointer-events-none absolute -bottom-40 -left-24 h-96 w-96 rounded-full bg-indigo-400/20 blur-3xl" />
+        {/* Soft lights in the Zoho colors. */}
+        <div aria-hidden className="pointer-events-none absolute -right-28 -top-28 h-80 w-80 rounded-full blur-3xl" style={{ background: ZOHO.yellow, opacity: 0.14 }} />
+        <div aria-hidden className="pointer-events-none absolute -bottom-36 -left-20 h-96 w-96 rounded-full blur-3xl" style={{ background: ZOHO.green, opacity: 0.16 }} />
+        <div aria-hidden className="pointer-events-none absolute -bottom-24 right-0 h-72 w-72 rounded-full blur-3xl" style={{ background: ZOHO.red, opacity: 0.12 }} />
 
         <div className="relative flex items-center gap-2.5">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/20">
@@ -63,9 +80,9 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
           </div>
           <CameraWall />
           <ul className="space-y-4">
-            {FEATURES.map(({ icon: Icon, title: t, text }) => (
+            {FEATURES.map(({ icon: Icon, color, title: t, text }) => (
               <li key={t} className="flex gap-3">
-                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/10 ring-1 ring-white/15">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md" style={{ background: color }}>
                   <Icon className="h-4 w-4" aria-hidden />
                 </span>
                 <span>
@@ -81,8 +98,10 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
       </aside>
 
       <main className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-4 py-10">
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-gradient-to-b from-accent/10 to-transparent" />
-        <div aria-hidden className="pointer-events-none absolute -right-24 bottom-0 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
+        <ZohoBand className="absolute inset-x-0 top-0 h-1 lg:hidden" />
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-80 " style={{ backgroundImage: `linear-gradient(to bottom, ${ZOHO.blue}1a, transparent)` }} />
+        <div aria-hidden className="pointer-events-none absolute -right-24 bottom-0 h-72 w-72 rounded-full blur-3xl" style={{ background: ZOHO.yellow, opacity: 0.08 }} />
+        <div aria-hidden className="pointer-events-none absolute -left-24 bottom-10 h-64 w-64 rounded-full blur-3xl" style={{ background: ZOHO.green, opacity: 0.07 }} />
         <div className="absolute right-4 top-4">
           <Button variant="ghost" size="sm" onClick={toggle} aria-label="Toggle theme" icon={theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />} />
         </div>
@@ -91,10 +110,13 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
             <Video className="h-6 w-6 text-accent" aria-hidden />
             <span className="font-semibold">Zoho IBMS CCTV Monitoring</span>
           </div>
-          <div className="rounded-xl border border-line bg-surface/95 p-6 shadow-lg shadow-black/5 backdrop-blur sm:p-7">
+          <div className="overflow-hidden rounded-xl border border-line bg-surface/95 shadow-lg shadow-black/5 backdrop-blur">
+            <ZohoBand className="h-1" />
+            <div className="p-6 sm:p-7">
             <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
             {subtitle && <div className="mt-1 text-sm text-ink-secondary">{subtitle}</div>}
             <div className="mt-5">{children}</div>
+            </div>
           </div>
           {footer && <div className="mt-5 text-center text-sm text-ink-secondary">{footer}</div>}
         </div>
