@@ -12,6 +12,7 @@ import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
+import { InvitationsCard, useInvitations } from "./InvitationsPanel";
 import { OrganizationsTab } from "./OrganizationsTab";
 
 interface Section {
@@ -34,7 +35,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "networks", label: "Camera networks", description: "The network ranges the monitor may contact cameras on.", icon: <Network className={icon} />, element: <NetworksTab /> },
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
-    can("users:manage") && { path: "users", label: "Members", description: `The people in ${user?.organizationName ?? "this organization"}: their roles, and who can sign in.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
+    can("users:manage") && { path: "users", label: "Members", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
     { path: "account", label: "Account & theme", description: "Change your password and the light or dark theme.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
@@ -582,8 +583,7 @@ function UsersTab() {
   const toast = useToast();
   const qc = useQueryClient();
   const users = useQuery({ queryKey: ["users"], queryFn: () => api<ManagedUser[]>("/users") });
-  const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ username: "", displayName: "", email: "", password: "", role: "viewer" });
+  const invitations = useInvitations();
   const [resetting, setResetting] = useState<ManagedUser | null>(null);
   const [removing, setRemoving] = useState<ManagedUser | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -591,16 +591,6 @@ function UsersTab() {
   // Accounts that also belong to another organization are changed by the system administrator only.
   const ownsAccount = (u: ManagedUser) => !u.otherOrganizations || can("system:manage");
 
-  const create = useMutation({
-    mutationFn: () => api("/users", { method: "POST", body: { ...form, displayName: form.displayName || undefined, email: form.email || undefined } }),
-    onSuccess: () => {
-      toast("success", `${form.username} added to ${user?.organizationName}`);
-      setCreating(false);
-      setForm({ username: "", displayName: "", email: "", password: "", role: "viewer" });
-      void refresh();
-    },
-    onError: (e: Error) => toast("error", e.message),
-  });
   const update = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api(`/users/${id}`, { method: "PATCH", body }),
     onSuccess: () => {
@@ -625,79 +615,74 @@ function UsersTab() {
   });
 
   return (
-    <Card title={`Members of ${user?.organizationName ?? "this organization"}`} actions={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setCreating(true)}>Add member</Button>}>
-      <div className="border-b border-line px-4 py-2 text-xs text-ink-secondary">
-        <strong>Org Admin</strong>: everything in this organization, including its members · <strong>Operator</strong>: run checks and manage alerts · <strong>Viewer</strong>: read-only
-      </div>
-      {users.isLoading ? <Spinner /> : users.error ? <ErrorMessage error={users.error} className="m-4" /> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-xs text-ink-secondary">
-              <tr>
-                <th scope="col" className="px-4 py-2 font-medium">Member</th>
-                <th scope="col" className="px-4 py-2 font-medium">Role</th>
-                <th scope="col" className="px-4 py-2 font-medium">Status</th>
-                <th scope="col" className="px-4 py-2 font-medium">Last sign-in</th>
-                <th scope="col" className="px-4 py-2 text-right font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.data?.map((u) => (
-                <tr key={u.id} className="border-t border-line">
-                  <td className="px-4 py-2">
-                    <div className="font-medium">{u.username}{u.id === user?.id && <span className="ml-1 text-xs font-normal text-ink-muted">(you)</span>}</div>
-                    <div className="text-xs text-ink-muted">{[u.displayName, u.email].filter(Boolean).join(" · ")}</div>
-                    {u.otherOrganizations && <div className="text-xs text-ink-muted">Also in another organization</div>}
-                  </td>
-                  <td className="px-4 py-2">
-                    <Select aria-label={`Role for ${u.username}`} className="w-auto py-1" value={u.role} disabled={u.id === user?.id || update.isPending} onChange={(e) => update.mutate({ id: u.id, body: { role: e.target.value } })}>
-                      <option value="admin">{ROLE_LABELS.admin}</option>
-                      <option value="operator">{ROLE_LABELS.operator}</option>
-                      <option value="viewer">{ROLE_LABELS.viewer}</option>
-                    </Select>
-                  </td>
-                  <td className="px-4 py-2">{u.isActive ? (u.locked ? "Locked (too many attempts)" : "Active") : "Disabled"}</td>
-                  <td className="px-4 py-2 text-ink-secondary" title={absoluteTime(u.lastLoginAt)}>{relativeTime(u.lastLoginAt)}</td>
-                  <td className="whitespace-nowrap px-4 py-2 text-right">
-                    {ownsAccount(u) && <Button size="sm" variant="ghost" onClick={() => setResetting(u)}>Reset password</Button>}
-                    {u.id !== user?.id && ownsAccount(u) && (
-                      <Button size="sm" variant="ghost" onClick={() => update.mutate({ id: u.id, body: { isActive: !u.isActive } })}>
-                        {u.isActive ? "Disable" : "Enable"}
-                      </Button>
-                    )}
-                    {u.id !== user?.id && <Button size="sm" variant="ghost" onClick={() => setRemoving(u)}>Remove</Button>}
-                  </td>
+    <div className="space-y-4">
+      <Card title={`Members of ${user?.organizationName ?? "this organization"}`} actions={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={invitations.open}>Invite member</Button>}>
+        <div className="border-b border-line px-4 py-2 text-xs text-ink-secondary">
+          <strong>Org Admin</strong>: everything in this organization, including its members · <strong>Operator</strong>: run checks and manage alerts · <strong>Viewer</strong>: read-only
+        </div>
+        {users.isLoading ? <Spinner /> : users.error ? <ErrorMessage error={users.error} className="m-4" /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs text-ink-secondary">
+                <tr>
+                  <th scope="col" className="px-4 py-2 font-medium">Member</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Role</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Status</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Last sign-in</th>
+                  <th scope="col" className="px-4 py-2 text-right font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <Dialog open={creating} onClose={() => setCreating(false)} title={`Add a member to ${user?.organizationName}`} footer={<><Button onClick={() => setCreating(false)}>Cancel</Button><Button variant="primary" loading={create.isPending} onClick={() => create.mutate()}>Add member</Button></>}>
-        <div className="space-y-3">
-          <Field label="Username" required>{(id) => <Input id={id} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} autoComplete="off" />}</Field>
-          <Field label="Display name">{(id) => <Input id={id} value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} />}</Field>
-          <Field label="Email" hint="Lets them sign in with their email address too">{(id, d) => <Input id={id} aria-describedby={d} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} autoComplete="off" />}</Field>
-          <Field label="Initial password" required hint="At least 10 characters">{(id, d) => <Input id={id} aria-describedby={d} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" />}</Field>
-          <Field label="Role">{(id) => <Select id={id} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="viewer">{ROLE_LABELS.viewer}</option><option value="operator">{ROLE_LABELS.operator}</option><option value="admin">{ROLE_LABELS.admin}</option></Select>}</Field>
-        </div>
-      </Dialog>
-      <Dialog open={!!resetting} onClose={() => setResetting(null)} title={`Reset password for ${resetting?.username}`} footer={<><Button onClick={() => setResetting(null)}>Cancel</Button><Button variant="primary" loading={update.isPending} onClick={() => update.mutate({ id: resetting!.id, body: { password: newPassword } })}>Reset password</Button></>}>
-        <p className="mb-3 text-ink-secondary">They are signed out of all sessions.</p>
-        <Field label="New password" hint="At least 10 characters">{(id, d) => <Input id={id} aria-describedby={d} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />}</Field>
-      </Dialog>
-      <ConfirmDialog
-        open={!!removing}
-        danger
-        title={`Remove ${removing?.username} from ${user?.organizationName}?`}
-        confirmLabel="Remove"
-        loading={remove.isPending}
-        onCancel={() => setRemoving(null)}
-        onConfirm={() => remove.mutate(removing!.id)}
-      >
-        <p>They lose access to this organization at once. Their account is kept{removing?.otherOrganizations ? ", and so is their access to their other organization" : ""}.</p>
-      </ConfirmDialog>
-    </Card>
+              </thead>
+              <tbody>
+                {users.data?.map((u) => (
+                  <tr key={u.id} className="border-t border-line">
+                    <td className="px-4 py-2">
+                      <div className="font-medium">{u.username}{u.id === user?.id && <span className="ml-1 text-xs font-normal text-ink-muted">(you)</span>}</div>
+                      <div className="text-xs text-ink-muted">{[u.displayName, u.email].filter(Boolean).join(" · ")}</div>
+                      {u.otherOrganizations && <div className="text-xs text-ink-muted">Also in another organization</div>}
+                    </td>
+                    <td className="px-4 py-2">
+                      <Select aria-label={`Role for ${u.username}`} className="w-auto py-1" value={u.role} disabled={u.id === user?.id || update.isPending} onChange={(e) => update.mutate({ id: u.id, body: { role: e.target.value } })}>
+                        <option value="admin">{ROLE_LABELS.admin}</option>
+                        <option value="operator">{ROLE_LABELS.operator}</option>
+                        <option value="viewer">{ROLE_LABELS.viewer}</option>
+                      </Select>
+                    </td>
+                    <td className="px-4 py-2">{u.isActive ? (u.locked ? "Locked (too many attempts)" : "Active") : "Disabled"}</td>
+                    <td className="px-4 py-2 text-ink-secondary" title={absoluteTime(u.lastLoginAt)}>{relativeTime(u.lastLoginAt)}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right">
+                      {ownsAccount(u) && <Button size="sm" variant="ghost" onClick={() => setResetting(u)}>Reset password</Button>}
+                      {u.id !== user?.id && ownsAccount(u) && (
+                        <Button size="sm" variant="ghost" onClick={() => update.mutate({ id: u.id, body: { isActive: !u.isActive } })}>
+                          {u.isActive ? "Disable" : "Enable"}
+                        </Button>
+                      )}
+                      {u.id !== user?.id && <Button size="sm" variant="ghost" onClick={() => setRemoving(u)}>Remove</Button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <Dialog open={!!resetting} onClose={() => setResetting(null)} title={`Reset password for ${resetting?.username}`} footer={<><Button onClick={() => setResetting(null)}>Cancel</Button><Button variant="primary" loading={update.isPending} onClick={() => update.mutate({ id: resetting!.id, body: { password: newPassword } })}>Reset password</Button></>}>
+          <p className="mb-3 text-ink-secondary">They are signed out of all sessions.</p>
+          <Field label="New password" hint="At least 10 characters">{(id, d) => <Input id={id} aria-describedby={d} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />}</Field>
+        </Dialog>
+        <ConfirmDialog
+          open={!!removing}
+          danger
+          title={`Remove ${removing?.username} from ${user?.organizationName}?`}
+          confirmLabel="Remove"
+          loading={remove.isPending}
+          onCancel={() => setRemoving(null)}
+          onConfirm={() => remove.mutate(removing!.id)}
+        >
+          <p>They lose access to this organization at once. Their account is kept{removing?.otherOrganizations ? ", and so is their access to their other organization" : ""}.</p>
+        </ConfirmDialog>
+      </Card>
+      <InvitationsCard resend={invitations.resend} />
+      {invitations.dialog}
+    </div>
   );
 }
 

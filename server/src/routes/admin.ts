@@ -37,7 +37,7 @@ import {
   serverWideKeys,
   updateMonitoringSettings,
 } from "../services/settingsService.js";
-import { createUser, createUserSchema } from "../services/userService.js";
+import { invite, inviteSchema, listInvitations, resend, revoke } from "../services/invitationService.js";
 
 const isSystemAdmin = (req: Request) => req.auth!.user.isSystemAdmin;
 
@@ -105,16 +105,30 @@ usersRouter.use(requirePermission("users:manage"));
 usersRouter.get("/", async (req, res) => {
   res.json(await listMembers(orgOf(req)));
 });
-usersRouter.post("/", async (req, res) => {
-  const id = await createUser(orgOf(req), parse(createUserSchema, req.body), actorOf(req), req.ip);
-  res.status(201).json({ id });
-});
 usersRouter.patch("/:id", async (req, res) => {
   await updateMember(orgOf(req), param(req), parse(updateMemberSchema, req.body), { ...actorOf(req), isSystemAdmin: isSystemAdmin(req) }, req.ip);
   res.status(204).end();
 });
 usersRouter.delete("/:id", async (req, res) => {
   await removeMember(orgOf(req), param(req), actorOf(req), req.ip);
+  res.status(204).end();
+});
+
+/** Invitations into the current organization: people join only when they accept. */
+export const invitationsRouter = Router();
+invitationsRouter.use(requirePermission("users:manage"));
+invitationsRouter.get("/", async (req, res) => {
+  res.json(await listInvitations(orgOf(req)));
+});
+invitationsRouter.post("/", async (req, res) => {
+  const sent = await invite(orgOf(req), parse(inviteSchema, req.body), actorOf(req), req.ip);
+  res.status(sent.outcome === "created" ? 201 : 200).json(sent);
+});
+invitationsRouter.post("/:id/resend", async (req, res) => {
+  res.json(await resend(orgOf(req), param(req), actorOf(req), req.ip));
+});
+invitationsRouter.post("/:id/revoke", async (req, res) => {
+  await revoke(orgOf(req), param(req), actorOf(req), req.ip);
   res.status(204).end();
 });
 

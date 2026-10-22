@@ -40,7 +40,14 @@ const schema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().default("cctv-monitor@localhost"),
-  PUBLIC_URL: z.string().optional(),
+  // The address people open the dashboard at (https://cctv.example.com). Links in invitation,
+  // verification and password-reset emails use it; without it those emails are not sent.
+  PUBLIC_URL: z.string().url().optional(),
+  /** Anyone may create an account (they see nothing until invited into an organization). */
+  ALLOW_SIGNUP: bool(true),
+  INVITATION_EXPIRY_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(72),
+  EMAIL_VERIFICATION_EXPIRY_HOURS: z.coerce.number().int().min(1).max(24 * 7).default(24),
+  PASSWORD_RESET_EXPIRY_MINUTES: z.coerce.number().int().min(10).max(24 * 60).default(60),
   // AI Mode assistant and report summaries (optional). Without a key, AI Mode still shows the
   // statistical forecasts, anomalies and recommendations; only the assistant is unavailable.
   ANTHROPIC_API_KEY: z.string().optional(),

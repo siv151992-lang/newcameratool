@@ -95,6 +95,108 @@ paths:
                             name: { type: string }
                             role: { type: string, enum: [admin, operator, viewer] }
         "401": { $ref: "#/components/responses/Error" }
+  /auth/options:
+    get:
+      tags: [Auth]
+      summary: What the sign-in page offers
+      security: []
+      responses:
+        "200":
+          description: "needsSetup: no account exists yet (the first becomes system administrator); signupEnabled; passwordResetEnabled"
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create an account
+      description: >
+        With `invitationToken` (from an invitation link, for the invited address) the account is confirmed,
+        joins that organization and is signed in (201). The first account on a new installation is likewise
+        signed in, as system administrator. Otherwise a confirmation link is emailed and the answer is 202,
+        also when the address already has an account (whose owner is told by email).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: { type: string }
+                displayName: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, format: password, minLength: 10 }
+                invitationToken: { type: string }
+      responses:
+        "201": { description: Signed in; sets the session cookie }
+        "202": { description: Confirmation link sent }
+        "400": { description: "Invalid input, or EMAIL_MISMATCH: not the invited address" }
+        "403": { description: SIGNUP_DISABLED }
+        "409": { description: Username taken, or ACCOUNT_EXISTS for an invited address that has an account }
+        "410": { description: "INVITATION_EXPIRED, INVITATION_REVOKED or INVITATION_ACCEPTED" }
+        "503": { description: EMAIL_UNAVAILABLE (no SMTP_HOST or PUBLIC_URL) }
+  /auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Confirm an email address from the emailed link; signs the person in
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+      responses:
+        "200": { description: Confirmed and signed in }
+        "400": { description: LINK_INVALID (used, expired or unknown) }
+  /auth/resend-verification:
+    post:
+      tags: [Auth]
+      summary: Send a new confirmation link (same answer whether or not the address is waiting)
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email } } } } } }
+      responses:
+        "202": { description: Accepted }
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Email a password reset link (same answer whether or not the address has an account)
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email } } } } } }
+      responses:
+        "202": { description: Accepted }
+        "503": { description: EMAIL_UNAVAILABLE }
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Set a new password from the emailed link; signs out every session of the account
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [token, password], properties: { token: { type: string }, password: { type: string, format: password } } } } } }
+      responses:
+        "204": { description: Changed }
+        "400": { description: LINK_INVALID, or the password is too weak }
+  /auth/invitations/{token}:
+    get:
+      tags: [Auth]
+      summary: What an invitation link is for (organization, role, address, status), before signing in
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: OK }
+        "404": { description: INVITATION_INVALID (unknown, or replaced by a newer invitation) }
+  /auth/invitations/accept:
+    post:
+      tags: [Auth]
+      summary: Accept an invitation as the signed-in user and open that organization
+      description: >
+        By `token` (the emailed link), or by `id` for an invitation listed in `GET /auth/me` (the user's address must be confirmed).
+        The account must have the invited address; an account without an address takes it on.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, required: [token], properties: { token: { type: string } } }
+                - { type: object, required: [id], properties: { id: { type: string, format: uuid } } }
+      responses:
+        "200": { description: Joined }
+        "403": { description: EMAIL_MISMATCH }
+        "410": { description: "INVITATION_EXPIRED, INVITATION_REVOKED or INVITATION_ACCEPTED" }
   /auth/organization:
     post:
       tags: [Auth]
@@ -641,25 +743,6 @@ paths:
       summary: Members of the current organization (users:manage, Org Admin)
       responses:
         "200": { description: OK }
-    post:
-      tags: [Admin]
-      summary: Add a new account with a password to the current organization (users:manage)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [username, password, role]
-              properties:
-                username: { type: string }
-                displayName: { type: string }
-                email: { type: string, format: email }
-                password: { type: string, format: password, minLength: 10 }
-                role: { type: string, enum: [admin, operator, viewer], description: admin is the Org Admin }
-      responses:
-        "201": { description: Created }
-        "409": { description: Username or email already taken }
   /users/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -691,6 +774,51 @@ paths:
         "204": { description: Removed }
         "400": { description: The last Org Admin, or yourself as Org Admin }
         "404": { description: Not a member of the current organization }
+  /invitations:
+    get:
+      tags: [Admin]
+      summary: Invitations of the current organization (open ones, and the last 30 days) (users:manage)
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Admin]
+      summary: Invite an email address with a role (users:manage)
+      description: >
+        Nobody is added until the invitation is accepted. Inviting an address that already has an open invitation
+        sends it again with a new link (200, outcome "resent"); the older link stops working. The answer includes the
+        link path once, to copy when the email could not be sent (emailSent false, emailError).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [admin, operator, viewer] }
+      responses:
+        "200": { description: Sent again }
+        "201": { description: Invited }
+        "409": { description: ALREADY_MEMBER }
+  /invitations/{id}/resend:
+    post:
+      tags: [Admin]
+      summary: Send a pending or expired invitation again with a new link and expiry (users:manage)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Sent }
+        "409": { description: Already accepted or revoked }
+  /invitations/{id}/revoke:
+    post:
+      tags: [Admin]
+      summary: Revoke an invitation; its link stops working (users:manage)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Revoked }
+        "409": { description: Already accepted }
   /organizations:
     get:
       tags: [Admin]

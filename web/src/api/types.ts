@@ -27,6 +27,56 @@ export interface Membership {
   role: Role;
 }
 
+/** An open invitation to the signed-in user's address. */
+export interface PendingInvitation {
+  id: string;
+  organizationName: string;
+  role: Role;
+  expiresAt: string;
+}
+
+/** The invitation page, before signing in. */
+export interface InvitationPreview {
+  organizationName: string;
+  role: Role;
+  email: string;
+  invitedBy: string | null;
+  expiresAt: string;
+  status: "pending" | "expired" | "accepted" | "revoked";
+  accountExists: boolean;
+}
+
+/** An invitation in Settings → Members. */
+export interface Invitation {
+  id: string;
+  email: string;
+  role: Role;
+  status: InvitationPreview["status"];
+  createdAt: string;
+  sentAt: string;
+  sendCount: number;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  invitedBy: string | null;
+  acceptedBy: string | null;
+}
+
+/** Answer to inviting (or re-sending): the new link is shown once, to copy if the email could not be sent. */
+export interface InvitationSent {
+  id: string;
+  link: string;
+  emailSent: boolean;
+  emailError?: string;
+  outcome: "created" | "resent";
+}
+
+export interface SignInOptions {
+  needsSetup: boolean;
+  signupEnabled: boolean;
+  passwordResetEnabled: boolean;
+}
+
 export interface Organization {
   id: string;
   name: string;

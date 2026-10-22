@@ -1,18 +1,20 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, onUnauthorized, setCsrfToken } from "../api/client";
-import type { Membership, User } from "../api/types";
+import type { Membership, PendingInvitation, User } from "../api/types";
 
 interface AuthState {
   user: User | null;
   /** The organizations the user belongs to. */
   organizations: Membership[];
+  /** Open invitations to the user's confirmed email address. */
+  invitations: PendingInvitation[];
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Moves this session to another organization; everything on screen reloads for it. */
   switchOrganization: (organizationId: string) => Promise<void>;
-  /** Reloads the user and their organizations (after creating or joining one). */
+  /** Reloads the user and their organizations (after signing up, confirming an email, or joining or creating one). */
   refresh: () => Promise<void>;
   can: (permission: string) => boolean;
 }
@@ -21,6 +23,7 @@ interface Me {
   user: User;
   csrfToken: string;
   organizations: Membership[];
+  invitations: PendingInvitation[];
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -31,6 +34,7 @@ export const ROLE_LABELS: Record<string, string> = { admin: "Org Admin", operato
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [organizations, setOrganizations] = useState<Membership[]>([]);
+  const [invitations, setInvitations] = useState<PendingInvitation[]>([]);
   const [loading, setLoading] = useState(true);
   const qc = useQueryClient();
 
@@ -39,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCsrfToken(r.csrfToken);
     setUser(r.user);
     setOrganizations(r.organizations);
+    setInvitations(r.invitations ?? []);
   }, []);
 
   useEffect(() => {
@@ -64,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCsrfToken(null);
     setUser(null);
     setOrganizations([]);
+    setInvitations([]);
     qc.clear();
   }, [qc]);
 
@@ -76,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const can = useCallback((p: string) => !!user?.permissions.includes(p), [user]);
 
   return (
-    <AuthContext.Provider value={{ user, organizations, loading, login, logout, switchOrganization, refresh: load, can }}>
+    <AuthContext.Provider value={{ user, organizations, invitations, loading, login, logout, switchOrganization, refresh: load, can }}>
       {children}
     </AuthContext.Provider>
   );

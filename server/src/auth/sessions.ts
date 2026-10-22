@@ -39,7 +39,7 @@ let dummyHash: Promise<string> | undefined;
 
 export async function login(identifier: string, password: string, meta: { ip?: string; userAgent?: string }) {
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.password_hash, u.is_active, u.locked_until
+    `SELECT u.id, u.username, u.password_hash, u.is_active, u.locked_until, u.pending_verification
      FROM users u WHERE lower(u.username) = lower($1) OR lower(u.email) = lower($1)
      ORDER BY (lower(u.username) = lower($1)) DESC LIMIT 1`,
     [identifier],
@@ -64,6 +64,10 @@ export async function login(identifier: string, password: string, meta: { ip?: s
     throw invalid;
   }
   await pool.query("UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = $1", [user.id]);
+  // Only after the password matched, so this does not reveal which addresses have accounts.
+  if (user.pending_verification) {
+    throw new HttpError(403, "EMAIL_NOT_VERIFIED", "Confirm your email address first: open the link we emailed you, or ask for a new one.");
+  }
   return startSession(user.id, meta);
 }
 

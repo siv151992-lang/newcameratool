@@ -8,6 +8,8 @@ const common = {
 };
 const msg = (message: string) => ({ error: { code: "RATE_LIMITED", message } });
 
+// Account creation and email links: each may send an email or try a token.
+export const accountLimiter = rateLimit({ ...common, windowMs: 15 * 60_000, limit: 30, message: msg("Too many requests. Try again in a few minutes.") });
 export const loginLimiter = rateLimit({ ...common, windowMs: 15 * 60_000, limit: 20, message: msg("Too many sign-in attempts. Try again in a few minutes.") });
 // Connection tests and manual checks make requests to devices on the network.
 export const deviceLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 60, message: msg("Too many device requests. Slow down and try again.") });

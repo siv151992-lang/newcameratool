@@ -2,10 +2,23 @@ import { Router } from "express";
 import { z } from "zod";
 import { config } from "../config.js";
 import { requireAuth, requireCsrf } from "../auth/middleware.js";
-import { changeOwnPassword, listMemberships, login, logout, SESSION_COOKIE, switchOrganization } from "../auth/sessions.js";
+import type { Request, Response } from "express";
+import { changeOwnPassword, listMemberships, login, logout, SESSION_COOKIE, startSession, switchOrganization } from "../auth/sessions.js";
+import { emailSchema } from "../services/userService.js";
+import {
+  requestPasswordReset,
+  resendVerification,
+  resetPassword,
+  signInOptions,
+  signup,
+  signupSchema,
+  verifyEmail,
+} from "../services/accountService.js";
+import { acceptInvitation, pendingInvitationsFor, previewInvitation } from "../services/invitationService.js";
 import { parse } from "../lib/validate.js";
+import { pool } from "../db/pool.js";
 import { audit } from "../services/auditService.js";
-import { loginLimiter } from "./limits.js";
+import { accountLimiter, loginLimiter } from "./limits.js";
 
 export const authRouter = Router();
 
@@ -15,6 +28,65 @@ const cookieOptions = () => ({
   sameSite: "strict" as const,
   path: "/",
   maxAge: config.SESSION_TTL_HOURS * 3600_000,
+});
+
+/** Starts a session for `userId` and sets the cookie (after sign-up, an email link or an invitation). */
+async function signInAs(req: Request, res: Response, userId: string, organizationId?: string | null) {
+  const result = await startSession(userId, { ip: req.ip, userAgent: req.get("user-agent") }, organizationId ?? undefined);
+  res.cookie(SESSION_COOKIE, result.token, cookieOptions());
+  return result;
+}
+
+const token = z.string().min(1).max(100);
+
+/** What the sign-in page offers (creating accounts, password reset, first-time setup). */
+authRouter.get("/options", async (_req, res) => {
+  res.json(await signInOptions());
+});
+
+authRouter.post("/signup", accountLimiter, async (req, res) => {
+  const result = await signup(parse(signupSchema, req.body), req.ip);
+  if (result.status === "verification_sent") {
+    res.status(202).json({ status: "verification_sent" });
+    return;
+  }
+  const session = await signInAs(req, res, result.userId, result.organizationId);
+  res.status(201).json({ status: "signed_in", user: session.user, csrfToken: session.csrfToken });
+});
+
+authRouter.post("/verify-email", accountLimiter, async (req, res) => {
+  const userId = await verifyEmail(parse(z.object({ token }).strict(), req.body).token, req.ip);
+  const session = await signInAs(req, res, userId);
+  res.json({ user: session.user, csrfToken: session.csrfToken });
+});
+
+authRouter.post("/resend-verification", accountLimiter, async (req, res) => {
+  await resendVerification(parse(z.object({ email: emailSchema }).strict(), req.body).email);
+  res.status(202).json({ status: "sent_if_needed" });
+});
+
+authRouter.post("/forgot-password", accountLimiter, async (req, res) => {
+  await requestPasswordReset(parse(z.object({ email: emailSchema }).strict(), req.body).email, req.ip);
+  res.status(202).json({ status: "sent_if_account" });
+});
+
+authRouter.post("/reset-password", accountLimiter, async (req, res) => {
+  const body = parse(z.object({ token, password: z.string().max(200) }).strict(), req.body);
+  await resetPassword(body.token, body.password, req.ip);
+  res.status(204).end();
+});
+
+/** The invitation page, before signing in. */
+authRouter.get("/invitations/:token", accountLimiter, async (req, res) => {
+  res.json(await previewInvitation(String(req.params.token)));
+});
+
+/** Accepts an invitation (by its link token, or by id from the signed-in user's own list) and opens that organization. */
+authRouter.post("/invitations/accept", requireAuth, requireCsrf, accountLimiter, async (req, res) => {
+  const body = parse(z.union([z.object({ token }).strict(), z.object({ id: z.string().uuid() }).strict()]), req.body);
+  const joined = await acceptInvitation(body, { id: req.auth!.user.id, username: req.auth!.user.username }, req.ip);
+  await switchOrganization(req.auth!.sessionId, req.auth!.user.id, joined.organizationId);
+  res.json(joined);
 });
 
 authRouter.post("/login", loginLimiter, async (req, res) => {
@@ -32,7 +104,14 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
 });
 
 authRouter.get("/me", requireAuth, async (req, res) => {
-  res.json({ user: req.auth!.user, csrfToken: req.auth!.csrfToken, organizations: await listMemberships(req.auth!.user.id) });
+  const { rows } = await pool.query<{ verified: boolean }>("SELECT email_verified_at IS NOT NULL AS verified FROM users WHERE id = $1", [req.auth!.user.id]);
+  res.json({
+    user: req.auth!.user,
+    csrfToken: req.auth!.csrfToken,
+    organizations: await listMemberships(req.auth!.user.id),
+    // Open invitations to the user's confirmed address, to accept from the app.
+    invitations: rows[0]?.verified ? await pendingInvitationsFor(req.auth!.user.email) : [],
+  });
 });
 
 /** Switches the session to another organization the user belongs to. */

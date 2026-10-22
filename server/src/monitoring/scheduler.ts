@@ -81,6 +81,12 @@ export class Scheduler {
       audit: await purge("DELETE FROM audit_logs WHERE created_at < now() - make_interval(days => $1)", s.auditRetentionDays),
     };
     await pool.query("DELETE FROM sessions WHERE expires_at < now()");
+    // Used or expired email links, and accounts never confirmed within a week (they could sign in to nothing).
+    await pool.query("DELETE FROM email_tokens WHERE expires_at < now() - interval '1 day'");
+    await pool.query(
+      `DELETE FROM users u WHERE u.pending_verification AND u.created_at < now() - interval '7 days'
+         AND NOT EXISTS (SELECT 1 FROM organization_members m WHERE m.user_id = u.id)`,
+    );
     logger.info(counts, "Retention housekeeping complete");
   }
 
