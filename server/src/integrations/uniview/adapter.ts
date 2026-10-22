@@ -1,10 +1,12 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
-import { parseUniviewDeviceInfo, parseUniviewError, parseUniviewRecording, parseUniviewStorage } from "./parser.js";
+import { CameraApiError, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordingReading, type StorageReading } from "../types.js";
+import { parseUniviewContainers, parseUniviewDeviceInfo, parseUniviewError, parseUniviewRecording, parseUniviewStorage } from "./parser.js";
 
-export const UNIVIEW_STORAGE_PATH = "/LAPI/V1.0/Storage/Disks";
+/** Storage on current firmware (confirmed on IPC815SB-ADF14K-I0); older firmware uses Storage/Disks. */
+export const UNIVIEW_STORAGE_PATH = "/LAPI/V1.0/Storage/Containers/DetailInfos";
+export const UNIVIEW_LEGACY_STORAGE_PATH = "/LAPI/V1.0/Storage/Disks";
 export const UNIVIEW_DEVICE_INFO_PATH = "/LAPI/V1.0/System/DeviceInfo";
 export const UNIVIEW_RECORDING_PATH = "/LAPI/V1.0/Storage/Status";
 
@@ -19,8 +21,9 @@ export class UniviewAdapter implements CameraBrandAdapter {
     storageEndpoint: `GET ${UNIVIEW_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
-      "LAPI JSON with HTTP Digest authentication; capacities read as MiB. The storage endpoint path still " +
-      "needs confirming on real hardware; use Test Connection to check your firmware.",
+      "LAPI JSON with HTTP Digest authentication; capacities in MiB. Storage from Storage/Containers/DetailInfos " +
+      "(Storage/Disks on older firmware). Recording status (Storage/Status) is not provided by every model.",
+    compatibility: "Storage confirmed on IPC815SB-ADF14K-I0 (firmware GIPC-B6203.15.6.241115).",
   };
 
   constructor(private readonly http: CameraHttpClient) {}
@@ -30,7 +33,12 @@ export class UniviewAdapter implements CameraBrandAdapter {
   }
 
   async getStorageStatus(camera: CameraConfig): Promise<StorageReading> {
-    return parseUniviewStorage(await this.getJson(camera, UNIVIEW_STORAGE_PATH));
+    try {
+      return parseUniviewContainers(await this.getJson(camera, UNIVIEW_STORAGE_PATH));
+    } catch (err) {
+      if (!(err instanceof CameraApiError) || err.code !== "API_UNAVAILABLE") throw err;
+    }
+    return parseUniviewStorage(await this.getJson(camera, UNIVIEW_LEGACY_STORAGE_PATH));
   }
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {

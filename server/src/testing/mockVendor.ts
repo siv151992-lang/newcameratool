@@ -34,7 +34,7 @@ export class MockVendorCamera {
   private readonly realm = "AcmeVision";
 
   /** "hanwha" answers Hanwha Vision SUNAPI (stw-cgi) requests instead of the Acme API. */
-  constructor(public username = "admin", public password = "Acme-Passw0rd!", public profile: "acme" | "hanwha" | "panasonic" = "acme") {}
+  constructor(public username = "admin", public password = "Acme-Passw0rd!", public profile: "acme" | "hanwha" | "panasonic" | "uniview" = "acme") {}
 
   private verify(header: string | undefined, method: string): boolean {
     if (!header?.startsWith("Digest ")) return false;
@@ -60,6 +60,20 @@ export class MockVendorCamera {
     if (this.mode === "server-error") {
       res.statusCode = 500;
       return res.end(JSON.stringify({ error: "internal" }));
+    }
+    if (this.profile === "uniview") {
+      // Like an IPC815SB-ADF14K-I0: storage only at Storage/Containers/DetailInfos (MiB), other paths "UnSupport".
+      res.setHeader("Content-Type", "application/json");
+      const reply = (code: number, data: unknown) =>
+        JSON.stringify({ Response: { ResponseURL: url.pathname, CreatedID: -1, ResponseCode: code ? 4 : 0, SubResponseCode: 0, ResponseString: code ? "Not Supported" : "Succeed", StatusCode: code, StatusString: code ? "UnSupport" : "Succeed", Data: data } });
+      const d = this.disks[0]!;
+      if (url.pathname === "/LAPI/V1.0/Storage/Containers/DetailInfos") {
+        return res.end(reply(0, { LocalHDDNum: 0, LocalHDDList: [], SDNum: 1, SDList: [{ ID: 1, RemainCapacity: Number(d.freeMiB), TotalCapacity: Number(d.sizeMiB), Manufacturer: "", Status: 3, Property: 0, FormatProgress: 0, GroupID: 0 }], NASNum: 0, NASList: [] }));
+      }
+      if (url.pathname === "/LAPI/V1.0/System/DeviceInfo") {
+        return res.end(reply(0, { ID: 0, DeviceName: "SIMULATED-UNIVIEW", DeviceModel: "SIMULATED-UNIVIEW", SerialNumber: "UNV0001", FirmwareVersion: "GIPC-B6203.15.6" }));
+      }
+      return res.end(reply(8, "null"));
     }
     if (this.profile === "panasonic") {
       if (url.pathname === "/cgi-bin/getinfo" && url.searchParams.get("FILE") === "1") {

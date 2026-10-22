@@ -8,13 +8,14 @@ import { MockVendorCamera } from "../testing/mockVendor.js";
  *   npm run mock-camera -- --port 8081 --count 3 --vendor   (also a camera of an unknown "Acme Vision" brand,
  *                                                            for trying configurable API integrations)
  *   ... --panasonic                                          (also a simulated Panasonic / i-PRO camera)
+ *   ... --uniview                                            (also a simulated Uniview LAPI camera)
  *   ... --hanwha                                             (also a simulated Hanwha Vision SUNAPI camera)
  *   ... --search-recording                                   (Hikvision cameras without Recording/status, like
  *                                                            many real IP cameras: recording is found by search)
  * Register them in the app with host 127.0.0.1 (requires CAMERA_ALLOW_LOOPBACK=true, development only).
  */
 const { values } = parseArgs({
-  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false }, panasonic: { type: "boolean", default: false }, "search-recording": { type: "boolean", default: false } },
+  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false }, panasonic: { type: "boolean", default: false }, uniview: { type: "boolean", default: false }, "search-recording": { type: "boolean", default: false } },
 });
 const base = Number(values.port);
 const count = Math.min(Number(values.count), 20);
@@ -65,5 +66,11 @@ if (values.panasonic) {
   const cam = new MockVendorCamera("admin", "Ipro-Passw0rd!", "panasonic");
   const port = await cam.start(base + count + 2);
   console.log(`Simulated Panasonic / i-PRO camera: http://127.0.0.1:${port}  user=admin password=Ipro-Passw0rd!  (Digest)`);
+}
+if (values.uniview) {
+  const cam = new MockVendorCamera("admin", "Unv-Passw0rd!", "uniview");
+  cam.disks = [{ slot: "sd", label: "SD", sizeMiB: 243712, freeMiB: 37298, state: "Normal" }];
+  const port = await cam.start(base + count + 3);
+  console.log(`Simulated Uniview camera: http://127.0.0.1:${port}  user=admin password=Unv-Passw0rd!  (LAPI, Digest)`);
 }
 console.log("\nThese are SIMULATED devices for demos. Press Ctrl+C to stop.");

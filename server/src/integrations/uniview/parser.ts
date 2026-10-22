@@ -66,8 +66,10 @@ function unwrapLapi(body: string): unknown {
   if (isObject(response)) {
     const code = field(response, "StatusCode");
     if (code !== undefined && Number(code) !== 0) {
-      const msg = str(response, "StatusString") ?? `status code ${String(code)}`;
-      const errorCode = /not ?support|not ?found/i.test(msg) ? "API_UNAVAILABLE"
+      const msg = str(response, "ResponseString") ?? str(response, "StatusString") ?? `status code ${String(code)}`;
+      // e.g. ResponseCode 4 / StatusCode 8: "Not Supported" / "UnSupport" (IPC815SB-ADF14K-I0).
+      const unsupported = /not ?support|unsupport|not ?found/i.test(`${msg} ${str(response, "StatusString") ?? ""}`);
+      const errorCode = unsupported ? "API_UNAVAILABLE"
         : /unauthori[sz]ed|not ?authori[sz]ed|no ?permission|forbidden/i.test(msg) ? "PERMISSION_DENIED"
         : "API_ERROR";
       throw new CameraApiError(errorCode, `Camera reported: ${msg}`);
@@ -85,6 +87,60 @@ export function parseUniviewError(body: string): CameraApiError | undefined {
   } catch (e) {
     return e instanceof CameraApiError && e.code !== "INVALID_RESPONSE" ? e : undefined;
   }
+}
+
+/**
+ * Disk status codes in Storage/Containers/DetailInfos, as in Uniview's NETDEV SDK
+ * (NETDEV_HDD_STATUS_E). 3 is confirmed on an IPC815SB-ADF14K-I0 recording to its SD card.
+ */
+const CONTAINER_STATUS: Record<string, { label: string; health: StorageDeviceStatus["healthStatus"] }> = {
+  "1": { label: "Not formatted", health: "unhealthy" },
+  "2": { label: "Formatted", health: "healthy" },
+  "3": { label: "Recordable", health: "healthy" },
+  "4": { label: "Abnormal", health: "unhealthy" },
+  "5": { label: "Suspended", health: "degraded" },
+  "6": { label: "Formatting", health: "degraded" },
+  "7": { label: "Repairing", health: "degraded" },
+};
+
+/** Device lists in Storage/Containers/DetailInfos and the type each holds. */
+const CONTAINER_LISTS: [string, string][] = [
+  ["SDList", "SD"], ["LocalHDDList", "HDD"], ["eSATAList", "eSATA"], ["NASList", "NAS"], ["IPSANList", "IPSAN"],
+  ["ArrayList", "Array"], ["ExtendCabinet1HDDList", "HDD"], ["ExtendCabinet2HDDList", "HDD"],
+];
+
+/**
+ * Parses GET /LAPI/V1.0/Storage/Containers/DetailInfos (confirmed on IPC815SB-ADF14K-I0):
+ *   { "Response": { "Data": { "SDNum": 1, "SDList": [ { "ID": 1, "RemainCapacity": 37298,
+ *       "TotalCapacity": 243712, "Status": 3, "Property": 0, ... } ], "LocalHDDList": [], ... } } }
+ * Capacities are MiB. Status 0 (not detected) is an empty slot and is skipped.
+ */
+export function parseUniviewContainers(body: string): StorageReading {
+  const data = unwrapLapi(body);
+  if (!isObject(data) || !CONTAINER_LISTS.some(([name]) => field(data, name) !== undefined)) {
+    throw new CameraApiError("INVALID_RESPONSE", "Unexpected JSON response: no storage lists (SDList, LocalHDDList, ...)");
+  }
+  const devices: StorageDeviceStatus[] = [];
+  for (const [name, type] of CONTAINER_LISTS) {
+    const list = field(data, name);
+    if (!Array.isArray(list)) continue;
+    list.filter(isObject).forEach((disk, i) => {
+      const code = str(disk, "Status");
+      if (code === "0") return; // not detected: no card in this slot
+      const known = code === undefined ? undefined : CONTAINER_STATUS[code];
+      const id = str(disk, "ID", "Id") ?? String(i + 1);
+      devices.push({
+        id: `${type.toLowerCase()}-${id}`,
+        name: type === "SD" ? `SD card ${id}` : `${type} ${id}`,
+        type,
+        healthStatus: known?.health ?? "unknown",
+        rawStatus: known ? `${known.label} (${code})` : code === undefined ? undefined : `Status ${code}`,
+        totalBytes: parseByteCount(field(disk, "TotalCapacity"), MIB),
+        freeBytes: parseByteCount(field(disk, "RemainCapacity", "FreeCapacity"), MIB),
+      });
+    });
+  }
+  return aggregate(devices);
 }
 
 export function parseUniviewStorage(body: string): StorageReading {

@@ -16,7 +16,8 @@ import { ONVIF_DEVICE_SERVICE_PATH, ONVIF_RECORDING_SERVICE_PATH, OnvifAdapter }
 import { MIB } from "../../src/integrations/parsing.js";
 import { createRegistry } from "../../src/integrations/registry.js";
 import { CameraApiError, type CameraConfig } from "../../src/integrations/types.js";
-import { UNIVIEW_DEVICE_INFO_PATH, UNIVIEW_RECORDING_PATH, UNIVIEW_STORAGE_PATH, UniviewAdapter } from "../../src/integrations/uniview/adapter.js";
+import { UNIVIEW_DEVICE_INFO_PATH, UNIVIEW_LEGACY_STORAGE_PATH, UNIVIEW_RECORDING_PATH, UNIVIEW_STORAGE_PATH, UniviewAdapter } from "../../src/integrations/uniview/adapter.js";
+import { IPC815SB_CONTAINERS, ipc815sbNotSupported } from "../fixtures/uniview-ipc815sb.js";
 import { readRecording } from "../../src/monitoring/checkService.js";
 import { HostGuard } from "../../src/security/hostGuard.js";
 import { cameraTime, DS2CD2563G2_SEARCH_UTC, DS2CD3563G2_RECORDING_STATUS_404, DS2CD3563G2_SEARCH, DS2CD3563G2_TRACK, SEARCH_NO_MATCHES } from "../fixtures/hikvision-ds2cd3563g2.js";
@@ -151,7 +152,8 @@ describe("UniviewAdapter", () => {
   const lapi = (data: unknown, code = 0, text = "Succeed") =>
     JSON.stringify({ Response: { ResponseURL: "/LAPI", CreatedID: -1, ResponseCode: code, StatusCode: code, StatusString: text, Data: data } });
   const cam = new MockBrandCamera()
-    .route(UNIVIEW_STORAGE_PATH, {
+    .route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: IPC815SB_CONTAINERS })
+    .route(UNIVIEW_LEGACY_STORAGE_PATH, {
       contentType: "application/json",
       body: lapi({ Disks: [{ ID: 1, Name: "sdcard0", Status: "Normal", Type: "Local", TotalCapacity: 128000, UsedCapacity: 64500, FreeCapacity: 63500 }] }),
     })
@@ -161,15 +163,40 @@ describe("UniviewAdapter", () => {
     });
   const ctx = useCamera(cam);
   const adapter = new UniviewAdapter(http);
+  beforeEach(() => {
+    cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: IPC815SB_CONTAINERS });
+  });
 
-  it("reads storage and device info", async () => {
+  it("reads the SD card from Storage/Containers/DetailInfos (real IPC815SB-ADF14K-I0 reply)", async () => {
+    const r = await adapter.getStorageStatus(ctx.config);
+    expect(r).toMatchObject({ totalBytes: 243712 * MIB, freeBytes: 37298 * MIB });
+    expect(r.usedPercentage).toBeCloseTo(84.7, 1);
+    expect(r.devices).toEqual([
+      expect.objectContaining({ id: "sd-1", name: "SD card 1", type: "SD", healthStatus: "healthy", rawStatus: "Recordable (3)" }),
+    ]);
+    expect(cam.requests.filter((q) => q.headers.authorization).map((q) => q.path)).toEqual([UNIVIEW_STORAGE_PATH]);
+  });
+
+  it("skips empty slots and reports card problems", async () => {
+    const body = (status: number) => IPC815SB_CONTAINERS.replace('"Status":\t3', `"Status":\t${status}`);
+    cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: body(0) });
+    expect((await adapter.getStorageStatus(ctx.config)).devices).toEqual([]); // no card
+    cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: body(4) });
+    expect((await adapter.getStorageStatus(ctx.config)).devices[0]).toMatchObject({ healthStatus: "unhealthy", rawStatus: "Abnormal (4)" });
+    cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: body(9) });
+    expect((await adapter.getStorageStatus(ctx.config)).devices[0]).toMatchObject({ healthStatus: "unknown", rawStatus: "Status 9" });
+  });
+
+  it("falls back to Storage/Disks on older firmware, and reads device info", async () => {
+    cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: ipc815sbNotSupported(UNIVIEW_STORAGE_PATH) });
     expect(await adapter.getStorageStatus(ctx.config)).toMatchObject({ totalBytes: 128000 * MIB, freeBytes: 63500 * MIB });
     expect(await adapter.getDeviceInfo(ctx.config)).toMatchObject({ model: "IPC322LB-SF28-A", macAddress: "48:ea:63:00:00:01" });
     expect(cam.requests.at(-1)!.headers.accept).toContain("application/json");
   });
 
-  it("classifies LAPI status codes", async () => {
-    cam.route(UNIVIEW_STORAGE_PATH, { body: lapi(null, 4, "Not Support") });
+  it("classifies LAPI status codes, including the real \"UnSupport\" reply", async () => {
+    cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: ipc815sbNotSupported(UNIVIEW_STORAGE_PATH) });
+    cam.route(UNIVIEW_LEGACY_STORAGE_PATH, { contentType: "application/json", body: ipc815sbNotSupported(UNIVIEW_LEGACY_STORAGE_PATH) });
     expect(await codeOf(adapter.getStorageStatus(ctx.config))).toBe("API_UNAVAILABLE");
     cam.route(UNIVIEW_STORAGE_PATH, { status: 500, body: lapi(null, 1, "Failed") });
     await expect(adapter.getStorageStatus(ctx.config)).rejects.toMatchObject({ code: "API_ERROR", transient: true });
@@ -301,7 +328,7 @@ describe("getRecordingStatus over HTTP", () => {
     cam.routes.delete(DAHUA_RECORDING_PATH);
     const r = await readRecording(new DahuaAdapter(http), ctx.config);
     expect(r).toMatchObject({ state: "unknown", channels: [] });
-    expect(r.detail).toMatch(/could not be read/);
+    expect(r.detail).toMatch(/does not report recording status/);
     const unsupported = { meta: {} } as unknown as Parameters<typeof readRecording>[0];
     expect((await readRecording(unsupported, ctx.config)).detail).toMatch(/not available for this brand/);
   });

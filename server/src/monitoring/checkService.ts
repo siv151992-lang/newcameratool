@@ -190,6 +190,10 @@ export async function readRecording(adapter: CameraBrandAdapter, cfg: CameraConf
     return await adapter.getRecordingStatus(cfg);
   } catch (err) {
     const msg = err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : "unexpected error";
+    // A missing endpoint is how the model works, not a fault.
+    if (err instanceof CameraApiError && err.code === "API_UNAVAILABLE") {
+      return { state: "unknown", channels: [], detail: `This camera does not report recording status (${msg})` };
+    }
     return { state: "unknown", channels: [], detail: `Recording status could not be read: ${msg}` };
   }
 }

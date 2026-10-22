@@ -146,7 +146,7 @@ describe("storage checks", () => {
     expect(outcome.result?.ok).toBe(true);
     const s = await status(id);
     expect(s.recording_state).toBe("unknown");
-    expect(s.recording_detail).toMatch(/could not be read/);
+    expect(s.recording_detail).toMatch(/could not be read|does not report recording status/);
 
     await updateMonitoringSettings({ recordingAlertsEnabled: false }, null);
     cam.recording = "idle";
