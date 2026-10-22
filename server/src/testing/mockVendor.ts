@@ -46,7 +46,7 @@ export class MockVendorCamera {
     return md5(`${ha1}:${p.nonce}:${p.nc}:${p.cnonce}:${p.qop}:${ha2}`) === p.response;
   }
 
-  private handle(req: http.IncomingMessage, res: http.ServerResponse) {
+  private handle(req: http.IncomingMessage, res: http.ServerResponse, requestBody = "") {
     const url = new URL(req.url ?? "/", "http://camera");
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
     this.requests.push({ path: url.pathname + url.search, authorized });
@@ -69,6 +69,29 @@ export class MockVendorCamera {
       const d = this.disks[0]!;
       if (url.pathname === "/LAPI/V1.0/Storage/Containers/DetailInfos") {
         return res.end(reply(0, { LocalHDDNum: 0, LocalHDDList: [], SDNum: 1, SDList: [{ ID: 1, RemainCapacity: Number(d.freeMiB), TotalCapacity: Number(d.sizeMiB), Manufacturer: "", Status: 3, Property: 0, FormatProgress: 0, GroupID: 0 }], NASNum: 0, NASList: [] }));
+      }
+      if (url.pathname.startsWith("/onvif/")) {
+        // ONVIF Profile G: recording jobs and a recording summary (oldest recording 21 days ago).
+        res.setHeader("Content-Type", "application/soap+xml");
+        const env = (inner: string) => `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:trc="http://www.onvif.org/ver10/recording/wsdl" xmlns:tse="http://www.onvif.org/ver10/search/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><s:Body>${inner}</s:Body></s:Envelope>`;
+        const body = requestBody;
+        if (body.includes("GetServices")) {
+          return res.end(env(`<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/recording/wsdl</tds:Namespace><tds:XAddr>http://camera/onvif/recording_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/search/wsdl</tds:Namespace><tds:XAddr>http://camera/onvif/search_service</tds:XAddr></tds:Service></tds:GetServicesResponse>`));
+        }
+        if (body.includes("GetSystemDateAndTime")) {
+          const d = new Date();
+          const at = (x: Date) => `<tt:Date><tt:Year>${x.getUTCFullYear()}</tt:Year><tt:Month>${x.getUTCMonth() + 1}</tt:Month><tt:Day>${x.getUTCDate()}</tt:Day></tt:Date><tt:Time><tt:Hour>${x.getUTCHours()}</tt:Hour><tt:Minute>${x.getUTCMinutes()}</tt:Minute><tt:Second>${x.getUTCSeconds()}</tt:Second></tt:Time>`;
+          return res.end(env(`<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:UTCDateTime>${at(d)}</tt:UTCDateTime><tt:LocalDateTime>${at(new Date(d.getTime() + 330 * 60_000))}</tt:LocalDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>`));
+        }
+        if (body.includes("GetRecordingJobs")) {
+          return res.end(env(`<trc:GetRecordingJobsResponse><trc:JobItem><trc:JobToken>RecordJob_1</trc:JobToken><trc:JobConfiguration><tt:RecordingToken>Recording_1</tt:RecordingToken><tt:Mode>Active</tt:Mode></trc:JobConfiguration></trc:JobItem></trc:GetRecordingJobsResponse>`));
+        }
+        if (body.includes("GetRecordingSummary")) {
+          const from = new Date(Date.now() - 21 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+          return res.end(env(`<tse:GetRecordingSummaryResponse><tse:Summary><tt:DataFrom>${from}</tt:DataFrom><tt:DataUntil>${new Date().toISOString().replace(/\.\d{3}Z$/, "Z")}</tt:DataUntil><tt:NumberRecordings>1</tt:NumberRecordings></tse:Summary></tse:GetRecordingSummaryResponse>`));
+        }
+        res.statusCode = 400;
+        return res.end(env(`<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>ter:ActionNotSupported</s:Value></s:Subcode></s:Code><s:Reason><s:Text>Optional Action Not Implemented</s:Text></s:Reason></s:Fault>`));
       }
       if (url.pathname === "/LAPI/V1.0/System/DeviceInfo") {
         return res.end(reply(0, { ID: 0, DeviceName: "SIMULATED-UNIVIEW", DeviceModel: "SIMULATED-UNIVIEW", SerialNumber: "UNV0001", FirmwareVersion: "GIPC-B6203.15.6" }));
@@ -125,7 +148,11 @@ export class MockVendorCamera {
   }
 
   async start(port = 0, host = "127.0.0.1"): Promise<number> {
-    this.server = http.createServer((req, res) => this.handle(req, res));
+    this.server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => this.handle(req, res, Buffer.concat(chunks).toString("utf8")));
+    });
     await new Promise<void>((resolve) => this.server!.listen(port, host, resolve));
     return (this.server.address() as AddressInfo).port;
   }

@@ -32,7 +32,7 @@ const parser = new XMLParser({
   removeNSPrefix: true,
   parseTagValue: false, // keep raw strings; numbers are validated explicitly
   trimValues: true,
-  isArray: (name) => name === "StorageDevice" || name === "JobItem",
+  isArray: (name) => name === "StorageDevice" || name === "JobItem" || name === "Service",
 });
 
 type XmlNode = Record<string, unknown>;
@@ -178,6 +178,54 @@ export function parseOnvifSystemTime(xml: string): number | undefined {
   const [y, mo, d, h, mi, sec] = parts as number[];
   const ms = Date.UTC(y!, mo! - 1, d!, h!, mi!, sec!);
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** The camera's UTC offset in minutes, from LocalDateTime − UTCDateTime in GetSystemDateAndTime. */
+export function parseOnvifLocalOffset(xml: string): number | undefined {
+  const sdt = child(soapResponse(xml, "GetSystemDateAndTimeResponse"), "SystemDateAndTime");
+  const at = (node: XmlNode | undefined) => {
+    const d = child(node, "Date");
+    const t = child(node, "Time");
+    const parts = [text(d, "Year"), text(d, "Month"), text(d, "Day"), text(t, "Hour"), text(t, "Minute"), text(t, "Second")].map(Number);
+    return parts.some((p) => !Number.isInteger(p)) ? undefined : Date.UTC(parts[0]!, parts[1]! - 1, parts[2]!, parts[3]!, parts[4]!, parts[5]!);
+  };
+  const utc = at(child(sdt, "UTCDateTime"));
+  const local = at(child(sdt, "LocalDateTime"));
+  return utc === undefined || local === undefined ? undefined : Math.round((local - utc) / 60_000);
+}
+
+/** GetServices → the path of each service by namespace (XAddr may name another host; only the path is used). */
+export function parseOnvifServices(xml: string): Map<string, string> {
+  const response = soapResponse(xml, "GetServicesResponse");
+  const key = Object.keys(response).find((k) => k.toLowerCase() === "service");
+  const out = new Map<string, string>();
+  for (const svc of key === undefined ? [] : (response[key] as unknown[]).filter(isNode)) {
+    const ns = text(svc, "Namespace");
+    const addr = text(svc, "XAddr");
+    if (!ns || !addr) continue;
+    try {
+      out.set(ns, new URL(addr).pathname);
+    } catch {
+      if (addr.startsWith("/")) out.set(ns, addr);
+    }
+  }
+  return out;
+}
+
+/**
+ * Parses a tse:GetRecordingSummaryResponse:
+ *   <Summary><DataFrom>2026-09-20T08:14:00Z</DataFrom><DataUntil>…</DataUntil><NumberRecordings>1</NumberRecordings></Summary>
+ * DataFrom/DataUntil are UTC (xs:dateTime); absent or unparseable values are left out.
+ */
+export function parseOnvifRecordingSummary(xml: string): { from?: number; until?: number; recordings?: number } {
+  const summary = child(soapResponse(xml, "GetRecordingSummaryResponse"), "Summary");
+  const time = (k: string) => {
+    const v = text(summary, k);
+    const ms = v ? Date.parse(/Z|[+-]\d{2}:?\d{2}$/.test(v) ? v : `${v}Z`) : NaN;
+    return Number.isFinite(ms) ? ms : undefined;
+  };
+  const n = Number(text(summary, "NumberRecordings"));
+  return { from: time("DataFrom"), until: time("DataUntil"), recordings: Number.isInteger(n) ? n : undefined };
 }
 
 export const mapOnvifRecording = recordingMapper({

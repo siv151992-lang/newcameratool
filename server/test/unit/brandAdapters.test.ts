@@ -350,9 +350,60 @@ describe("OnvifAdapter recording jobs", () => {
 
   it("posts GetRecordingJobs to the recording service", async () => {
     expect((await new OnvifAdapter(http).getRecordingStatus(ctx.config)).state).toBe("recording");
-    const req = cam.requests[0]!;
-    expect(req.path).toBe(ONVIF_RECORDING_SERVICE_PATH);
+    const req = cam.requests.find((q) => q.path === ONVIF_RECORDING_SERVICE_PATH)!;
     expect(req.headers["content-type"]).toContain('action="http://www.onvif.org/ver10/recording/wsdl/GetRecordingJobs"');
+  });
+});
+
+describe("OnvifAdapter service discovery and recording summary", () => {
+  const env = (inner: string) => `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:tse="http://www.onvif.org/ver10/search/wsdl" xmlns:trc="http://www.onvif.org/ver10/recording/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema" xmlns:ter="http://www.onvif.org/ver10/error"><s:Body>${inner}</s:Body></s:Envelope>`;
+  const at = (ms: number) => { const d = new Date(ms); return `<tt:Date><tt:Year>${d.getUTCFullYear()}</tt:Year><tt:Month>${d.getUTCMonth() + 1}</tt:Month><tt:Day>${d.getUTCDate()}</tt:Day></tt:Date><tt:Time><tt:Hour>${d.getUTCHours()}</tt:Hour><tt:Minute>${d.getUTCMinutes()}</tt:Minute><tt:Second>${d.getUTCSeconds()}</tt:Second></tt:Time>`; };
+  const NOW = Date.UTC(2026, 9, 22, 8, 0, 0);
+  let jobs = "Active";
+  const cam = new MockBrandCamera();
+  cam.auth = "ws-security";
+  const soap = (body: string) => ({ contentType: "application/soap+xml", body: env(body) });
+  // A token made with the wrong clock is refused, as real cameras do; the adapter retries with the camera's clock.
+  const denied = { status: 400, ...soap(`<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>ter:NotAuthorized</s:Value></s:Subcode></s:Code><s:Reason><s:Text xml:lang="en">Sender not Authorized</s:Text></s:Reason></s:Fault>`) };
+  cam.route(ONVIF_DEVICE_SERVICE_PATH, (req: MockRequest) => {
+    if (req.body.includes("GetSystemDateAndTime")) {
+      // Camera on UTC+05:30
+      return soap(`<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:UTCDateTime>${at(NOW)}</tt:UTCDateTime><tt:LocalDateTime>${at(NOW + 330 * 60_000)}</tt:LocalDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>`);
+    }
+    if (!cam.verifyToken(req.body, NOW)) return denied;
+    return soap(`<tds:GetServicesResponse>` +
+      `<tds:Service><tds:Namespace>http://www.onvif.org/ver10/recording/wsdl</tds:Namespace><tds:XAddr>http://10.10.24.160/onvif/Recording</tds:XAddr></tds:Service>` +
+      `<tds:Service><tds:Namespace>http://www.onvif.org/ver10/search/wsdl</tds:Namespace><tds:XAddr>http://10.10.24.160/onvif/Search</tds:XAddr></tds:Service>` +
+      `</tds:GetServicesResponse>`);
+  });
+  cam.route("/onvif/Recording", (req: MockRequest) =>
+    cam.verifyToken(req.body, NOW)
+      ? soap(`<trc:GetRecordingJobsResponse><trc:JobItem><trc:JobToken>job1</trc:JobToken><trc:JobConfiguration><tt:RecordingToken>rec1</tt:RecordingToken><tt:Mode>${jobs}</tt:Mode></trc:JobConfiguration></trc:JobItem></trc:GetRecordingJobsResponse>`)
+      : denied,
+  );
+  cam.route("/onvif/Search", (req: MockRequest) =>
+    cam.verifyToken(req.body, NOW)
+      ? soap(`<tse:GetRecordingSummaryResponse><tse:Summary><tt:DataFrom>2026-09-22T02:30:00Z</tt:DataFrom><tt:DataUntil>2026-10-22T07:59:00Z</tt:DataUntil><tt:NumberRecordings>1</tt:NumberRecordings></tse:Summary></tse:GetRecordingSummaryResponse>`)
+      : denied,
+  );
+  const ctx = useCamera(cam);
+
+  it("uses the service paths the camera lists, and reads days of recordings in the camera's local time", async () => {
+    const onvif = new OnvifAdapter(http);
+    // Our clock differs from the camera's: the token is retried with the camera's clock.
+    expect((await onvif.getRecordingStatus(ctx.config)).state).toBe("recording");
+    expect(await onvif.getRecordingRange(ctx.config)).toEqual({ oldest: "2026-09-22T08:00:00", days: 30.23 });
+    expect(cam.requests.some((q) => q.path === "/onvif/Search")).toBe(true);
+  });
+
+  it("serves Uniview recording over ONVIF when LAPI does not report it", async () => {
+    cam.route(UNIVIEW_RECORDING_PATH, { contentType: "application/json", body: ipc815sbNotSupported(UNIVIEW_RECORDING_PATH) });
+    jobs = "Idle";
+    const r = await new UniviewAdapter(http).getRecordingStatus(ctx.config);
+    expect(r.state).toBe("idle");
+    expect(r.detail).toContain("read over ONVIF");
+    expect((await new UniviewAdapter(http).getRecordingRange(ctx.config))?.days).toBe(30.23);
+    jobs = "Active";
   });
 });
 
