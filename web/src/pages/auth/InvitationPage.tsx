@@ -10,7 +10,6 @@ import { ROLE_LABELS, useAuth } from "../../hooks/auth";
 import { relativeTime } from "../../lib/format";
 import { AuthLayout, BackToSignIn } from "./AuthLayout";
 import { SignInForm } from "./LoginPage";
-import { ProviderButtons } from "./ProviderButtons";
 import { SignupForm } from "./SignupPage";
 
 const CLOSED: Record<Exclude<InvitationPreview["status"], "pending">, string> = {
@@ -119,7 +118,6 @@ export function InvitationPage() {
       }
     >
       {summary}
-      <ProviderButtons invitationToken={token} />
       {current === "signin" ? (
         <>
           <p className="mb-4 text-sm text-ink-secondary">Sign in with the account for {inv.email} to accept.</p>

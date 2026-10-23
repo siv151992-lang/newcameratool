@@ -1,5 +1,3 @@
-import { useSignInOptions } from "./AuthLayout";
-
 export type ProviderKey = "google" | "zoho";
 export const PROVIDER_LABELS: Record<ProviderKey, string> = { google: "Google", zoho: "Zoho" };
 
@@ -28,33 +26,3 @@ export function ZohoMark({ className = "h-4 w-4" }: { className?: string }) {
 }
 
 export const providerMark = (p: ProviderKey, className?: string) => (p === "google" ? <GoogleMark className={className} /> : <ZohoMark className={className} />);
-
-/**
- * "Continue with Google / Zoho" for the providers set up on the server, then an "or" divider before
- * the form. Each is a plain link: the server sends the browser on to the provider.
- */
-export function ProviderButtons({ invitationToken, verb = "Continue" }: { invitationToken?: string; verb?: string }) {
-  const options = useSignInOptions();
-  const providers = options.data?.providers ?? [];
-  if (!providers.length) return null;
-  const query = invitationToken ? `?invitation=${encodeURIComponent(invitationToken)}` : "";
-  return (
-    <div className="mb-5 space-y-2.5">
-      {providers.map((p) => (
-        <a
-          key={p}
-          href={`/api/auth/oauth/${p}/start${query}`}
-          className="flex h-10 w-full items-center justify-center gap-2.5 rounded-md border border-line-strong bg-raised px-3.5 text-sm font-medium text-ink transition hover:bg-line/40"
-        >
-          {providerMark(p)}
-          {verb} with {PROVIDER_LABELS[p]}
-        </a>
-      ))}
-      <div className="flex items-center gap-3 pt-2 text-xs text-ink-muted">
-        <span className="h-px flex-1 bg-line" />
-        or
-        <span className="h-px flex-1 bg-line" />
-      </div>
-    </div>
-  );
-}
