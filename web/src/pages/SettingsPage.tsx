@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
@@ -13,6 +13,7 @@ import { PALETTES, type ThemeMode, useTheme } from "../hooks/theme";
 import { ZohoBand } from "../components/ZohoBand";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
+import { EmailSettingsTab } from "./EmailSettingsTab";
 import { InvitationsCard, useInvitations } from "./InvitationsPanel";
 import { OrganizationsTab } from "./OrganizationsTab";
 
@@ -37,6 +38,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Members", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
+    can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
     { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, and your password.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
@@ -510,7 +512,7 @@ function NotificationsTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-secondary">
-        Alerts always appear in the dashboard. Email notifications are optional and use the SMTP server configured in the server environment.
+        Alerts always appear in the dashboard. Email notifications are optional and use the mail server in Settings → Email & sign-in (set by the system administrator).
         A cooldown per camera and alert type prevents repeated emails; escalations to critical are always sent.
       </p>
       <Card

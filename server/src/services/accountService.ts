@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { validateNewPassword } from "../auth/sessions.js";
 import { config } from "../config.js";
+import { getEmailSettings } from "./emailSettings.js";
 import { pool, withTransaction, type Queryable } from "../db/pool.js";
 import { HttpError } from "../lib/errors.js";
 import { mailConfigured, publicLink, trySendMail } from "../notifications/mailer.js";
@@ -40,11 +41,16 @@ async function hasUsers(db: Queryable = pool) {
 /** What the sign-in page offers. */
 export async function signInOptions() {
   const setup = !(await hasUsers());
+  const mail = await mailConfigured();
   return {
     /** No account exists yet: the first one becomes the system administrator. */
     needsSetup: setup,
-    signupEnabled: setup || (config.ALLOW_SIGNUP && mailConfigured()),
-    passwordResetEnabled: mailConfigured(),
+    signupEnabled: setup || ((await getEmailSettings()).allowSignup && mail),
+    passwordResetEnabled: mail,
+    // So pages can say how long a link lasts.
+    invitationExpiryHours: (await getEmailSettings()).invitationExpiryHours,
+    emailVerificationExpiryHours: (await getEmailSettings()).emailVerificationExpiryHours,
+    passwordResetExpiryMinutes: (await getEmailSettings()).passwordResetExpiryMinutes,
   };
 }
 
@@ -52,7 +58,8 @@ async function issueToken(userId: string, email: string, purpose: TokenPurpose, 
   const { token, hash } = newLinkToken();
   // A new link replaces earlier unused ones for the same purpose.
   await db.query("UPDATE email_tokens SET used_at = now() WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL", [userId, purpose]);
-  const minutes = purpose === "verify_email" ? config.EMAIL_VERIFICATION_EXPIRY_HOURS * 60 : config.PASSWORD_RESET_EXPIRY_MINUTES;
+  const s = await getEmailSettings();
+  const minutes = purpose === "verify_email" ? s.emailVerificationExpiryHours * 60 : s.passwordResetExpiryMinutes;
   await db.query(
     "INSERT INTO email_tokens (user_id, purpose, email, token_hash, expires_at) VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5))",
     [userId, purpose, email, hash, minutes],
@@ -62,15 +69,16 @@ async function issueToken(userId: string, email: string, purpose: TokenPurpose, 
 
 async function sendVerification(userId: string, email: string) {
   const token = await issueToken(userId, email, "verify_email");
+  const s = await getEmailSettings();
   await trySendMail({
     to: email,
     subject: "Confirm your email address for Zoho IBMS CCTV Monitoring",
     text: [
       "Confirm your email address to finish creating your account:",
       "",
-      publicLink(`/verify-email?token=${token}`)!,
+      (await publicLink(`/verify-email?token=${token}`))!,
       "",
-      `The link expires in ${config.EMAIL_VERIFICATION_EXPIRY_HOURS} hours. If you did not create an account, ignore this email.`,
+      `The link expires in ${s.emailVerificationExpiryHours} hours. If you did not create an account, ignore this email.`,
     ].join("\n"),
   });
 }
@@ -107,8 +115,8 @@ export async function signup(input: z.infer<typeof signupSchema>, ip?: string | 
     });
   }
 
-  if (!config.ALLOW_SIGNUP) throw new HttpError(403, "SIGNUP_DISABLED", "Creating accounts is turned off. Ask an organization administrator for an invitation.");
-  if (!mailConfigured()) throw new HttpError(503, "EMAIL_UNAVAILABLE", "Creating accounts needs email, which is not configured on this server. Ask an administrator for an invitation.");
+  if (!(await getEmailSettings()).allowSignup) throw new HttpError(403, "SIGNUP_DISABLED", "Creating accounts is turned off. Ask an organization administrator for an invitation.");
+  if (!(await mailConfigured())) throw new HttpError(503, "EMAIL_UNAVAILABLE", "Creating accounts needs email, which is not configured on this server. Ask an administrator for an invitation.");
 
   const existing = await pool.query<{ id: string; pending_verification: boolean }>(
     "SELECT id, pending_verification FROM users WHERE lower(email) = $1",
@@ -125,8 +133,8 @@ export async function signup(input: z.infer<typeof signupSchema>, ip?: string | 
         text: [
           "An account already exists for this email address, so no new account was created.",
           "",
-          `Sign in: ${publicLink("/")}`,
-          `Forgot your password? Reset it: ${publicLink("/forgot-password")}`,
+          `Sign in: ${await publicLink("/")}`,
+          `Forgot your password? Reset it: ${await publicLink("/forgot-password")}`,
           "",
           "If this was not you, you can ignore this email.",
         ].join("\n"),
@@ -187,12 +195,12 @@ export async function verifyEmail(token: string, ip?: string | null) {
 /** Sends a new confirmation link if an unconfirmed account uses the address. Same answer either way. */
 export async function resendVerification(email: string) {
   const { rows } = await pool.query<{ id: string }>("SELECT id FROM users WHERE lower(email) = $1 AND pending_verification AND is_active", [email]);
-  if (rows[0] && mailConfigured()) await sendVerification(rows[0].id, email);
+  if (rows[0] && (await mailConfigured())) await sendVerification(rows[0].id, email);
 }
 
 /** Emails a password reset link if an active account uses the address. Same answer either way. */
 export async function requestPasswordReset(email: string, ip?: string | null) {
-  if (!mailConfigured()) throw new HttpError(503, "EMAIL_UNAVAILABLE", "Password reset needs email, which is not configured on this server. Ask an administrator.");
+  if (!(await mailConfigured())) throw new HttpError(503, "EMAIL_UNAVAILABLE", "Password reset needs email, which is not configured on this server. Ask an administrator.");
   const { rows } = await pool.query<{ id: string; username: string }>("SELECT id, username FROM users WHERE lower(email) = $1 AND is_active", [email]);
   if (!rows[0]) return;
   const token = await issueToken(rows[0].id, email, "reset_password");
@@ -202,9 +210,9 @@ export async function requestPasswordReset(email: string, ip?: string | null) {
     text: [
       `Someone asked to reset the password for ${rows[0].username}. To choose a new password, open:`,
       "",
-      publicLink(`/reset-password?token=${token}`)!,
+      (await publicLink(`/reset-password?token=${token}`))!,
       "",
-      `The link works once and expires in ${config.PASSWORD_RESET_EXPIRY_MINUTES} minutes. If you did not ask for this, ignore this email; your password stays the same.`,
+      `The link works once and expires in ${(await getEmailSettings()).passwordResetExpiryMinutes} minutes. If you did not ask for this, ignore this email; your password stays the same.`,
     ].join("\n"),
   });
   await audit({ actor: null, ip, action: "auth.password_reset_requested", entityType: "user", entityId: rows[0].id, organizationId: null });

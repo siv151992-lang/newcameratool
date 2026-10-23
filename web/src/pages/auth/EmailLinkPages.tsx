@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import { Button, ErrorMessage, Field, Input, Spinner } from "../../components/ui";
 import { useAuth } from "../../hooks/auth";
-import { AuthLayout, authLink, BackToSignIn } from "./AuthLayout";
+import { AuthLayout, authLink, BackToSignIn, useSignInOptions } from "./AuthLayout";
 
 /** /verify-email?token=… — confirms the address from the emailed link and signs the person in. */
 export function VerifyEmailPage() {
@@ -32,6 +32,7 @@ export function VerifyEmailPage() {
 
 /** /forgot-password — emails a reset link (the answer is the same whether or not the address has an account). */
 export function ForgotPasswordPage() {
+  const options = useSignInOptions();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -55,7 +56,7 @@ export function ForgotPasswordPage() {
     <AuthLayout title="Reset your password" footer={<BackToSignIn />}>
       {sent ? (
         <p className="text-sm">
-          If an account uses <strong>{email}</strong>, we sent it a link to choose a new password. The link works once and expires in an hour.
+          If an account uses <strong>{email}</strong>, we sent it a link to choose a new password. The link works once and expires in {options.data?.passwordResetExpiryMinutes ?? 60} minutes.
         </p>
       ) : (
         <form onSubmit={submit} className="space-y-4">

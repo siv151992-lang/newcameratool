@@ -8,6 +8,7 @@ import { Button, Card, ConfirmDialog, Dialog, EmptyState, Field, Input, Select, 
 import { useToast } from "../components/toast";
 import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { absoluteTime, relativeTime } from "../lib/format";
+import { useSignInOptions } from "./auth/AuthLayout";
 
 const STATUS: Record<Invitation["status"], { label: string; tone: string }> = {
   pending: { label: "Waiting", tone: "bg-accent-soft text-accent-ink" },
@@ -31,6 +32,7 @@ export function useInvitations() {
   const { user } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
+  const options = useSignInOptions();
   const [inviting, setInviting] = useState<InviteState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ["invitations"] });
@@ -85,7 +87,7 @@ export function useInvitations() {
       ) : (
         <div className="space-y-3">
           <p className="text-ink-secondary">
-            They get an email with a link to join. They become a member only when they accept, signed in with this address (or a new account for it). The link expires in 72 hours.
+            They get an email with a link to join. They become a member only when they accept, signed in with this address (or a new account for it). The link expires in {options.data?.invitationExpiryHours ?? 72} hours.
           </p>
           <Field label="Email address" required error={error ?? undefined}>
             {(id, d) => <Input id={id} aria-describedby={d} type="email" autoComplete="off" autoFocus value={inviting.email} invalid={!!error} onChange={(e) => setInviting({ ...inviting, email: e.target.value })} />}

@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { config } from "../config.js";
 import { pool, withTransaction, type Queryable } from "../db/pool.js";
 import { HttpError, notFound } from "../lib/errors.js";
 import { publicLink, trySendMail } from "../notifications/mailer.js";
+import { getEmailSettings } from "./emailSettings.js";
 import { hashLinkToken, isLinkToken, newLinkToken } from "../security/tokens.js";
 import { type Actor, audit } from "./auditService.js";
 import { addMember, ROLES, type Role } from "./organizationService.js";
@@ -56,7 +56,7 @@ export async function listInvitations(orgId: string) {
 
 async function deliver(orgId: string, email: string, role: Role, token: string, inviter: string) {
   const { rows } = await pool.query<{ name: string }>("SELECT name FROM organizations WHERE id = $1", [orgId]);
-  const link = publicLink(invitationPath(token));
+  const link = await publicLink(invitationPath(token));
   if (!link) return { sent: false, error: "PUBLIC_URL is not set on the server, so the link could not be emailed" };
   const roleName = role === "admin" ? "Org Admin" : role === "operator" ? "Operator" : "Viewer";
   return trySendMail({
@@ -67,7 +67,7 @@ async function deliver(orgId: string, email: string, role: Role, token: string, 
       "",
       `Accept the invitation: ${link}`,
       "",
-      `Sign in, or create an account, with this email address (${email}). The link works once and expires in ${config.INVITATION_EXPIRY_HOURS} hours.`,
+      `Sign in, or create an account, with this email address (${email}). The link works once and expires in ${(await getEmailSettings()).invitationExpiryHours} hours.`,
       "If you were not expecting this, ignore this email.",
     ].join("\n"),
   });
@@ -82,6 +82,7 @@ export async function invite(orgId: string, input: z.infer<typeof inviteSchema>,
   if (member.rowCount) throw new HttpError(409, "ALREADY_MEMBER", `${input.email} is already a member of this organization`);
 
   const { token, hash } = newLinkToken();
+  const expiryHours = (await getEmailSettings()).invitationExpiryHours;
   const { id, outcome } = await withTransaction(async (db) => {
     const open = await db.query<{ id: string }>(
       "SELECT id FROM invitations WHERE organization_id = $1 AND email = $2 AND accepted_at IS NULL AND revoked_at IS NULL FOR UPDATE",
@@ -95,14 +96,14 @@ export async function invite(orgId: string, input: z.infer<typeof inviteSchema>,
       await db.query(
         `UPDATE invitations SET token_hash = $2, role = $3, invited_by = $4, sent_at = now(), send_count = send_count + 1,
                 expires_at = now() + make_interval(hours => $5) WHERE id = $1`,
-        [id, hash, input.role, actor.id, config.INVITATION_EXPIRY_HOURS],
+        [id, hash, input.role, actor.id, expiryHours],
       );
     } else {
       outcome = "created";
       id = (await db.query<{ id: string }>(
         `INSERT INTO invitations (organization_id, email, role, token_hash, invited_by, expires_at)
          VALUES ($1, $2, $3, $4, $5, now() + make_interval(hours => $6)) RETURNING id`,
-        [orgId, input.email, input.role, hash, actor.id, config.INVITATION_EXPIRY_HOURS],
+        [orgId, input.email, input.role, hash, actor.id, expiryHours],
       )).rows[0]!.id;
     }
     await audit({ actor, ip, action: outcome === "created" ? "invitation.created" : "invitation.resent", entityType: "invitation", entityId: id, details: { email: input.email, role: input.role } }, db);

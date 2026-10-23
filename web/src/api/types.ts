@@ -75,6 +75,9 @@ export interface SignInOptions {
   needsSetup: boolean;
   signupEnabled: boolean;
   passwordResetEnabled: boolean;
+  invitationExpiryHours: number;
+  emailVerificationExpiryHours: number;
+  passwordResetExpiryMinutes: number;
 }
 
 export interface Organization {
@@ -264,6 +267,23 @@ export interface Brand {
   /** Which credentials cameras of this brand need: username + password, one API key/token, or none. */
   credentials?: "user_password" | "secret" | "none";
   defaultProtocol?: "http" | "https";
+}
+
+/** Settings → Email & sign-in (system administrator). The SMTP password is never returned. */
+export interface EmailSettings {
+  smtpHost: string | null;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string | null;
+  smtpPasswordSet: boolean;
+  smtpFrom: string;
+  publicUrl: string | null;
+  allowSignup: boolean;
+  invitationExpiryHours: number;
+  emailVerificationExpiryHours: number;
+  passwordResetExpiryMinutes: number;
+  /** Values still taken from the server's environment variables (nothing saved here yet). */
+  fromEnvironment: string[];
 }
 
 export interface NetworkSettings {

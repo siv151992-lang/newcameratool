@@ -26,6 +26,7 @@ function client() {
     agent,
     get: (url: string) => agent.get(url),
     post: (url: string, body: object = {}) => agent.post(url).set("X-CSRF-Token", csrf).send(body).then(remember),
+    patch: (url: string, body: object) => agent.patch(url).set("X-CSRF-Token", csrf).send(body),
     login: (username: string, password = PASSWORD) => agent.post("/api/auth/login").send({ username, password }).then(remember),
   };
 }
@@ -238,5 +239,47 @@ describe("password reset", () => {
     expect((await client().post("/api/auth/reset-password", { token, password: "Another-New-Pass-9" })).body.error.code).toBe("LINK_INVALID");
     await old.get("/api/auth/me").expect(401);
     expect((await client().login("alice", "A-Whole-New-Pass-9")).status).toBe(200);
+  });
+});
+
+describe("email and sign-in settings", () => {
+  it("are changed only by the system administrator, keep the password secret, and apply at once", async () => {
+    await createTestUser("admin", "alice");
+    const alice = await signedIn("alice");
+    expect((await alice.get("/api/settings/email")).status).toBe(403);
+    expect((await alice.post("/api/settings/email/test", { to: "x@example.com" })).status).toBe(403);
+
+    await pool.query("UPDATE users SET is_system_admin = true WHERE username = 'alice'");
+    const bad = await alice.patch("/api/settings/email", { publicUrl: "ftp://x" });
+    expect(bad.status).toBe(400);
+
+    const saved = await alice.patch("/api/settings/email", {
+      smtpHost: "smtp.zoho.com", smtpPort: 465, smtpSecure: true, smtpUser: "alerts@example.com", smtpPassword: "Mailbox-Secret-1",
+      smtpFrom: "alerts@example.com", publicUrl: "https://cctv.example.com/", allowSignup: false, invitationExpiryHours: 24,
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({ smtpHost: "smtp.zoho.com", smtpPasswordSet: true, publicUrl: "https://cctv.example.com", allowSignup: false });
+    expect(JSON.stringify(saved.body)).not.toContain("Mailbox-Secret-1");
+    const stored = (await pool.query("SELECT value::text AS v FROM app_settings WHERE key = 'email'")).rows[0].v as string;
+    expect(stored).not.toContain("Mailbox-Secret-1");
+
+    // Sign-up is off; invitation links use the saved address and expiry.
+    expect((await client().get("/api/auth/options")).body).toMatchObject({ signupEnabled: false, invitationExpiryHours: 24 });
+    expect((await client().post("/api/auth/signup", account())).body.error.code).toBe("SIGNUP_DISABLED");
+    await alice.post("/api/invitations", { email: "ravi@example.com", role: "viewer" });
+    expect(lastMailTo("ravi@example.com")!.text).toMatch(/https:\/\/cctv\.example\.com\/invite\/[\w-]{43}[\s\S]*expires in 24 hours/);
+
+    // A blank password keeps the saved one; an empty string removes it.
+    await alice.patch("/api/settings/email", { smtpUser: "other@example.com" });
+    expect((await alice.get("/api/settings/email")).body.smtpPasswordSet).toBe(true);
+    await alice.patch("/api/settings/email", { smtpPassword: "" });
+    expect((await alice.get("/api/settings/email")).body.smtpPasswordSet).toBe(false);
+
+    // A test email reports the mail server's answer.
+    const test = await alice.post("/api/settings/email/test", { to: "alice@example.com", settings: { smtpHost: "127.0.0.1", smtpPort: 1, smtpSecure: false } });
+    expect(test.body).toMatchObject({ ok: false, message: expect.stringMatching(/ECONNREFUSED|connect/i) });
+    const audit = (await pool.query("SELECT details FROM audit_logs WHERE action = 'settings.email_updated' ORDER BY id")).rows;
+    expect(audit[0].details.fields).toContain("smtpPassword (changed)");
+    expect(JSON.stringify(audit)).not.toContain("Mailbox-Secret-1");
   });
 });

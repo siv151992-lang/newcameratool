@@ -1,11 +1,11 @@
-import { config } from "../config.js";
+import { getEmailSettings } from "../services/emailSettings.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../lib/logger.js";
 import { SEVERITY_RANK } from "../monitoring/evaluate.js";
 import { EmailDriver } from "./emailDriver.js";
 import type { NotificationChannel, NotificationDriver, NotificationEvent } from "./types.js";
 
-export function formatMessage(e: NotificationEvent) {
+export function formatMessage(e: NotificationEvent, publicUrl: string | null = null) {
   const prefix = e.kind === "resolved" ? "RESOLVED" : e.severity.toUpperCase();
   const subject = `[CCTV ${prefix}] ${e.title} – ${e.cameraName} (${e.cameraHost})`;
   const lines = [
@@ -15,7 +15,7 @@ export function formatMessage(e: NotificationEvent) {
     `Alert type: ${e.type}`,
     `Severity: ${e.severity}`,
   ];
-  if (config.PUBLIC_URL) lines.push("", `Details: ${config.PUBLIC_URL.replace(/\/$/, "")}/cameras/${e.cameraId}`);
+  if (publicUrl) lines.push("", `Details: ${publicUrl}/cameras/${e.cameraId}`);
   return { subject, text: lines.join("\n") };
 }
 
@@ -90,7 +90,7 @@ export class Notifier {
       return;
     }
     try {
-      await driver.send(channel, formatMessage(event));
+      await driver.send(channel, formatMessage(event, (await getEmailSettings()).publicUrl));
       await this.record(channel, event, "sent");
     } catch (err) {
       await this.record(channel, event, "failed", (err as Error).message.slice(0, 500));

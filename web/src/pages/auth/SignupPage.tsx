@@ -72,6 +72,7 @@ export function SignupForm({ invitationToken, invitedEmail, onSignedIn }: Signup
 
 /** After creating an account: confirm the address before signing in. */
 export function CheckEmail({ email }: { email: string }) {
+  const options = useSignInOptions();
   return (
     <div className="space-y-4 text-sm">
       <div className="flex items-start gap-3 rounded-md border border-line bg-raised p-3">
@@ -80,7 +81,7 @@ export function CheckEmail({ email }: { email: string }) {
           We sent a confirmation link to <strong>{email}</strong>. Open it to finish creating your account; you can sign in after that.
         </p>
       </div>
-      <p className="text-ink-secondary">The link expires in 24 hours. Not there? Check spam, or send it again.</p>
+      <p className="text-ink-secondary">The link expires in {options.data?.emailVerificationExpiryHours ?? 24} hours. Not there? Check spam, or send it again.</p>
       <ResendVerification email={email} />
     </div>
   );

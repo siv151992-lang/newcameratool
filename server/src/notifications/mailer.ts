@@ -1,11 +1,11 @@
 import nodemailer, { type Transporter } from "nodemailer";
-import { config } from "../config.js";
 import { logger } from "../lib/logger.js";
+import { type EmailSettings, getEmailSettings } from "../services/emailSettings.js";
 
 /**
- * Account emails (invitations, email verification, password reset) through the SMTP server in the
- * environment. Links need PUBLIC_URL, the address people open the dashboard at; it comes from
- * configuration, never from request headers, so a forged Host header cannot redirect a link.
+ * Every email the server sends (alerts, invitations, email confirmation, password reset) goes
+ * through the SMTP server in Settings → Email & sign-in. Links use the dashboard address saved there
+ * (the public URL), never request headers, so a forged Host header cannot redirect a link.
  */
 
 export interface MailMessage {
@@ -15,7 +15,7 @@ export interface MailMessage {
 }
 
 type Sender = (m: MailMessage) => Promise<void>;
-let transporter: Transporter | undefined;
+let transport: { key: string; value: Transporter } | undefined;
 let override: Sender | undefined;
 
 /** Tests capture messages instead of sending them. Pass undefined to restore SMTP. */
@@ -23,37 +23,55 @@ export function setMailSender(sender: Sender | undefined) {
   override = sender;
 }
 
-/** Whether account emails can be sent at all. */
-export function mailConfigured(): boolean {
-  return Boolean(override || (config.SMTP_HOST && config.PUBLIC_URL));
+/** Whether account emails can be sent at all: an SMTP server and the dashboard address. */
+export async function mailConfigured(): Promise<boolean> {
+  if (override) return true;
+  const s = await getEmailSettings();
+  return Boolean(s.smtpHost && s.publicUrl);
 }
 
-/** Absolute link to a dashboard page, or null without PUBLIC_URL. */
-export function publicLink(path: string): string | null {
-  const base = config.PUBLIC_URL ?? (override ? "http://dashboard.test" : undefined);
-  return base ? `${base.replace(/\/$/, "")}${path}` : null;
+/** Absolute link to a dashboard page, or null without the dashboard address. */
+export async function publicLink(path: string): Promise<string | null> {
+  const base = (await getEmailSettings()).publicUrl ?? (override ? "http://dashboard.test" : null);
+  return base ? `${base}${path}` : null;
 }
 
-export async function sendMail(message: MailMessage): Promise<void> {
-  if (override) return override(message);
-  if (!config.SMTP_HOST) throw new Error("Email is not configured on the server (SMTP_HOST)");
-  transporter ??= nodemailer.createTransport({
-    host: config.SMTP_HOST,
-    port: config.SMTP_PORT,
-    secure: config.SMTP_SECURE,
-    auth: config.SMTP_USER ? { user: config.SMTP_USER, pass: config.SMTP_PASSWORD } : undefined,
-  });
-  await transporter.sendMail({ from: config.SMTP_FROM, to: message.to, subject: message.subject, text: message.text });
+const smtpOptions = (s: EmailSettings) => ({
+  host: s.smtpHost!,
+  port: s.smtpPort,
+  secure: s.smtpSecure,
+  auth: s.smtpUser ? { user: s.smtpUser, pass: s.smtpPassword ?? "" } : undefined,
+  connectionTimeout: 15_000,
+  greetingTimeout: 15_000,
+});
+
+/** One transport, rebuilt when the settings change. */
+function transportFor(s: EmailSettings): Transporter {
+  const options = smtpOptions(s);
+  const key = JSON.stringify(options);
+  if (transport?.key !== key) transport = { key, value: nodemailer.createTransport(options) };
+  return transport.value;
+}
+
+/** Sends with the saved settings, or with `settings` (a test from the settings page). */
+export async function sendMail(message: MailMessage, settings?: EmailSettings): Promise<void> {
+  if (override && !settings) return override(message);
+  const s = settings ?? (await getEmailSettings());
+  if (!s.smtpHost) throw new Error("Email is not set up. A system administrator can add the mail server in Settings → Email & sign-in.");
+  const t = settings ? nodemailer.createTransport(smtpOptions(s)) : transportFor(s);
+  await t.sendMail({ from: s.smtpFrom, to: message.to, subject: message.subject, text: message.text });
 }
 
 /** Sends without failing the caller; returns the reason when it could not be sent. */
 export async function trySendMail(message: MailMessage): Promise<{ sent: boolean; error?: string }> {
-  if (!mailConfigured()) return { sent: false, error: "Email is not configured on the server (SMTP_HOST and PUBLIC_URL)" };
+  if (!(await mailConfigured())) {
+    return { sent: false, error: "Email is not set up (mail server and dashboard address in Settings → Email & sign-in)" };
+  }
   try {
     await sendMail(message);
     return { sent: true };
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, "Account email could not be sent");
+    logger.warn({ err: (err as Error).message }, "Email could not be sent");
     return { sent: false, error: (err as Error).message.slice(0, 300) };
   }
 }

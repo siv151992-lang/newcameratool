@@ -19,6 +19,9 @@ import {
   updateChannel,
 } from "../services/notificationChannelService.js";
 import { camerasOutside, getNetworkSettings, networkSettingsSchema, updateNetworkSettings } from "../services/networkSettings.js";
+import { emailSettingsSchema, emailSettingsView, getEmailSettings, updateEmailSettings } from "../services/emailSettings.js";
+import { sendMail } from "../notifications/mailer.js";
+import { deviceLimiter } from "./limits.js";
 import {
   createOrganization,
   createOrganizationSchema,
@@ -81,6 +84,33 @@ settingsRouter.patch("/networks", requirePermission(SYSTEM_PERMISSION), async (r
     details: { from: before.allowedNetworks, to: updated.allowedNetworks }, organizationId: null,
   });
   res.json({ ...updated, camerasOutside: await camerasOutside(updated.allowedNetworks) });
+});
+// The mail server, the dashboard address and sign-in options: server-wide, system administrator only.
+settingsRouter.get("/email", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
+  res.json(await emailSettingsView());
+});
+settingsRouter.patch("/email", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const patch = parse(emailSettingsSchema, req.body);
+  const updated = await updateEmailSettings(patch, req.auth!.user.id);
+  const fields = Object.keys(patch).map((k) => (k === "smtpPassword" ? (patch.smtpPassword ? "smtpPassword (changed)" : "smtpPassword (removed)") : k));
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.email_updated", entityType: "settings", entityId: "email", details: { fields }, organizationId: null });
+  res.json(updated);
+});
+/** Sends a test email with the saved settings, or with unsaved changes from the form (blank password keeps the saved one). */
+settingsRouter.post("/email/test", requirePermission(SYSTEM_PERMISSION), deviceLimiter, async (req, res) => {
+  const { to, settings } = parse(z.object({ to: z.string().trim().email(), settings: emailSettingsSchema.optional() }).strict(), req.body);
+  const current = await getEmailSettings();
+  const merged = { ...current, ...(settings ?? {}) };
+  merged.smtpPassword = settings?.smtpPassword || current.smtpPassword;
+  try {
+    await sendMail(
+      { to, subject: "Test email from Zoho IBMS CCTV Monitoring", text: `This is a test email. If you received it, email is set up.\n\nDashboard address: ${merged.publicUrl ?? "(not set)"}` },
+      merged,
+    );
+    res.json({ ok: true, message: `Test email sent to ${to}` });
+  } catch (err) {
+    res.json({ ok: false, message: (err as Error).message.slice(0, 300) });
+  }
 });
 settingsRouter.get("/notifications", requirePermission("settings:read"), async (req, res) => {
   res.json(await listChannels(orgOf(req)));
