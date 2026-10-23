@@ -14,6 +14,7 @@ import { ZohoBand } from "../components/ZohoBand";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
 import { EmailSettingsTab } from "./EmailSettingsTab";
+import { ConnectedAccountsCard, useIdentities } from "./ConnectedAccounts";
 import { InvitationsCard, useInvitations } from "./InvitationsPanel";
 import { OrganizationsTab } from "./OrganizationsTab";
 
@@ -38,7 +39,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Members", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
-    can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
+    can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server, the dashboard address, who can create accounts, and Sign in with Google and Zoho.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
     { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, and your password.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
@@ -779,6 +780,10 @@ function ThemePreview({ color, brand }: { color: string; brand: boolean }) {
 function AccountTab() {
   const { user } = useAuth();
   const toast = useToast();
+  const qc = useQueryClient();
+  const identities = useIdentities();
+  // Accounts created with Google or Zoho have no password until they set one.
+  const hasPassword = identities.data?.hasPassword ?? true;
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -786,7 +791,8 @@ function AccountTab() {
   const change = useMutation({
     mutationFn: () => api("/auth/password", { method: "POST", body: { currentPassword: current, newPassword: next } }),
     onSuccess: () => {
-      toast("success", "Password changed. Other sessions were signed out.");
+      toast("success", hasPassword ? "Password changed. Other sessions were signed out." : "Password set. You can now also sign in with your username or email.");
+      void qc.invalidateQueries({ queryKey: ["auth", "identities"] });
       setCurrent("");
       setNext("");
       setConfirm("");
@@ -799,7 +805,8 @@ function AccountTab() {
       <div className="lg:col-span-2">
         <AppearanceCard />
       </div>
-      <Card title={`Change password (${user?.username})`}>
+      <ConnectedAccountsCard />
+      <Card title={hasPassword ? `Change password (${user?.username})` : `Set a password (${user?.username})`}>
         <form
           className="space-y-3 p-4"
           onSubmit={(e) => {
@@ -808,11 +815,15 @@ function AccountTab() {
             change.mutate();
           }}
         >
-          <Field label="Current password">{(id) => <Input id={id} type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
+          {hasPassword ? (
+            <Field label="Current password">{(id) => <Input id={id} type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}</Field>
+          ) : (
+            <p className="text-sm text-ink-secondary">You sign in with Google or Zoho. Set a password to also sign in with your username or email.</p>
+          )}
           <Field label="New password" hint="At least 10 characters">{(id, d) => <Input id={id} aria-describedby={d} type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />}</Field>
           <Field label="Confirm new password">{(id) => <Input id={id} type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />}</Field>
           <ErrorMessage error={error} />
-          <Button type="submit" variant="primary" loading={change.isPending}>Change password</Button>
+          <Button type="submit" variant="primary" loading={change.isPending}>{hasPassword ? "Change password" : "Set password"}</Button>
         </form>
       </Card>
     </div>

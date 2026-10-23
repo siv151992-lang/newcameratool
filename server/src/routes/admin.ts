@@ -21,6 +21,8 @@ import {
 import { camerasOutside, getNetworkSettings, networkSettingsSchema, updateNetworkSettings } from "../services/networkSettings.js";
 import { emailSettingsSchema, emailSettingsView, getEmailSettings, updateEmailSettings } from "../services/emailSettings.js";
 import { sendMail } from "../notifications/mailer.js";
+import { redirectUri } from "../auth/oauth.js";
+import { providerSettingsSchema, providerSettingsView, updateProviderSettings } from "../services/providerSettings.js";
 import { deviceLimiter } from "./limits.js";
 import {
   createOrganization,
@@ -111,6 +113,19 @@ settingsRouter.post("/email/test", requirePermission(SYSTEM_PERMISSION), deviceL
   } catch (err) {
     res.json({ ok: false, message: (err as Error).message.slice(0, 300) });
   }
+});
+/** Sign in with Google / Zoho: client credentials and the redirect addresses to register with each provider. */
+settingsRouter.get("/sign-in-providers", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
+  res.json({ providers: await providerSettingsView(), redirectUris: { google: await redirectUri("google"), zoho: await redirectUri("zoho") } });
+});
+settingsRouter.patch("/sign-in-providers", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const patch = parse(providerSettingsSchema, req.body);
+  const providers = await updateProviderSettings(patch, req.auth!.user.id);
+  const details = Object.fromEntries(
+    Object.entries(patch).map(([p, v]) => [p, Object.keys(v ?? {}).map((k) => (k === "clientSecret" ? (v?.clientSecret ? "clientSecret (changed)" : "clientSecret (removed)") : k))]),
+  );
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.sign_in_providers_updated", entityType: "settings", entityId: "sign_in_providers", details, organizationId: null });
+  res.json({ providers, redirectUris: { google: await redirectUri("google"), zoho: await redirectUri("zoho") } });
 });
 settingsRouter.get("/notifications", requirePermission("settings:read"), async (req, res) => {
   res.json(await listChannels(orgOf(req)));

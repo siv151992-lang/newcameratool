@@ -43,6 +43,11 @@ const schema = z.object({
   // The address people open the dashboard at (https://cctv.example.com). Links in invitation,
   // verification and password-reset emails use it; without it those emails are not sent.
   PUBLIC_URL: z.string().url().optional(),
+  // Sign in with Google / Zoho (OAuth client credentials). Settings → Email & sign-in overrides them.
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  ZOHO_CLIENT_ID: z.string().optional(),
+  ZOHO_CLIENT_SECRET: z.string().optional(),
   /** Anyone may create an account (they see nothing until invited into an organization). */
   ALLOW_SIGNUP: bool(true),
   INVITATION_EXPIRY_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(72),

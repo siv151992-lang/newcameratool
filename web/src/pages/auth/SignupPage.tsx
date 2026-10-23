@@ -5,6 +5,7 @@ import { api, ApiError } from "../../api/client";
 import { Button, ErrorMessage, Field, Input } from "../../components/ui";
 import { useAuth } from "../../hooks/auth";
 import { AuthLayout, authLink, BackToSignIn, useSignInOptions } from "./AuthLayout";
+import { ProviderButtons } from "./ProviderButtons";
 
 interface SignupProps {
   /** From an invitation: the address is fixed and the account joins that organization at once. */
@@ -127,6 +128,7 @@ export function SignupPage() {
         : "After confirming your email you can join organizations that invite you."}
       footer={<>Already have an account? <Link to="/" className={authLink}>Sign in</Link></>}
     >
+      <ProviderButtons verb="Sign up" />
       <SignupForm onSignedIn={() => navigate("/")} />
     </AuthLayout>
   );

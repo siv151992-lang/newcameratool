@@ -6,6 +6,7 @@ import { Button, Card } from "../components/ui";
 import { useToast } from "../components/toast";
 import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { relativeTime } from "../lib/format";
+import { useRedirectNotice } from "./ConnectedAccounts";
 import { OrganizationsTab } from "./OrganizationsTab";
 
 /**
@@ -50,6 +51,7 @@ function PendingInvitations() {
 
 export function NoOrganizationPage() {
   const { user, logout, invitations } = useAuth();
+  useRedirectNotice();
   return (
     <div className="min-h-screen">
       <header className="flex h-14 items-center gap-2 border-b border-line bg-surface px-4">

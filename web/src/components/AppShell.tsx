@@ -11,6 +11,7 @@ import { useTheme } from "../hooks/theme";
 import { useToast } from "./toast";
 import { Button, Select } from "./ui";
 import { ZohoBand } from "./ZohoBand";
+import { useRedirectNotice } from "../pages/ConnectedAccounts";
 
 const SIDEBAR_KEY = "cctv-sidebar-collapsed";
 
@@ -100,6 +101,7 @@ function OrganizationSwitcher() {
 
 export function AppShell() {
   const { user, logout } = useAuth();
+  useRedirectNotice();
   const { theme, toggle, palette } = useTheme();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsed);

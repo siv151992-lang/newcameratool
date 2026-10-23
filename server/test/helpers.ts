@@ -3,6 +3,7 @@ import { migrate } from "../src/db/migrate.js";
 import { registry } from "../src/integrations/registry.js";
 import { syncBrands } from "../src/services/brandService.js";
 import { clearEmailSettingsCache } from "../src/services/emailSettings.js";
+import { clearProviderSettingsCache } from "../src/services/providerSettings.js";
 import { updateMonitoringSettings } from "../src/services/settingsService.js";
 import { createUser } from "../src/services/userService.js";
 
@@ -27,6 +28,7 @@ export async function resetData() {
   // TRUNCATE users CASCADE also empties camera_brands (created_by): restore the built-in brands.
   await pool.query("TRUNCATE camera_brands CASCADE");
   clearEmailSettingsCache();
+  clearProviderSettingsCache();
   await syncBrands(registry);
   // Fast, deterministic monitoring for tests.
   testOrgId = await createTestOrg("Test organization");

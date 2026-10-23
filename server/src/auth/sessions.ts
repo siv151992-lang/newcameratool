@@ -166,7 +166,8 @@ export function validateNewPassword(password: string) {
 
 export async function changeOwnPassword(userId: string, sessionId: string, current: string, next: string) {
   const { rows } = await pool.query("SELECT password_hash FROM users WHERE id = $1", [userId]);
-  if (!rows[0]?.password_hash || !(await verifyPassword(current, rows[0].password_hash))) {
+  // Accounts created with Google or Zoho have no password yet: they may set one.
+  if (rows[0]?.password_hash && !(await verifyPassword(current, rows[0].password_hash))) {
     throw new HttpError(400, "INVALID_CREDENTIALS", "Current password is incorrect");
   }
   validateNewPassword(next);

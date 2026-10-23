@@ -78,6 +78,8 @@ export interface SignInOptions {
   invitationExpiryHours: number;
   emailVerificationExpiryHours: number;
   passwordResetExpiryMinutes: number;
+  /** Sign in with Google / Zoho, when set up. */
+  providers: ("google" | "zoho")[];
 }
 
 export interface Organization {

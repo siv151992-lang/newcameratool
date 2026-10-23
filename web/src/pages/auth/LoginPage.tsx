@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { Button, ErrorMessage, Field, Input } from "../../components/ui";
 import { useAuth } from "../../hooks/auth";
 import { AuthLayout, authLink, useSignInOptions } from "./AuthLayout";
+import { ProviderButtons } from "./ProviderButtons";
 import { ResendVerification } from "./SignupPage";
 
 /** Username/email and password. Also used on the invitation page, with `onSignedIn` to accept afterwards. */
@@ -55,9 +56,13 @@ export function SignInForm({ onSignedIn, defaultUsername = "" }: { onSignedIn?: 
 
 export function LoginPage() {
   const options = useSignInOptions();
+  // A Google / Zoho sign-in that did not work comes back here with the reason.
+  const [params] = useSearchParams();
+  const providerError = params.get("signin_error");
   if (options.data?.needsSetup) {
     return (
       <AuthLayout title="Welcome" subtitle="No account exists yet. Create the first one: it becomes the system administrator and gets the first organization.">
+        <ProviderButtons />
         <Link to="/signup" className="flex h-9 w-full items-center justify-center rounded-md bg-accent px-3.5 text-sm font-medium text-white hover:brightness-110">
           Create the administrator account
         </Link>
@@ -69,6 +74,8 @@ export function LoginPage() {
       title="Sign in"
       footer={options.data?.signupEnabled && <>New here? <Link to="/signup" className={authLink}>Create an account</Link></>}
     >
+      {providerError && <ErrorMessage error={new Error(providerError)} className="mb-4" />}
+      <ProviderButtons />
       <SignInForm />
     </AuthLayout>
   );

@@ -15,6 +15,10 @@ import {
   verifyEmail,
 } from "../services/accountService.js";
 import { acceptInvitation, pendingInvitationsFor, previewInvitation } from "../services/invitationService.js";
+import { availableProviders, completeSignIn, listIdentities, PROVIDER_NAMES, startSignIn, unlinkIdentity } from "../auth/oauth.js";
+import { PROVIDERS, type Provider } from "../services/providerSettings.js";
+import { HttpError } from "../lib/errors.js";
+import { logger } from "../lib/logger.js";
 import { parse } from "../lib/validate.js";
 import { pool } from "../db/pool.js";
 import { audit } from "../services/auditService.js";
@@ -41,7 +45,67 @@ const token = z.string().min(1).max(100);
 
 /** What the sign-in page offers (creating accounts, password reset, first-time setup). */
 authRouter.get("/options", async (_req, res) => {
-  res.json(await signInOptions());
+  res.json({ ...(await signInOptions()), providers: await availableProviders() });
+});
+
+// ------------------------------------------------------------------ Sign in with Google / Zoho
+
+const OAUTH_COOKIE = "cctv_oauth_state";
+const providerParam = (req: Request): Provider => {
+  const p = String(req.params.provider);
+  if (!(PROVIDERS as readonly string[]).includes(p)) throw new HttpError(404, "NOT_FOUND", "Unknown sign-in provider");
+  return p as Provider;
+};
+
+/**
+ * A page that moves the browser on. The provider's redirect is a cross-site navigation, so a
+ * same-site (SameSite=Strict) session cookie set in it would not be sent on an HTTP redirect; a
+ * navigation from our own page is same-site.
+ */
+function continueTo(res: Response, path: string) {
+  const href = path.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  res
+    .status(200)
+    .type("html")
+    .send(`<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${href}"><title>Signing in…</title><p style="font-family:system-ui">Signing in… <a href="${href}">Continue</a></p>`);
+}
+
+/** Sends the browser to Google or Zoho. With ?link=1 (signed in) it connects the provider to this account. */
+authRouter.get("/oauth/:provider/start", accountLimiter, async (req, res) => {
+  const provider = providerParam(req);
+  const q = parse(z.object({ invitation: z.string().max(100).optional(), link: z.literal("1").optional() }), req.query);
+  if (q.link && !req.auth) throw new HttpError(401, "UNAUTHENTICATED", "Please sign in");
+  const { url, state } = await startSignIn(provider, { linkUserId: q.link ? req.auth!.user.id : undefined, invitationToken: q.invitation });
+  // Lax: the cookie must come back on the provider's (cross-site) redirect to the callback.
+  res.cookie(OAUTH_COOKIE, state, { httpOnly: true, secure: config.COOKIE_SECURE, sameSite: "lax", path: "/api/auth/oauth", maxAge: 10 * 60_000 });
+  res.redirect(302, url);
+});
+
+authRouter.get("/oauth/:provider/callback", accountLimiter, async (req, res) => {
+  const provider = providerParam(req);
+  const browserState = req.cookies?.[OAUTH_COOKIE] as string | undefined;
+  res.clearCookie(OAUTH_COOKIE, { path: "/api/auth/oauth" });
+  try {
+    const result = await completeSignIn(provider, req.query, browserState, req.ip);
+    if (result.kind === "linked") return continueTo(res, `/settings/account?connected=${provider}`);
+    await signInAs(req, res, result.userId, result.organizationId);
+    continueTo(res, "/");
+  } catch (err) {
+    const message = err instanceof HttpError ? err.message : `Sign in with ${PROVIDER_NAMES[provider]} failed. Try again.`;
+    if (!(err instanceof HttpError)) logger.warn({ err: (err as Error).message, provider }, "Sign-in callback failed");
+    continueTo(res, `/?signin_error=${encodeURIComponent(message)}`);
+  }
+});
+
+/** The Google / Zoho accounts connected to the signed-in user. */
+authRouter.get("/identities", requireAuth, async (req, res) => {
+  const { rows } = await pool.query<{ has_password: boolean }>("SELECT password_hash IS NOT NULL AS has_password FROM users WHERE id = $1", [req.auth!.user.id]);
+  res.json({ identities: await listIdentities(req.auth!.user.id), hasPassword: rows[0]?.has_password ?? false, available: await availableProviders() });
+});
+
+authRouter.delete("/identities/:provider", requireAuth, requireCsrf, async (req, res) => {
+  await unlinkIdentity(req.auth!.user.id, req.auth!.user.username, providerParam(req), req.ip);
+  res.status(204).end();
 });
 
 authRouter.post("/signup", accountLimiter, async (req, res) => {
