@@ -14,7 +14,7 @@ import { ZohoBand } from "../components/ZohoBand";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
 import { EmailSettingsTab } from "./EmailSettingsTab";
-import { ConnectedAccountsCard, useIdentities } from "./ConnectedAccounts";
+import { useIdentities } from "./ConnectedAccounts";
 import { InvitationsCard, useInvitations } from "./InvitationsPanel";
 import { OrganizationsTab } from "./OrganizationsTab";
 
@@ -39,7 +39,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Members", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
-    can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server, the dashboard address, who can create accounts, and Sign in with Google and Zoho.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
+    can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
     { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, and your password.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
@@ -805,7 +805,6 @@ function AccountTab() {
       <div className="lg:col-span-2">
         <AppearanceCard />
       </div>
-      <ConnectedAccountsCard />
       <Card title={hasPassword ? `Change password (${user?.username})` : `Set a password (${user?.username})`}>
         <form
           className="space-y-3 p-4"

@@ -1,12 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Send } from "lucide-react";
+import { Send } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../api/client";
 import type { EmailSettings } from "../api/types";
 import { Button, Card, Checkbox, ErrorMessage, Field, Input, Select, Spinner } from "../components/ui";
 import { useToast } from "../components/toast";
 import { useAuth } from "../hooks/auth";
-import { PROVIDER_LABELS, providerMark, type ProviderKey } from "./auth/ProviderButtons";
 
 /** Common mail servers: fill host, port and security in one step. */
 const PRESETS = [
@@ -218,123 +217,6 @@ export function EmailSettingsTab() {
           <Button type="submit" variant="primary" loading={save.isPending}>Save settings</Button>
         </div>
       </form>
-      <SignInProvidersCard />
     </div>
-  );
-}
-
-interface ProviderView {
-  enabled: boolean;
-  clientId: string | null;
-  clientSecretSet: boolean;
-  fromEnvironment: boolean;
-}
-interface ProvidersResponse {
-  providers: Record<ProviderKey, ProviderView>;
-  redirectUris: Record<ProviderKey, string | null>;
-}
-
-const SETUP: Record<ProviderKey, { console: string; consoleUrl: string; steps: string }> = {
-  google: {
-    console: "Google Cloud console → APIs & Services → Credentials",
-    consoleUrl: "https://console.cloud.google.com/apis/credentials",
-    steps: "Create an OAuth client ID of type Web application and add the redirect address below as an authorized redirect URI.",
-  },
-  zoho: {
-    console: "Zoho API Console",
-    consoleUrl: "https://api-console.zoho.com/",
-    steps: "Add a Server-based Application with the redirect address below. In its Settings, turn on multi-DC so people in every Zoho data centre (.com, .in, .eu, …) can sign in.",
-  },
-};
-
-/** Sign in with Google / Zoho: client ID and secret per provider (system administrator). */
-function SignInProvidersCard() {
-  const toast = useToast();
-  const qc = useQueryClient();
-  const data = useQuery({ queryKey: ["settings", "sign-in-providers"], queryFn: () => api<ProvidersResponse>("/settings/sign-in-providers") });
-  const [draft, setDraft] = useState<Record<ProviderKey, { enabled: boolean; clientId: string; clientSecret: string }> | null>(null);
-  useEffect(() => {
-    if (!data.data) return;
-    const p = data.data.providers;
-    setDraft({
-      google: { enabled: p.google.enabled, clientId: p.google.clientId ?? "", clientSecret: "" },
-      zoho: { enabled: p.zoho.enabled, clientId: p.zoho.clientId ?? "", clientSecret: "" },
-    });
-  }, [data.data]);
-  const save = useMutation({
-    mutationFn: (key: ProviderKey) => {
-      const d = draft![key];
-      return api<ProvidersResponse>("/settings/sign-in-providers", {
-        method: "PATCH",
-        body: { [key]: { enabled: d.enabled, clientId: d.clientId, ...(d.clientSecret ? { clientSecret: d.clientSecret } : {}) } },
-      });
-    },
-    onSuccess: (r, key) => {
-      qc.setQueryData(["settings", "sign-in-providers"], r);
-      void qc.invalidateQueries({ queryKey: ["auth", "options"] });
-      toast("success", `Sign in with ${PROVIDER_LABELS[key]} saved`);
-    },
-    onError: (e: Error) => toast("error", e.message),
-  });
-
-  if (!data.data || !draft) return data.error ? <ErrorMessage error={data.error} /> : <Spinner />;
-  const { providers, redirectUris } = data.data;
-
-  return (
-    <Card title="Sign in with Google and Zoho">
-      <div className="divide-y divide-line">
-        {(["google", "zoho"] as const).map((key) => {
-          const v = providers[key];
-          const d = draft[key];
-          const set = (patch: Partial<typeof d>) => setDraft({ ...draft, [key]: { ...d, ...patch } });
-          const live = v.enabled && v.clientId && v.clientSecretSet && redirectUris[key];
-          return (
-            <div key={key} className="space-y-4 p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                {providerMark(key, "h-5 w-5")}
-                <span className="font-medium">{PROVIDER_LABELS[key]}</span>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${live ? "bg-good/15" : "bg-line text-ink-secondary"}`}>
-                  {live ? "On the sign-in page" : "Not set up"}
-                </span>
-              </div>
-              <p className="text-sm text-ink-secondary">
-                In the <a href={SETUP[key].consoleUrl} target="_blank" rel="noreferrer" className="font-medium text-accent-ink hover:underline">{SETUP[key].console}</a>:{" "}
-                {SETUP[key].steps}
-              </p>
-              <Field label="Redirect address" hint={redirectUris[key] ? "Copy this into the provider exactly." : "Save the dashboard address above first."}>
-                {(id, h) => (
-                  <div className="flex gap-2">
-                    <Input id={id} aria-describedby={h} readOnly value={redirectUris[key] ?? ""} onFocus={(e) => e.target.select()} />
-                    <Button
-                      icon={<Copy className="h-4 w-4" />}
-                      disabled={!redirectUris[key]}
-                      onClick={() => void navigator.clipboard.writeText(redirectUris[key]!).then(() => toast("success", "Copied"), () => toast("error", "Copy failed: select it and copy"))}
-                    >
-                      Copy
-                    </Button>
-                  </div>
-                )}
-              </Field>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Client ID" hint={v.fromEnvironment ? "From the server environment until saved here." : undefined}>
-                  {(id, h) => <Input id={id} aria-describedby={h} autoComplete="off" value={d.clientId} onChange={(e) => set({ clientId: e.target.value })} />}
-                </Field>
-                <Field label="Client secret" hint={v.clientSecretSet ? "A secret is saved. Leave blank to keep it." : undefined}>
-                  {(id, h) => <Input id={id} aria-describedby={h} type="password" autoComplete="new-password" placeholder={v.clientSecretSet ? "••••••••" : ""} value={d.clientSecret} onChange={(e) => set({ clientSecret: e.target.value })} />}
-                </Field>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <Checkbox label={`Show "Continue with ${PROVIDER_LABELS[key]}" on the sign-in page`} checked={d.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
-                <Button variant="primary" loading={save.isPending && save.variables === key} onClick={() => save.mutate(key)}>Save {PROVIDER_LABELS[key]}</Button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <p className="border-t border-line px-4 py-3 text-xs text-ink-muted">
-        People who sign in this way for the first time get an account for their confirmed address: it joins an organization when they were invited, and otherwise
-        follows "Let people create an account" above. Someone who already has an account with that address signs in to it.
-      </p>
-    </Card>
   );
 }
