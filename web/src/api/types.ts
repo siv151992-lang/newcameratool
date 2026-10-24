@@ -112,6 +112,8 @@ export interface Camera {
   hasCaCertificate: boolean;
   username: string | null;
   credentialsUpdatedAt: string | null;
+  /** The camera password against the organization's camera password policy. */
+  password: { status: CameraPasswordStatus; issues: CameraPasswordIssue[]; changedAt: string | null };
   createdAt: string;
   updatedAt: string;
   status: {
@@ -661,4 +663,20 @@ export interface IntegrationCamera {
   connectionStatus: ConnectionStatus;
   storageHealth: StorageHealth;
   lastSuccessAt: string | null;
+}
+
+export type CameraPasswordStatus = "ok" | "weak" | "expired" | "unknown";
+export type CameraPasswordIssue = "too_short" | "few_char_types" | "common" | "contains_username" | "repetitive";
+
+/** Settings → Camera passwords: the standard for the cameras' own passwords. */
+export interface CameraPasswordPolicy {
+  minLength: number;
+  minCharTypes: number;
+  blockCommon: boolean;
+  maxAgeDays: number;
+  enforcement: "warn" | "block";
+}
+export interface CameraPasswordPolicyView {
+  policy: CameraPasswordPolicy;
+  counts: { ok: number; weak: number; expired: number };
 }

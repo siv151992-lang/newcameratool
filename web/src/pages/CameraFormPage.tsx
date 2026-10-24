@@ -1,13 +1,14 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { PlugZap, Save } from "lucide-react";
+import { Check, PlugZap, Save, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Brand, CameraDetail, ConnectionResult, MonitoringSettings } from "../api/types";
+import type { Brand, CameraDetail, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
 import { Button, Card, Checkbox, ConfirmDialog, ErrorMessage, Field, Input, PageHeader, Select, Spinner, Textarea } from "../components/ui";
 import { useToast } from "../components/toast";
 import { useInvalidateCameras } from "../hooks/cameras";
+import { previewChecks } from "../lib/cameraPassword";
 import { capabilityLabel } from "../lib/format";
 
 interface FormState {
@@ -248,6 +249,7 @@ export function CameraFormPage() {
                 >
                   {(fid, d) => <Input id={fid} aria-describedby={d} type="password" value={form.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" invalid={!!errors.password} required={!editing} />}
                 </Field>
+                {credentials === "user_password" && form.password && <PasswordChecklist password={form.password} username={form.username} />}
               </div>
             )}
             {form.protocol === "https" && (
@@ -339,5 +341,31 @@ export function CameraFormPage() {
         )}
       </ConfirmDialog>
     </>
+  );
+}
+
+/** The camera password against the organization's policy, as it is typed. */
+function PasswordChecklist({ password, username }: { password: string; username: string }) {
+  const policy = useQuery({ queryKey: ["camera-password-policy"], queryFn: () => api<CameraPasswordPolicyView>("/settings/camera-password-policy"), staleTime: 60_000 });
+  const p = policy.data?.policy;
+  if (!p) return null;
+  const checks = previewChecks(password, username, p);
+  const failing = checks.filter((c) => !c.ok).length;
+  return (
+    <div className="rounded-md border border-line bg-raised p-3 text-sm sm:col-span-2" aria-live="polite">
+      <p className="font-medium">
+        {failing === 0 ? "Meets the camera password policy" : p.enforcement === "block" ? "Does not meet the camera password policy: it cannot be saved" : "Does not meet the camera password policy: it can be saved, and the camera is flagged as weak"}
+      </p>
+      <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+        {checks.map((c) => (
+          <li key={c.label} className="flex items-center gap-2">
+            {c.ok ? <Check className="h-4 w-4 shrink-0 text-good" aria-hidden /> : <X className="h-4 w-4 shrink-0 text-bad" aria-hidden />}
+            <span className={c.ok ? "text-ink-secondary" : undefined}>{c.label}</span>
+            <span className="sr-only">{c.ok ? "(met)" : "(not met)"}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-ink-secondary">Set the same password on the camera itself; this app only stores it to read the camera.</p>
+    </div>
   );
 }

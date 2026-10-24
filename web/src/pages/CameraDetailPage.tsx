@@ -4,11 +4,12 @@ import { AlertOctagon, ArrowLeft, KeyRound, Pause, Pencil, Play, PlugZap, Refres
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, toQuery } from "../api/client";
-import type { Alert, CameraDetail, CameraHistory, ConnectionResult, MonitoringSettings, Page } from "../api/types";
+import type { Alert, CameraDetail, CameraHistory, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
 import { LiveViewDialog } from "../components/LiveView";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
-import { ConnectionBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
+import { ConnectionBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
+import { issueLabel } from "../lib/cameraPassword";
 import { UsageHistoryChart } from "../components/UsageHistoryChart";
 import { useAiStatus } from "../hooks/ai";
 import { CameraForecastPanel } from "./AiPage";
@@ -391,6 +392,15 @@ export function CameraDetailPage() {
             <Info label="Location">{c.location}</Info>
             <Info label="Username">{c.username}</Info>
             <Info label="Credentials updated">{absoluteTime(c.credentialsUpdatedAt)}</Info>
+            {c.password.status !== "unknown" && (
+              <div className="col-span-2">
+                <dt className="text-xs text-ink-muted">Camera password</dt>
+                <dd className="mt-1 space-y-1">
+                  <PasswordBadge status={c.password.status} />
+                  <PasswordDetail camera={c} />
+                </dd>
+              </div>
+            )}
             <Info label="Serial number">{c.device.serialNumber}</Info>
             <Info label="Firmware">{c.device.firmwareVersion}</Info>
             <Info label="Thresholds">{warning}% / {critical}%{c.warningThreshold === null && c.criticalThreshold === null ? " (global)" : ""}</Info>
@@ -467,6 +477,25 @@ export function CameraDetailPage() {
         onCancel={() => setRemoving(false)}
         onConfirm={() => remove.mutate([c.id], { onSuccess: () => navigate("/cameras") })}
       />
+    </>
+  );
+}
+
+/** Why the camera password falls short of the policy, and when it was last changed. */
+function PasswordDetail({ camera: c }: { camera: CameraDetail }) {
+  const policy = useQuery({ queryKey: ["camera-password-policy"], queryFn: () => api<CameraPasswordPolicyView>("/settings/camera-password-policy"), staleTime: 60_000 });
+  const p = policy.data?.policy;
+  return (
+    <>
+      {p && c.password.issues.length > 0 && (
+        <ul className="list-disc pl-5 text-sm text-ink-secondary">
+          {c.password.issues.map((i) => <li key={i}>{issueLabel(i, p)}</li>)}
+        </ul>
+      )}
+      <p className="text-xs text-ink-secondary">
+        Changed {relativeTime(c.password.changedAt)}
+        {p && p.maxAgeDays > 0 ? `; the policy asks for a new password every ${p.maxAgeDays} days` : ""}. Change it on the camera, then enter the new one under Edit.
+      </p>
     </>
   );
 }

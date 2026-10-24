@@ -1,6 +1,7 @@
 import { pool } from "../db/pool.js";
 import { toCsv, zonedParts } from "../lib/csv.js";
 import { type ListQuery, listFilter, SORT_COLUMNS } from "./cameraService.js";
+import { PASSWORD_STATUS_SQL } from "./cameraPasswordPolicy.js";
 
 /**
  * Camera status report: one row per camera with its connection (online/offline) and SD card
@@ -12,6 +13,7 @@ const GB = 1e9;
 const gb = (bytes: number | null) => (bytes === null || bytes === undefined ? "" : (Number(bytes) / GB).toFixed(1));
 
 interface ReportRow {
+  password_status: string;
   name: string;
   host: string;
   port: number;
@@ -41,6 +43,7 @@ interface ReportRow {
 
 const CONNECTION: Record<string, string> = { online: "Online", offline: "Offline", unknown: "Not checked yet" };
 const HEALTH: Record<string, string> = { healthy: "Healthy", warning: "Warning", critical: "Critical", unknown: "Unknown" };
+const PASSWORD: Record<string, string> = { ok: "Meets policy", weak: "Weak", expired: "Change due", unknown: "" };
 const RECORDING: Record<string, string> = { recording: "Recording", idle: "Not recording", error: "Recording error", unknown: "Unknown" };
 
 /** What the report says about a camera's SD card (or other local storage). */
@@ -61,10 +64,11 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
             s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage, s.recording_state,
             s.recording_days, s.recording_oldest, s.recording_days_at_least,
             coalesce(d.devices, 0)::int AS devices, coalesce(d.unhealthy, 0)::int AS unhealthy, coalesce(d.degraded, 0)::int AS degraded,
-            d.device_statuses
+            d.device_statuses, ${PASSWORD_STATUS_SQL} AS password_status, cr.password_issues
      FROM cameras c
      JOIN camera_brands b ON b.key = c.brand_key
      LEFT JOIN camera_status s ON s.camera_id = c.id
+     LEFT JOIN camera_credentials cr ON cr.camera_id = c.id
      LEFT JOIN LATERAL (
        SELECT count(*) AS devices,
               count(*) FILTER (WHERE health_status = 'unhealthy') AS unhealthy,
@@ -79,7 +83,7 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
     "Camera", "IP address", "Port", "Brand", "Model", "Location", "Monitoring", "Connection", "SD card status",
     "SD card details (from camera)", "Storage health", "Capacity (GB)", "Used (GB)", "Free (GB)", "Used %", "Recording",
     "Recordings available (days)", "Oldest recording (camera time)",
-    `Last successful check (${timeZone})`, `Last check attempt (${timeZone})`, "Last error",
+    `Last successful check (${timeZone})`, `Last check attempt (${timeZone})`, "Last error", "Camera password",
   ]];
   for (const r of rows) {
     const monitored = r.monitoring_enabled;
@@ -97,6 +101,7 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
       r.local_storage && r.recording_oldest ? r.recording_oldest.replace("T", " ") : "",
       time(r.last_success_at), time(r.last_attempt_at),
       r.last_error_message, // cleared by the next successful check
+      PASSWORD[r.password_status] ?? "",
     ]);
   }
   return { csv: toCsv(lines), rows: rows.length };

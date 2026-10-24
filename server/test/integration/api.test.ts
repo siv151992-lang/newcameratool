@@ -207,7 +207,7 @@ describe("cameras", () => {
     expect(header).toContain("Last successful check (Asia/Calcutta)");
     expect(rows).toHaveLength(3);
     expect(rows[0]).toMatch(/^Car park,10\.1\.0\.9,.*,On,Not checked yet,No local storage \(records elsewhere\),/);
-    expect(rows[1]).toMatch(/^Gate,10\.1\.0\.10,.*,On,Offline,No SD card \(last known; camera offline\),.*Camera did not respond$/);
+    expect(rows[1]).toMatch(/^Gate,10\.1\.0\.10,.*,On,Offline,No SD card \(last known; camera offline\),.*Camera did not respond,Meets policy$/);
     expect(rows[2]).toMatch(/^Lobby,127\.0\.0\.1,.*,On,Online,Card OK,.*,Healthy,127\.9,/);
     expect(res.text).not.toContain("Cam-Pass-123");
 
@@ -237,6 +237,30 @@ describe("cameras", () => {
     expect((await agent.get("/api/cameras?status=disabled")).body.total).toBe(1);
     const res = await agent.post("/api/cameras/bulk-delete").set("X-CSRF-Token", csrf).send({ ids: [a.body.id, b.body.id] }).expect(200);
     expect(res.body.removed).toHaveLength(2);
+  });
+});
+
+describe("camera password policy", () => {
+  it("flags weak and old camera passwords, filters them, and blocks them when the policy says so", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const weak = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), password: "lobbycam77" }).expect(201)).body.id;
+    const strong = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Gate", host: "127.0.0.2", password: "Gate#Cam2026x" }).expect(201)).body.id;
+    expect((await agent.get(`/api/cameras/${weak}`).expect(200)).body.password).toMatchObject({ status: "weak", issues: ["few_char_types"] });
+    expect((await agent.get(`/api/cameras/${strong}`).expect(200)).body.password.status).toBe("ok");
+    expect((await agent.get("/api/cameras?password=weak").expect(200)).body.items.map((c: { id: string }) => c.id)).toEqual([weak]);
+    expect((await agent.get("/api/settings/camera-password-policy").expect(200)).body.counts).toEqual({ ok: 1, weak: 1, expired: 0 });
+
+    // Older than the maximum age: due a change.
+    await pool.query("UPDATE camera_credentials SET password_changed_at = now() - interval '100 days' WHERE camera_id = $1", [strong]);
+    expect((await agent.get(`/api/cameras/${strong}`).expect(200)).body.password.status).toBe("expired");
+
+    // A policy change re-checks the stored passwords; "block" refuses weak new ones.
+    await agent.patch("/api/settings/camera-password-policy").set("X-CSRF-Token", csrf).send({ minCharTypes: 2, enforcement: "block" }).expect(200);
+    expect((await agent.get(`/api/cameras/${weak}`).expect(200)).body.password.status).toBe("ok");
+    const refused = await agent.patch(`/api/cameras/${strong}`).set("X-CSRF-Token", csrf).send({ password: "12345" }).expect(400);
+    expect(refused.body.error.details[0]).toMatchObject({ field: "password" });
+    await agent.patch(`/api/cameras/${strong}`).set("X-CSRF-Token", csrf).send({ password: "New#Gate2026" }).expect(200);
+    expect((await agent.get(`/api/cameras/${strong}`).expect(200)).body.password.status).toBe("ok");
   });
 });
 

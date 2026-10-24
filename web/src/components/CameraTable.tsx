@@ -12,7 +12,7 @@ import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, formatDays, rel
 import { ColumnsMenu } from "./ColumnsMenu";
 import { LiveViewDialog } from "./LiveView";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
-import { ConnectionBadge, HealthBadge, NoLocalStorageBadge, RecordingBadge, UsageMeter } from "./status";
+import { ConnectionBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
 type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays";
@@ -84,6 +84,12 @@ const COLUMNS: ColumnDef[] = [
           {formatDays(c.status.recording.daysAvailable)}
         </span>
       ),
+  },
+  {
+    key: "password",
+    label: "Password",
+    cellClassName: "whitespace-nowrap",
+    render: (c) => (c.password.status === "unknown" ? <span className="text-ink-muted">—</span> : <PasswordBadge status={c.password.status} title={c.password.changedAt ? `Changed ${relativeTime(c.password.changedAt)}` : undefined} />),
   },
   { key: "health", label: "Storage health", sortKey: "health", cellClassName: "", render: (c) => (c.localStorage === false ? <NoLocalStorageBadge /> : <HealthBadge health={c.status.storageHealth} />) },
   {
@@ -159,7 +165,7 @@ function IconAction({ label, onClick, children, disabled, to }: { label: string;
   );
 }
 
-export function CameraTable({ initialStatus = "", initialRecording = "", title }: { initialStatus?: string; initialRecording?: string; title?: ReactNode }) {
+export function CameraTable({ initialStatus = "", initialRecording = "", initialPassword = "", title }: { initialStatus?: string; initialRecording?: string; initialPassword?: string; title?: ReactNode }) {
   const { can } = useAuth();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -168,6 +174,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
   const [location, setLocation] = useState("");
   const [usage, setUsage] = useState("");
   const [recording, setRecording] = useState(initialRecording);
+  const [password, setPassword] = useState(initialPassword);
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
@@ -180,10 +187,10 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
   const visibleColumns = COLUMNS.filter((col) => columnVisibility.isVisible(col.key));
   const pageSize = 25;
 
-  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording]);
+  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording, password]);
 
   const { minUsage, maxUsage } = USAGE_FILTERS[usage] ?? {};
-  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, sort, order, page, pageSize };
+  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, password, sort, order, page, pageSize };
   const cameras = useQuery({
     queryKey: ["cameras", params],
     queryFn: () => api<Page<Camera>>(`/cameras${toQuery(params)}`),
@@ -287,6 +294,12 @@ export function CameraTable({ initialStatus = "", initialRecording = "", title }
           <option value="idle">Not recording</option>
           <option value="error">Recording error</option>
           <option value="unknown">Recording unknown</option>
+        </Select>
+        <Select aria-label="Filter by camera password" className="w-auto" value={password} onChange={(e) => setPassword(e.target.value)}>
+          <option value="">Any password</option>
+          <option value="ok">Password meets policy</option>
+          <option value="weak">Weak password</option>
+          <option value="expired">Password change due</option>
         </Select>
         <Select aria-label="Filter by storage usage" className="w-auto" value={usage} onChange={(e) => setUsage(e.target.value)}>
           {Object.entries(USAGE_FILTERS).map(([k, v]) => (

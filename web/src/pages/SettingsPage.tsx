@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, KeyRound, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
@@ -15,6 +15,7 @@ import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
 import { EmailSettingsTab } from "./EmailSettingsTab";
 import { useIdentities } from "./ConnectedAccounts";
+import { CameraPasswordsTab } from "./CameraPasswordsTab";
 import { InvitationsCard, QuickInvite, useInvitations } from "./InvitationsPanel";
 import { OrganizationsTab } from "./OrganizationsTab";
 
@@ -36,6 +37,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "retention", label: "Retention", description: "How long history and audit records are kept.", icon: <Archive className={icon} />, element: <MonitoringSettingsTab groupKey="retention" /> },
     can("settings:read") && { path: "brands", label: "Camera brands", description: "Brand integrations: built-in adapters and API integrations configured here.", icon: <Boxes className={icon} />, element: <BrandsSection /> },
     can("settings:read") && { path: "networks", label: "Camera networks", description: "The network ranges the monitor may contact cameras on.", icon: <Network className={icon} />, element: <NetworksTab /> },
+    can("settings:read") && { path: "camera-passwords", label: "Camera passwords", description: "The standard for the cameras' own passwords, and which cameras fall short.", icon: <KeyRound className={icon} />, element: <CameraPasswordsTab /> },
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Users", description: `The people in ${user?.organizationName ?? "this organization"}: add them, set their roles, and delete them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },

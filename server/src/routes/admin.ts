@@ -45,6 +45,7 @@ import {
 } from "../services/settingsService.js";
 import { deleteInvitation, invite, inviteSchema, listInvitations, resend, revoke } from "../services/invitationService.js";
 import { createUser, createUserSchema } from "../services/userService.js";
+import { cameraPasswordCounts, cameraPasswordPolicySchema, getCameraPasswordPolicy, updateCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
 
 const isSystemAdmin = (req: Request) => req.auth!.user.isSystemAdmin;
 
@@ -73,6 +74,16 @@ settingsRouter.patch("/monitoring", requirePermission("settings:write"), async (
   const updated = await updateMonitoringSettings(orgOf(req), patch, req.auth!.user.id);
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.monitoring_updated", entityType: "settings", entityId: "monitoring", details: patch });
   res.json(updated);
+});
+// The standard for the cameras' own passwords, per organization; counts show how many cameras fall short.
+settingsRouter.get("/camera-password-policy", requirePermission("cameras:read"), async (req, res) => {
+  res.json({ policy: await getCameraPasswordPolicy(orgOf(req)), counts: await cameraPasswordCounts(orgOf(req)) });
+});
+settingsRouter.patch("/camera-password-policy", requirePermission("settings:write"), async (req, res) => {
+  const patch = parse(cameraPasswordPolicySchema.partial(), req.body);
+  const policy = await updateCameraPasswordPolicy(orgOf(req), patch, req.auth!.user.id);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.camera_password_policy_updated", entityType: "settings", entityId: "camera_password_policy", details: patch });
+  res.json({ policy, counts: await cameraPasswordCounts(orgOf(req)) });
 });
 // Camera networks protect the whole server: everyone may read them, only the system administrator changes them.
 settingsRouter.get("/networks", requirePermission("settings:read"), async (req, res) => {

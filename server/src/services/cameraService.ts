@@ -6,6 +6,7 @@ import { conflict, HttpError, notFound } from "../lib/errors.js";
 import { getCipher } from "../security/cipher.js";
 import { HostNotAllowedError, normalizeHost } from "../security/hostGuard.js";
 import { type Actor, audit } from "./auditService.js";
+import { getCameraPasswordPolicy, ISSUE_MESSAGES, PASSWORD_STATUS_SQL, passwordIssues } from "./cameraPasswordPolicy.js";
 
 // ------------------------------------------------------------------ validation
 
@@ -139,7 +140,8 @@ const SELECT_CAMERA = `
          c.model, c.location, c.monitoring_enabled, c.local_storage, c.warning_threshold, c.critical_threshold,
          (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
          c.created_at, c.updated_at,
-         cr.username, cr.updated_at AS credentials_updated_at,
+         cr.username, cr.updated_at AS credentials_updated_at, cr.password_changed_at, cr.password_issues,
+         ${PASSWORD_STATUS_SQL} AS password_status,
          s.connection_status, s.storage_health, s.last_error_code, s.last_error_message,
          s.last_attempt_at, s.last_success_at, s.consecutive_failures, s.consecutive_auth_failures,
          s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
@@ -192,6 +194,12 @@ export function toCameraView(r: CameraRow) {
     hasCaCertificate: r.has_ca_certificate,
     username: r.username,
     credentialsUpdatedAt: r.credentials_updated_at ?? null,
+    /** The camera password against the organization's camera password policy. */
+    password: {
+      status: (r.password_status as "ok" | "weak" | "expired" | "unknown" | undefined) ?? "unknown",
+      issues: (r.password_issues as string[] | null) ?? [],
+      changedAt: r.password_changed_at ?? null,
+    },
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     status: {
@@ -239,6 +247,7 @@ export const listQuerySchema = z.object({
   minUsage: z.coerce.number().min(0).max(100).optional(),
   maxUsage: z.coerce.number().min(0).max(100).optional(),
   recording: z.enum(["recording", "idle", "error", "unknown"]).optional(),
+  password: z.enum(["ok", "weak", "expired"]).optional(),
   sort: z.enum(["name", "host", "brand", "location", "connection", "health", "recording", "usage", "lastSuccess", "recordingDays"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   page: z.coerce.number().int().min(1).default(1),
@@ -282,6 +291,7 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
   if (q.minUsage !== undefined) where.push(`s.used_percentage >= ${p(q.minUsage)}`);
   if (q.maxUsage !== undefined) where.push(`s.used_percentage <= ${p(q.maxUsage)}`);
   if (q.recording) where.push(`c.monitoring_enabled AND s.recording_state = ${p(q.recording)}`);
+  if (q.password) where.push(`(SELECT ${PASSWORD_STATUS_SQL} FROM camera_credentials cr WHERE cr.camera_id = c.id) = ${p(q.password)}`);
 
   return { clause: where.join(" AND "), params, p };
 }
@@ -425,10 +435,11 @@ export async function createCamera(
       )
       .catch(translateUniqueViolation);
     const id = rows[0]!.id;
+    const issues = await checkCameraPassword(orgId, input.brand, input.username, input.password, client);
     await client.query(
-      `INSERT INTO camera_credentials (camera_id, username, password_encrypted, key_version, updated_by)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [id, input.username, cipher.encrypt(input.password), cipher.keyVersion, actor.id],
+      `INSERT INTO camera_credentials (camera_id, username, password_encrypted, key_version, updated_by, password_issues)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, input.username, cipher.encrypt(input.password), cipher.keyVersion, actor.id, issues],
     );
     await client.query("INSERT INTO camera_status (camera_id, next_check_at) VALUES ($1, now())", [id]);
     await audit(
@@ -442,6 +453,21 @@ export async function createCamera(
   };
   const id = db ? await run(db) : await withTransaction(run);
   return id;
+}
+
+/**
+ * How a camera password falls short of the organization's camera password policy. With "block",
+ * a new password that falls short is refused. API keys and tokens of other integrations are not checked.
+ */
+async function checkCameraPassword(orgId: string, brand: string, username: string | null, password: string, db: Queryable, isNew = true): Promise<string[]> {
+  if (credentialsFor(brand) !== "user_password") return [];
+  const policy = await getCameraPasswordPolicy(orgId, db);
+  const issues = passwordIssues(password, username, policy);
+  if (issues.length && isNew && policy.enforcement === "block") {
+    const message = `This password does not meet the camera password policy: it is ${issues.map((i) => ISSUE_MESSAGES[i](policy)).join(", ")}. Change it on the camera first.`;
+    throw new HttpError(400, "VALIDATION_ERROR", `password: ${message}`, [{ field: "password", message }]);
+  }
+  return issues;
 }
 
 export async function updateCamera(orgId: string, id: string, patch: CameraUpdate, actor: Actor, ip?: string | null) {
@@ -501,16 +527,28 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
     const credentialsChanged = patch.password !== undefined || (patch.username !== undefined && patch.username !== current.username);
     if (credentialsChanged) {
       const cipher = getCipher();
+      const username = patch.username ?? current.username;
+      const stored = (await client.query<{ password_encrypted: string }>("SELECT password_encrypted FROM camera_credentials WHERE camera_id = $1", [id])).rows[0];
+      let old: string | null = null;
+      try {
+        old = stored ? cipher.decrypt(stored.password_encrypted) : null;
+      } catch {
+        old = null;
+      }
+      const password = patch.password ?? old;
+      const issues = password === null ? [] : await checkCameraPassword(orgId, brand, username, password, client, patch.password !== undefined);
       if (patch.password !== undefined) {
+        // Saving the same password again does not restart its age.
         await client.query(
-          `UPDATE camera_credentials SET username = $2, password_encrypted = $3, key_version = $4, updated_at = now(), updated_by = $5
+          `UPDATE camera_credentials SET username = $2, password_encrypted = $3, key_version = $4, updated_at = now(), updated_by = $5,
+                  password_issues = $6, password_changed_at = CASE WHEN $7 THEN password_changed_at ELSE now() END
            WHERE camera_id = $1`,
-          [id, patch.username ?? current.username, cipher.encrypt(patch.password), cipher.keyVersion, actor.id],
+          [id, username, cipher.encrypt(patch.password), cipher.keyVersion, actor.id, issues, patch.password === old],
         );
       } else {
         await client.query(
-          "UPDATE camera_credentials SET username = $2, updated_at = now(), updated_by = $3 WHERE camera_id = $1",
-          [id, patch.username, actor.id],
+          "UPDATE camera_credentials SET username = $2, updated_at = now(), updated_by = $3, password_issues = $4 WHERE camera_id = $1",
+          [id, patch.username, actor.id, issues],
         );
       }
       await audit({ actor, ip, action: "camera.credentials_changed", entityType: "camera", entityId: id }, client);

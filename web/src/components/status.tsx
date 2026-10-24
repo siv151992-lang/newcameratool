@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, FilePen, FlaskConical, HardDriveDownload, WifiOff } from "lucide-react";
-import type { ConnectionStatus, IntegrationStatus, RecordingState, Severity, StorageHealth } from "../api/types";
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, Clock, FilePen, FlaskConical, HardDriveDownload, KeyRound, WifiOff } from "lucide-react";
+import type { CameraPasswordStatus, ConnectionStatus, IntegrationStatus, RecordingState, Severity, StorageHealth } from "../api/types";
 
 /**
  * Status indicators always pair color with an icon and a text label, so meaning never
@@ -115,4 +115,12 @@ export function IntegrationStatusBadge({ status }: { status: IntegrationStatus }
   if (status === "tested") return <Pill tone="warn" icon={FlaskConical} label="Tested" title="Test passed; not used for monitoring until enabled" />;
   if (status === "disabled") return <Pill tone="unknown" icon={CirclePause} label="Disabled" title="Not used for monitoring; cameras and history are kept" />;
   return <Pill tone="unknown" icon={FilePen} label="Draft" title="Saved but not successfully tested yet" />;
+}
+
+/** The camera's own password against the camera password policy. */
+export function PasswordBadge({ status, title }: { status: CameraPasswordStatus; title?: string }) {
+  if (status === "ok") return <Pill tone="good" icon={KeyRound} label="Meets policy" title={title} />;
+  if (status === "weak") return <Pill tone="bad" icon={AlertOctagon} label="Weak" title={title} />;
+  if (status === "expired") return <Pill tone="warn" icon={Clock} label="Change due" title={title} />;
+  return <Pill tone="unknown" icon={CircleHelp} label="Not checked" title={title} />;
 }
