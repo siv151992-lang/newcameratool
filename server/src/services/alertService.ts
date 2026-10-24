@@ -111,7 +111,7 @@ export const alertListQuery = z.object({
 });
 
 const SELECT_ALERT = `
-  SELECT a.id, a.camera_id AS "cameraId", c.name AS "cameraName", c.host AS "cameraHost",
+  SELECT a.id, a.camera_id AS "cameraId", c.name AS "cameraName", c.host AS "cameraHost", c.priority AS "cameraPriority",
          (c.deleted_at IS NOT NULL) AS "cameraRemoved",
          a.type, a.severity, a.status, a.title, a.description, a.context,
          a.first_detected_at AS "firstDetectedAt", a.last_seen_at AS "lastSeenAt",
@@ -136,7 +136,8 @@ export async function listAlerts(orgId: string, q: z.infer<typeof alertListQuery
   const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM alerts a JOIN cameras c ON c.id = a.camera_id ${clause}`, params)).rows[0]!.n;
   const { rows } = await pool.query(
     `${SELECT_ALERT} ${clause}
-     ORDER BY (a.status = 'resolved'), CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.last_seen_at DESC
+     ORDER BY (a.status = 'resolved'), (c.priority = 'critical') DESC,
+              CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.last_seen_at DESC
      LIMIT ${p(q.pageSize)} OFFSET ${p((q.page - 1) * q.pageSize)}`,
     params,
   );

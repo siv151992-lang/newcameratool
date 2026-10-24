@@ -203,7 +203,7 @@ describe("cameras", () => {
     expect(res.headers["content-type"]).toContain("text/csv");
     expect(res.headers["content-disposition"]).toMatch(/attachment; filename="camera-status-report-\d{4}-\d{2}-\d{2}\.csv"/);
     const [header, ...rows] = res.text.replace(/^\uFEFF/, "").trim().split("\r\n");
-    expect(header).toContain("Camera,IP address,Port,Brand,Model,Location,Monitoring,Connection,SD card status");
+    expect(header).toContain("Camera,IP address,Port,Brand,Model,Location,Priority,Monitoring,Connection,SD card status");
     expect(header).toContain("Last successful check (Asia/Calcutta)");
     expect(rows).toHaveLength(3);
     expect(rows[0]).toMatch(/^Car park,10\.1\.0\.9,.*,On,Not checked yet,No local storage \(records elsewhere\),/);
@@ -237,6 +237,25 @@ describe("cameras", () => {
     expect((await agent.get("/api/cameras?status=disabled")).body.total).toBe(1);
     const res = await agent.post("/api/cameras/bulk-delete").set("X-CSRF-Token", csrf).send({ ids: [a.body.id, b.body.id] }).expect(200);
     expect(res.body.removed).toHaveLength(2);
+  });
+});
+
+describe("camera priority", () => {
+  it("lists critical-area cameras first, filters and counts them, and sets priority in bulk", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const add = async (name: string, host: string, priority?: string) =>
+      (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name, host, ...(priority ? { priority } : {}) }).expect(201)).body.id as string;
+    const a = await add("Alpha", "127.0.0.11");
+    const z = await add("Zulu vault", "127.0.0.12", "critical");
+    const b = await add("Bravo", "127.0.0.13");
+    expect((await agent.get("/api/cameras").expect(200)).body.items.map((c: { name: string }) => c.name)).toEqual(["Zulu vault", "Alpha", "Bravo"]);
+    expect((await agent.get("/api/cameras?priority=critical").expect(200)).body.items.map((c: { id: string }) => c.id)).toEqual([z]);
+    await agent.post("/api/cameras/bulk-priority").set("X-CSRF-Token", csrf).send({ ids: [b], priority: "critical" }).expect(200);
+    expect((await agent.get(`/api/cameras/${b}`).expect(200)).body.priority).toBe("critical");
+    expect((await agent.get("/api/cameras/summary").expect(200)).body.criticalArea).toMatchObject({ total: 2 });
+    await agent.patch(`/api/cameras/${z}`).set("X-CSRF-Token", csrf).send({ priority: "normal" }).expect(200);
+    expect((await agent.get("/api/cameras?priority=critical").expect(200)).body.items.map((c: { id: string }) => c.id)).toEqual([b]);
+    expect(a).toBeTruthy();
   });
 });
 

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, Download, HardDrive, Plus, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, Download, HardDrive, Plus, WifiOff, ShieldAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -59,6 +59,13 @@ export function DashboardPage() {
       <ErrorMessage error={summary.error} className="mb-4" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <StatTile
+          label="Critical areas"
+          value={s?.criticalArea.total ?? "—"}
+          icon={<ShieldAlert className={`${icon} ${s && (s.criticalArea.offline || s.criticalArea.withProblems) ? "text-bad" : "text-good"}`} />}
+          hint={s ? (s.criticalArea.total === 0 ? "Mark cameras as critical area on the Cameras page" : s.criticalArea.withProblems ? `${s.criticalArea.offline} offline · ${s.criticalArea.withProblems} with open alerts` : "All fine") : undefined}
+          to="/cameras?priority=critical"
+        />
         <StatTile label="Registered cameras" value={s?.totalCameras ?? "—"} icon={<Camera className={icon} />} hint={s && s.disabled > 0 ? `${s.disabled} with monitoring disabled` : "All monitored"} to="/cameras" />
         <StatTile label="Online" value={s?.online ?? "—"} icon={<CheckCircle2 className={`${icon} text-good`} />} hint={s && s.unknown > 0 ? `${s.unknown} not yet checked` : undefined} to="/cameras?status=online" />
         <StatTile label="Offline" value={s?.offline ?? "—"} icon={<WifiOff className={`${icon} text-bad`} />} hint="After repeated failed checks" to="/cameras?status=offline" />

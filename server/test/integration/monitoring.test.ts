@@ -205,6 +205,16 @@ describe("storage checks", () => {
     expect(await due()).toMatchObject([{ status: "resolved" }]);
   });
 
+  it("raises every problem of a critical-area camera as critical", async () => {
+    const id = await addCamera();
+    cam.recording = "idle";
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).filter((a) => a.type === "not_recording")).toMatchObject([{ severity: "warning" }]);
+    await pool.query("UPDATE cameras SET priority = 'critical' WHERE id = $1", [id]);
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).filter((a) => a.type === "not_recording")).toMatchObject([{ severity: "critical", status: "active" }]);
+  });
+
   it("uses per-camera thresholds", async () => {
     cam.setDisks([{ id: 1, status: "ok", capacityMb: 1000, freeMb: 150, property: "RW" }]); // 85%
     const id = await addCamera({ warningThreshold: 90, criticalThreshold: 95 });

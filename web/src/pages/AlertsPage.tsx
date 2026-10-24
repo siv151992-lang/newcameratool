@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Alert, AlertDetail, Page } from "../api/types";
-import { SeverityBadge } from "../components/status";
+import { SeverityBadge, CriticalAreaBadge } from "../components/status";
 import { Button, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner } from "../components/ui";
 import { useToast } from "../components/toast";
 import { useAuth } from "../hooks/auth";
@@ -114,6 +114,7 @@ export function AlertsPage() {
                         <Link to={`/cameras/${a.cameraId}`} className="font-medium hover:underline">{a.cameraName}</Link>
                       )}
                       <div className="tabular text-xs text-ink-muted">{a.cameraHost}</div>
+                      {a.cameraPriority === "critical" && <div className="mt-1"><CriticalAreaBadge /></div>}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">{ALERT_TYPE_LABELS[a.type] ?? a.type}</td>
                     <td className="max-w-md px-3 py-2">

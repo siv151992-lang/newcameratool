@@ -243,3 +243,9 @@ export function passwordAgeCondition(input: { changedAt: Date | null; maxAgeDays
   }
   return null;
 }
+
+/** A problem on a camera in a critical area is critical, whatever its usual severity. */
+export function raiseForCriticalArea(c: AlertCondition): AlertCondition {
+  if (c.severity === "critical") return c;
+  return { ...c, severity: "critical", context: { ...c.context, criticalArea: true } };
+}

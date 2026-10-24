@@ -20,7 +20,7 @@ import { redactSecrets } from "../security/redact.js";
 import { applyConditions, openAlertTypes } from "../services/alertService.js";
 import { credentialsFor, getCameraConfig } from "../services/cameraService.js";
 import { getMonitoringSettings, type MonitoringSettings } from "../services/settingsService.js";
-import { type CheckResult, evaluateConditions, passwordAgeCondition, storageHealth, thresholdsFor } from "./evaluate.js";
+import { type CheckResult, evaluateConditions, passwordAgeCondition, raiseForCriticalArea, storageHealth, thresholdsFor } from "./evaluate.js";
 import { getCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
 
 export const INSTANCE_ID = `${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -267,7 +267,7 @@ async function persist(
   return withTransaction(async (db) => {
     const { rows } = await db.query(
       `SELECT c.id, c.name, c.host, c.created_at, c.warning_threshold, c.critical_threshold, c.local_storage,
-              c.organization_id, c.brand_key, cr.password_changed_at,
+              c.organization_id, c.brand_key, c.priority, cr.password_changed_at,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id
@@ -408,7 +408,9 @@ async function persist(
     const due = credentialsFor(cam.brand_key) === "user_password"
       ? passwordAgeCondition({ changedAt: cam.password_changed_at, maxAgeDays: policy.maxAgeDays, reminderDays: policy.reminderDays, alertsEnabled: policy.changeAlerts })
       : null;
-    const active = due ? [...evaluation.active, due] : evaluation.active;
+    // Critical-area cameras: every problem is critical (the password reminder stays a reminder).
+    const raised = cam.priority === "critical" ? evaluation.active.map(raiseForCriticalArea) : evaluation.active;
+    const active = due ? [...raised, due] : raised;
     return applyConditions(db, { id: cam.id, name: cam.name, host: cam.host }, active, [...evaluation.evaluated, "password_change_due"]);
   });
 }

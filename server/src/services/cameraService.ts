@@ -83,6 +83,8 @@ const baseFields = {
   monitoringEnabled: z.boolean().default(true),
   /** False for cameras that record elsewhere (NVR) and have no SD card by design. */
   localStorage: z.boolean().default(true),
+  /** "critical": a critical area; listed first, and its problems are raised as critical. */
+  priority: z.enum(["critical", "normal"]).default("normal"),
   warningThreshold: threshold,
   criticalThreshold: threshold,
   caCertificate: pemSchema,
@@ -137,7 +139,7 @@ export function defaultPort(brandKey: string, protocol: "http" | "https") {
 
 const SELECT_CAMERA = `
   SELECT c.id, c.name, c.host, c.port, c.protocol, c.brand_key, b.display_name AS brand_name,
-         c.model, c.location, c.monitoring_enabled, c.local_storage, c.warning_threshold, c.critical_threshold,
+         c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.warning_threshold, c.critical_threshold,
          (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
          c.created_at, c.updated_at,
          cr.username, cr.updated_at AS credentials_updated_at, cr.password_changed_at, cr.password_issues,
@@ -189,6 +191,7 @@ export function toCameraView(r: CameraRow) {
     location: r.location,
     monitoringEnabled: r.monitoring_enabled,
     localStorage: r.local_storage as boolean,
+    priority: r.priority as "critical" | "normal",
     warningThreshold: r.warning_threshold,
     criticalThreshold: r.critical_threshold,
     hasCaCertificate: r.has_ca_certificate,
@@ -248,6 +251,7 @@ export const listQuerySchema = z.object({
   maxUsage: z.coerce.number().min(0).max(100).optional(),
   recording: z.enum(["recording", "idle", "error", "unknown"]).optional(),
   password: z.enum(["ok", "weak", "expired"]).optional(),
+  priority: z.enum(["critical", "normal"]).optional(),
   sort: z.enum(["name", "host", "brand", "location", "connection", "health", "recording", "usage", "lastSuccess", "recordingDays"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   page: z.coerce.number().int().min(1).default(1),
@@ -291,6 +295,7 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
   if (q.minUsage !== undefined) where.push(`s.used_percentage >= ${p(q.minUsage)}`);
   if (q.maxUsage !== undefined) where.push(`s.used_percentage <= ${p(q.maxUsage)}`);
   if (q.recording) where.push(`c.monitoring_enabled AND s.recording_state = ${p(q.recording)}`);
+  if (q.priority) where.push(`c.priority = ${p(q.priority)}`);
   if (q.password) where.push(`(SELECT ${PASSWORD_STATUS_SQL} FROM camera_credentials cr WHERE cr.camera_id = c.id) = ${p(q.password)}`);
 
   return { clause: where.join(" AND "), params, p };
@@ -300,7 +305,7 @@ export async function listCameras(orgId: string, q: ListQuery) {
   const { clause, params, p } = listFilter(orgId, q);
   const base = `FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause}`;
   const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n ${base}`, params)).rows[0]!.n;
-  const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
+  const order = `(c.priority = 'critical') DESC, ${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
   const limit = p(q.pageSize);
   const offset = p((q.page - 1) * q.pageSize);
   const { rows } = await pool.query<CameraRow>(
@@ -313,7 +318,7 @@ export async function listCameras(orgId: string, q: ListQuery) {
 /** IDs of every camera matching the list filters ("Select all N matching"), in list order. */
 export async function listCameraIds(orgId: string, q: ListQuery): Promise<{ ids: string[]; total: number }> {
   const { clause, params } = listFilter(orgId, q);
-  const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
+  const order = `(c.priority = 'critical') DESC, ${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
   const { rows } = await pool.query<{ id: string }>(
     `SELECT c.id FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id WHERE ${clause} ORDER BY ${order}`,
     params,
@@ -368,6 +373,10 @@ export async function getSummary(orgId: string) {
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND NOT c.local_storage)::int AS without_local_storage,
+            count(*) FILTER (WHERE c.priority = 'critical')::int AS critical_area,
+            count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND s.connection_status = 'offline')::int AS critical_area_offline,
+            count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND EXISTS (
+              SELECT 1 FROM alerts a WHERE a.camera_id = c.id AND a.status <> 'resolved' AND a.type <> 'password_change_due'))::int AS critical_area_problems,
             -- Capacity counts only cameras that are reachable: an offline camera's last reading is stale.
             coalesce(sum(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline'), 0)::bigint AS total_bytes,
             coalesce(sum(s.used_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline'), 0)::bigint AS used_bytes,
@@ -403,6 +412,7 @@ export async function getSummary(orgId: string) {
     camerasWithStorageData: r.cameras_with_storage_data,
     offlineWithStorageData: r.offline_with_storage_data,
     withoutLocalStorage: r.without_local_storage,
+    criticalArea: { total: r.critical_area, offline: r.critical_area_offline, withProblems: r.critical_area_problems },
     alerts: alerts.rows[0],
   };
 }
@@ -417,7 +427,7 @@ function translateUniqueViolation(err: unknown): never {
 }
 
 export async function createCamera(
-  orgId: string, input: Omit<CameraInput, "localStorage"> & { localStorage?: boolean }, actor: Actor, ip?: string | null, db?: Queryable,
+  orgId: string, input: Omit<CameraInput, "localStorage" | "priority"> & { localStorage?: boolean; priority?: "critical" | "normal" }, actor: Actor, ip?: string | null, db?: Queryable,
 ) {
   const port = input.port ?? defaultPort(input.brand, input.protocol);
   const cipher = getCipher();
@@ -425,12 +435,12 @@ export async function createCamera(
     const { rows } = await client
       .query<{ id: string }>(
         `INSERT INTO cameras (name, host, port, protocol, brand_key, model, location, monitoring_enabled,
-                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id, priority)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
-          input.caCertificate, actor.id, input.localStorage ?? true, orgId,
+          input.caCertificate, actor.id, input.localStorage ?? true, orgId, input.priority ?? "normal",
         ],
       )
       .catch(translateUniqueViolation);
@@ -502,7 +512,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
       .query(
         `UPDATE cameras SET name = $2, host = $3, port = $4, protocol = $5, brand_key = $6, model = $7, location = $8,
                 monitoring_enabled = $9, warning_threshold = $10, critical_threshold = $11,
-                ca_certificate = $12, local_storage = $13, updated_at = now()
+                ca_certificate = $12, local_storage = $13, priority = $14, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -520,6 +530,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
             ? (await client.query("SELECT ca_certificate FROM cameras WHERE id = $1", [id])).rows[0].ca_certificate
             : patch.caCertificate,
           patch.localStorage ?? current.local_storage,
+          patch.priority ?? current.priority,
         ],
       )
       .catch(translateUniqueViolation);
@@ -674,6 +685,20 @@ export async function setLocalStorage(orgId: string, ids: string[], localStorage
     for (const r of rows) {
       await audit({ actor, ip, action: localStorage ? "camera.local_storage_on" : "camera.local_storage_off", entityType: "camera", entityId: r.id }, db);
     }
+    return { updated: rows.length };
+  });
+}
+
+/** Marks cameras as in a critical area, or back to normal. Open alerts take the new severity at the next check. */
+export async function setPriority(orgId: string, ids: string[], priority: "critical" | "normal", actor: Actor, ip?: string | null) {
+  return withTransaction(async (db) => {
+    const { rows } = await db.query<{ id: string }>(
+      `UPDATE cameras SET priority = $2, updated_at = now()
+       WHERE id = ANY($1::uuid[]) AND organization_id = $3 AND deleted_at IS NULL AND priority <> $2 RETURNING id`,
+      [ids, priority, orgId],
+    );
+    await db.query("UPDATE camera_status SET next_check_at = now() WHERE camera_id = ANY($1::uuid[])", [rows.map((r) => r.id)]);
+    for (const r of rows) await audit({ actor, ip, action: "camera.priority_changed", entityType: "camera", entityId: r.id, details: { priority } }, db);
     return { updated: rows.length };
   });
 }

@@ -1,18 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, HardDrive, HardDriveDownload, Pause, Pencil, Play, RefreshCw, Search, Trash2, Video } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, HardDrive, HardDriveDownload, Pause, Pencil, Play, RefreshCw, Search, ShieldAlert, Trash2, Video } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
-import { useCheckNow, useDownloadCameraReport, useRemoveCameras, useSetLocalStorage, useSetMonitoring } from "../hooks/cameras";
+import { useCheckNow, useDownloadCameraReport, useRemoveCameras, useSetLocalStorage, useSetMonitoring, useSetPriority } from "../hooks/cameras";
 import { useColumnVisibility } from "../hooks/columns";
 import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, formatDays, relativeTime } from "../lib/format";
 import { ColumnsMenu } from "./ColumnsMenu";
 import { LiveViewDialog } from "./LiveView";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
-import { ConnectionBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
+import { ConnectionBadge, CriticalAreaBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
 type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays";
@@ -165,7 +165,7 @@ function IconAction({ label, onClick, children, disabled, to }: { label: string;
   );
 }
 
-export function CameraTable({ initialStatus = "", initialRecording = "", initialPassword = "", title }: { initialStatus?: string; initialRecording?: string; initialPassword?: string; title?: ReactNode }) {
+export function CameraTable({ initialStatus = "", initialRecording = "", initialPassword = "", initialPriority = "", title }: { initialStatus?: string; initialRecording?: string; initialPassword?: string; initialPriority?: string; title?: ReactNode }) {
   const { can } = useAuth();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -175,6 +175,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const [usage, setUsage] = useState("");
   const [recording, setRecording] = useState(initialRecording);
   const [password, setPassword] = useState(initialPassword);
+  const [priority, setPriority] = useState(initialPriority);
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
@@ -182,15 +183,16 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const [removing, setRemoving] = useState<Camera[] | null>(null);
   const [live, setLive] = useState<Camera | null>(null);
   const setLocalStorage = useSetLocalStorage();
+  const setCameraPriority = useSetPriority();
   const debouncedSearch = useDebounced(search);
   const columnVisibility = useColumnVisibility("cctv-camera-columns", COLUMN_KEYS);
   const visibleColumns = COLUMNS.filter((col) => columnVisibility.isVisible(col.key));
   const pageSize = 25;
 
-  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording, password]);
+  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording, password, priority]);
 
   const { minUsage, maxUsage } = USAGE_FILTERS[usage] ?? {};
-  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, password, sort, order, page, pageSize };
+  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, password, priority, sort, order, page, pageSize };
   const cameras = useQuery({
     queryKey: ["cameras", params],
     queryFn: () => api<Page<Camera>>(`/cameras${toQuery(params)}`),
@@ -295,6 +297,11 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
           <option value="error">Recording error</option>
           <option value="unknown">Recording unknown</option>
         </Select>
+        <Select aria-label="Filter by priority" className="w-auto" value={priority} onChange={(e) => setPriority(e.target.value)}>
+          <option value="">Any priority</option>
+          <option value="critical">Critical areas</option>
+          <option value="normal">Normal priority</option>
+        </Select>
         <Select aria-label="Filter by camera password" className="w-auto" value={password} onChange={(e) => setPassword(e.target.value)}>
           <option value="">Any password</option>
           <option value="ok">Password meets policy</option>
@@ -322,6 +329,22 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
         </div>
         {canWrite && selected.size > 0 && (
           <>
+            <Button
+              size="sm"
+              icon={<ShieldAlert className="h-4 w-4" />}
+              loading={setCameraPriority.isPending && setCameraPriority.variables?.priority === "critical"}
+              onClick={() => setCameraPriority.mutate({ ids: [...selected], priority: "critical" }, { onSuccess: () => setSelected(new Set()) })}
+              title="Cameras in critical areas: listed first, and every problem is raised as critical"
+            >
+              Critical area
+            </Button>
+            <Button
+              size="sm"
+              loading={setCameraPriority.isPending && setCameraPriority.variables?.priority === "normal"}
+              onClick={() => setCameraPriority.mutate({ ids: [...selected], priority: "normal" }, { onSuccess: () => setSelected(new Set()) })}
+            >
+              Normal priority
+            </Button>
             <Button
               size="sm"
               icon={<HardDriveDownload className="h-4 w-4" />}
@@ -430,6 +453,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                         {c.name}
                       </Link>
                       <div className="text-xs text-ink-muted">{c.model ?? "Model unknown"}</div>
+                      {c.priority === "critical" && <div className="mt-1"><CriticalAreaBadge /></div>}
                     </td>
                     {visibleColumns.map((col) => (
                       <td key={col.key} className={clsx("px-3 py-2", col.align === "right" && "text-right", col.cellClassName)}>

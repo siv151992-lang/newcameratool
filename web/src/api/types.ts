@@ -112,6 +112,8 @@ export interface Camera {
   hasCaCertificate: boolean;
   username: string | null;
   credentialsUpdatedAt: string | null;
+  /** "critical": a critical area, listed first, problems raised as critical. */
+  priority: "critical" | "normal";
   /** The camera password against the organization's camera password policy. */
   password: { status: CameraPasswordStatus; issues: CameraPasswordIssue[]; changedAt: string | null };
   createdAt: string;
@@ -194,6 +196,7 @@ export interface Summary {
   /** Offline cameras whose last storage reading is left out of the capacity totals. */
   offlineWithStorageData: number;
   withoutLocalStorage: number;
+  criticalArea: { total: number; offline: number; withProblems: number };
   alerts: { active: number; acknowledged: number; critical: number };
 }
 
@@ -238,6 +241,7 @@ export interface Alert {
   cameraId: string;
   cameraName: string;
   cameraHost: string;
+  cameraPriority: "critical" | "normal";
   cameraRemoved: boolean;
   type: string;
   severity: Severity;

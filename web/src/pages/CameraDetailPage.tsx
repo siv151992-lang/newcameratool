@@ -8,7 +8,7 @@ import type { Alert, CameraDetail, CameraHistory, CameraPasswordPolicyView, Conn
 import { Diagnostics } from "../components/Diagnostics";
 import { LiveViewDialog } from "../components/LiveView";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
-import { ConnectionBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
+import { ConnectionBadge, CriticalAreaBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
 import { issueLabel } from "../lib/cameraPassword";
 import { UsageHistoryChart } from "../components/UsageHistoryChart";
 import { useAiStatus } from "../hooks/ai";
@@ -141,6 +141,7 @@ export function CameraDetailPage() {
             {c.location && <>·<span>{c.location}</span></>}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
+            {c.priority === "critical" && <CriticalAreaBadge />}
             <ConnectionBadge status={s.connection} monitoringEnabled={c.monitoringEnabled} />
             {c.localStorage === false ? (
               <NoLocalStorageBadge />

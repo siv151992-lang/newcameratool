@@ -49,6 +49,23 @@ export function useSetMonitoring() {
 const BULK_BATCH = 500;
 const batches = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / BULK_BATCH) }, (_, i) => ids.slice(i * BULK_BATCH, (i + 1) * BULK_BATCH));
 
+export function useSetPriority() {
+  const invalidate = useInvalidateCameras();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ ids, priority }: { ids: string[]; priority: "critical" | "normal" }) => {
+      let updated = 0;
+      for (const chunk of batches(ids)) updated += (await api<{ updated: number }>("/cameras/bulk-priority", { method: "POST", body: { ids: chunk, priority } })).updated;
+      return { updated };
+    },
+    onSuccess: (r, v) => {
+      toast("success", `${r.updated} camera(s) marked as ${v.priority === "critical" ? "critical area" : "normal priority"}`);
+      invalidate();
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+}
+
 export function useSetLocalStorage() {
   const invalidate = useInvalidateCameras();
   const toast = useToast();

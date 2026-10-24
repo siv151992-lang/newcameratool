@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, Clock, FilePen, FlaskConical, HardDriveDownload, KeyRound, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, Clock, FilePen, FlaskConical, HardDriveDownload, KeyRound, ShieldAlert, WifiOff } from "lucide-react";
 import type { CameraPasswordStatus, ConnectionStatus, IntegrationStatus, RecordingState, Severity, StorageHealth } from "../api/types";
 
 /**
@@ -123,4 +123,9 @@ export function PasswordBadge({ status, title }: { status: CameraPasswordStatus;
   if (status === "weak") return <Pill tone="bad" icon={AlertOctagon} label="Weak" title={title} />;
   if (status === "expired") return <Pill tone="warn" icon={Clock} label="Change due" title={title} />;
   return <Pill tone="unknown" icon={CircleHelp} label="Not checked" title={title} />;
+}
+
+/** A camera in a critical area: listed first, its problems raised as critical. */
+export function CriticalAreaBadge() {
+  return <Pill tone="bad" icon={ShieldAlert} label="Critical area" title="Listed first; every problem is raised as critical" />;
 }

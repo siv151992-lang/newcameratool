@@ -21,6 +21,7 @@ import {
   removeCameras,
   listCameraIds,
   setLocalStorage,
+  setPriority,
   setMonitoring,
   updateCamera,
 } from "../services/cameraService.js";
@@ -110,6 +111,11 @@ camerasRouter.post("/bulk-delete", write, async (req, res) => {
 camerasRouter.post("/bulk-local-storage", write, async (req, res) => {
   const { ids, localStorage } = parse(z.object({ ids: z.array(z.string().uuid()).min(1).max(500), localStorage: z.boolean() }).strict(), req.body);
   res.json(await setLocalStorage(orgOf(req), ids, localStorage, actorOf(req), req.ip));
+});
+
+camerasRouter.post("/bulk-priority", write, async (req, res) => {
+  const { ids, priority } = parse(z.object({ ids: z.array(z.string().uuid()).min(1).max(500), priority: z.enum(["critical", "normal"]) }).strict(), req.body);
+  res.json(await setPriority(orgOf(req), ids, priority, actorOf(req), req.ip));
 });
 
 // Whether smooth live video is set up (go2rtc); without it the live view shows pictures.

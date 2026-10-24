@@ -14,6 +14,7 @@ const gb = (bytes: number | null) => (bytes === null || bytes === undefined ? ""
 
 interface ReportRow {
   password_status: string;
+  priority: string;
   name: string;
   host: string;
   port: number;
@@ -59,7 +60,7 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
   const { clause, params } = listFilter(orgId, q);
   const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
   const { rows } = await pool.query<ReportRow>(
-    `SELECT c.name, c.host, c.port, b.display_name AS brand_name, c.model, c.location, c.monitoring_enabled, c.local_storage,
+    `SELECT c.name, c.host, c.port, b.display_name AS brand_name, c.model, c.location, c.priority, c.monitoring_enabled, c.local_storage,
             s.connection_status, s.storage_health, s.last_attempt_at, s.last_success_at, s.last_error_message,
             s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage, s.recording_state,
             s.recording_days, s.recording_oldest, s.recording_days_at_least,
@@ -80,7 +81,7 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
   );
   const time = (d: Date | null) => (d ? zonedParts(new Date(d).getTime(), timeZone).text : "");
   const lines: unknown[][] = [[
-    "Camera", "IP address", "Port", "Brand", "Model", "Location", "Monitoring", "Connection", "SD card status",
+    "Camera", "IP address", "Port", "Brand", "Model", "Location", "Priority", "Monitoring", "Connection", "SD card status",
     "SD card details (from camera)", "Storage health", "Capacity (GB)", "Used (GB)", "Free (GB)", "Used %", "Recording",
     "Recordings available (days)", "Oldest recording (camera time)",
     `Last successful check (${timeZone})`, `Last check attempt (${timeZone})`, "Last error", "Camera password",
@@ -88,7 +89,7 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
   for (const r of rows) {
     const monitored = r.monitoring_enabled;
     lines.push([
-      r.name, r.host, r.port, r.brand_name, r.model, r.location,
+      r.name, r.host, r.port, r.brand_name, r.model, r.location, r.priority === "critical" ? "Critical area" : "Normal",
       monitored ? "On" : "Paused",
       monitored ? CONNECTION[r.connection_status ?? "unknown"] ?? r.connection_status : "Paused",
       sdCardStatus(r),
