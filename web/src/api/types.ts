@@ -675,6 +675,8 @@ export interface CameraPasswordPolicy {
   blockCommon: boolean;
   maxAgeDays: number;
   enforcement: "warn" | "block";
+  changeAlerts: boolean;
+  reminderDays: number;
 }
 export interface CameraPasswordPolicyView {
   policy: CameraPasswordPolicy;

@@ -18,9 +18,10 @@ import type { Notifier } from "../notifications/notifier.js";
 import type { NotificationEvent } from "../notifications/types.js";
 import { redactSecrets } from "../security/redact.js";
 import { applyConditions, openAlertTypes } from "../services/alertService.js";
-import { getCameraConfig } from "../services/cameraService.js";
+import { credentialsFor, getCameraConfig } from "../services/cameraService.js";
 import { getMonitoringSettings, type MonitoringSettings } from "../services/settingsService.js";
-import { type CheckResult, evaluateConditions, storageHealth, thresholdsFor } from "./evaluate.js";
+import { type CheckResult, evaluateConditions, passwordAgeCondition, storageHealth, thresholdsFor } from "./evaluate.js";
+import { getCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
 
 export const INSTANCE_ID = `${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
 
@@ -266,9 +267,11 @@ async function persist(
   return withTransaction(async (db) => {
     const { rows } = await db.query(
       `SELECT c.id, c.name, c.host, c.created_at, c.warning_threshold, c.critical_threshold, c.local_storage,
+              c.organization_id, c.brand_key, cr.password_changed_at,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success
-       FROM cameras c JOIN camera_status s ON s.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
+       FROM cameras c JOIN camera_status s ON s.camera_id = c.id
+       LEFT JOIN camera_credentials cr ON cr.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
     );
     const cam = rows[0];
@@ -400,6 +403,12 @@ async function persist(
       localStorage,
       openTypes: await openAlertTypes(cameraId, db),
     });
-    return applyConditions(db, { id: cam.id, name: cam.name, host: cam.host }, evaluation.active, evaluation.evaluated);
+    // The password's age is known whatever the check found: due a change, or not (resolved).
+    const policy = await getCameraPasswordPolicy(cam.organization_id, db);
+    const due = credentialsFor(cam.brand_key) === "user_password"
+      ? passwordAgeCondition({ changedAt: cam.password_changed_at, maxAgeDays: policy.maxAgeDays, reminderDays: policy.reminderDays, alertsEnabled: policy.changeAlerts })
+      : null;
+    const active = due ? [...evaluation.active, due] : evaluation.active;
+    return applyConditions(db, { id: cam.id, name: cam.name, host: cam.host }, active, [...evaluation.evaluated, "password_change_due"]);
   });
 }

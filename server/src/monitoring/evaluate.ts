@@ -18,6 +18,7 @@ export const ALERT_TYPES = [
   "disk_readonly",
   "no_storage_device",
   "not_recording",
+  "password_change_due",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";
@@ -212,4 +213,33 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   }
 
   return { active, evaluated };
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The camera password's age against the policy: a reminder (info) `reminderDays` before it is due,
+ * a warning once it is due. Null when no change is due soon or the policy asks for none.
+ */
+export function passwordAgeCondition(input: { changedAt: Date | null; maxAgeDays: number; reminderDays: number; alertsEnabled: boolean; now?: number }): AlertCondition | null {
+  const { changedAt, maxAgeDays, reminderDays, alertsEnabled } = input;
+  if (!alertsEnabled || !changedAt || maxAgeDays <= 0) return null;
+  const age = Math.floor(((input.now ?? Date.now()) - changedAt.getTime()) / DAY_MS);
+  const left = maxAgeDays - age;
+  const how = "Change it on the camera, then enter the new password in the app under Edit.";
+  if (left <= 0) {
+    return {
+      type: "password_change_due", severity: "warning", title: "Camera password change due",
+      description: `The camera password was last changed ${age} days ago; the policy asks for a new one every ${maxAgeDays} days. ${how}`,
+      context: { ageDays: age, maxAgeDays },
+    };
+  }
+  if (left <= reminderDays) {
+    return {
+      type: "password_change_due", severity: "info", title: "Camera password change due soon",
+      description: `The camera password must be changed within ${left} day${left === 1 ? "" : "s"} (every ${maxAgeDays} days by policy). ${how}`,
+      context: { ageDays: age, maxAgeDays, daysLeft: left },
+    };
+  }
+  return null;
 }

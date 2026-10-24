@@ -7,7 +7,7 @@ import { useToast } from "../components/toast";
 import { Button, Card, Checkbox, ErrorMessage, Field, Input, Select, Spinner } from "../components/ui";
 import { useAuth } from "../hooks/auth";
 
-const STANDARD: CameraPasswordPolicy = { minLength: 8, minCharTypes: 3, blockCommon: true, maxAgeDays: 90, enforcement: "warn" };
+const STANDARD: CameraPasswordPolicy = { minLength: 8, minCharTypes: 3, blockCommon: true, maxAgeDays: 90, enforcement: "warn", changeAlerts: true, reminderDays: 7 };
 
 /** Settings → Camera passwords: the standard for the cameras' own passwords, and how many meet it. */
 export function CameraPasswordsTab() {
@@ -90,6 +90,22 @@ export function CameraPasswordsTab() {
             checked={draft.blockCommon}
             onChange={(e) => set("blockCommon", e.target.checked)}
           />
+          <div className="space-y-3 border-t border-line pt-4">
+            <Checkbox
+              label="Alert when a camera password change is due"
+              description="Raised on the Alerts page and emailed like other alerts (Settings → Notifications). Resolved once the new password is saved."
+              disabled={!editable || draft.maxAgeDays === 0}
+              checked={draft.changeAlerts && draft.maxAgeDays > 0}
+              onChange={(e) => set("changeAlerts", e.target.checked)}
+            />
+            {draft.changeAlerts && draft.maxAgeDays > 0 && (
+              <div className="max-w-xs pl-6">
+                <Field label="Remind this many days before" hint="A reminder (info) first, then a warning on the day it is due. 0 = no reminder.">
+                  {(id, d) => <Input id={id} aria-describedby={d} type="number" min={0} max={60} disabled={!editable} value={draft.reminderDays} onChange={(e) => set("reminderDays", num(e.target.value))} />}
+                </Field>
+              </div>
+            )}
+          </div>
           {editable && (
             <div className="flex flex-wrap justify-end gap-2">
               <Button type="button" onClick={() => setDraft(STANDARD)}>Use the standard policy</Button>

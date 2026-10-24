@@ -20,11 +20,16 @@ export const cameraPasswordPolicySchema = z
     maxAgeDays: z.number().int().min(0).max(3650),
     /** "warn": save and flag; "block": refuse to save a password that breaks the policy. */
     enforcement: z.enum(["warn", "block"]),
+    /** Raise an alert when a camera password is due a change, and remind this many days before. */
+    changeAlerts: z.boolean(),
+    reminderDays: z.number().int().min(0).max(60),
   })
   .strict();
 export type CameraPasswordPolicy = z.infer<typeof cameraPasswordPolicySchema>;
 
-export const DEFAULT_CAMERA_PASSWORD_POLICY: CameraPasswordPolicy = { minLength: 8, minCharTypes: 3, blockCommon: true, maxAgeDays: 90, enforcement: "warn" };
+export const DEFAULT_CAMERA_PASSWORD_POLICY: CameraPasswordPolicy = {
+  minLength: 8, minCharTypes: 3, blockCommon: true, maxAgeDays: 90, enforcement: "warn", changeAlerts: true, reminderDays: 7,
+};
 
 export const PASSWORD_ISSUES = ["too_short", "few_char_types", "common", "contains_username", "repetitive"] as const;
 export type PasswordIssue = (typeof PASSWORD_ISSUES)[number];

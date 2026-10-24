@@ -4,7 +4,7 @@ import { createRegistry } from "../../src/integrations/registry.js";
 import { runCheck } from "../../src/monitoring/checkService.js";
 import { Scheduler } from "../../src/monitoring/scheduler.js";
 import type { NotificationEvent } from "../../src/notifications/types.js";
-import { createCamera, removeCameras } from "../../src/services/cameraService.js";
+import { createCamera, removeCameras, updateCamera } from "../../src/services/cameraService.js";
 import { updateMonitoringSettings } from "../../src/services/settingsService.js";
 import { MockHikvisionCamera } from "../../src/testing/mockHikvision.js";
 import { createTestUser, prepareDb, resetData, testOrgId } from "../helpers.js";
@@ -177,6 +177,32 @@ describe("storage checks", () => {
     )).rows.map((r) => r.event_type);
     expect(events).toEqual(["opened", "escalated", "auto_resolved"]);
     expect(sent.map((e) => e.kind)).toEqual(["opened", "escalated", "resolved"]);
+  });
+
+  it("reminds before a camera password change is due, warns when it is due, and resolves when it is changed", async () => {
+    const id = await addCamera();
+    const age = (days: number) => pool.query(`UPDATE camera_credentials SET password_changed_at = now() - make_interval(days => $2) WHERE camera_id = $1`, [id, days]);
+    const due = async () => (await alerts(id)).filter((a) => a.type === "password_change_due");
+
+    await age(10);
+    await runCheck(id, "manual", deps);
+    expect(await due()).toEqual([]);
+
+    await age(85); // 5 days left: within the 7-day reminder
+    await runCheck(id, "manual", deps);
+    expect(await due()).toMatchObject([{ severity: "info", status: "active" }]);
+
+    await age(91);
+    await runCheck(id, "manual", deps);
+    expect(await due()).toMatchObject([{ severity: "warning", status: "active" }]);
+    expect(sent.filter((e) => e.type === "password_change_due").map((e) => [e.kind, e.severity])).toEqual([["opened", "info"], ["escalated", "warning"]]);
+
+    await updateCamera(testOrgId, id, { password: "Cam-Pass-123" }, actor); // the same password again: still due
+    await runCheck(id, "manual", deps);
+    expect(await due()).toMatchObject([{ status: "active" }]);
+    await pool.query("UPDATE camera_credentials SET password_changed_at = now() WHERE camera_id = $1", [id]); // changed
+    await runCheck(id, "manual", deps);
+    expect(await due()).toMatchObject([{ status: "resolved" }]);
   });
 
   it("uses per-camera thresholds", async () => {
