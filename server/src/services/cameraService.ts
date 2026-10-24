@@ -245,7 +245,7 @@ export type CameraView = ReturnType<typeof toCameraView>;
 export const listQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   brand: z.string().trim().max(40).optional(),
-  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled", "nostoragedevice", "nolocalstorage"]).optional(),
+  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled", "nostoragedevice", "nolocalstorage", "sdproblem", "sdok"]).optional(),
   location: z.string().trim().max(120).optional(),
   minUsage: z.coerce.number().min(0).max(100).optional(),
   maxUsage: z.coerce.number().min(0).max(100).optional(),
@@ -288,6 +288,12 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
   else if (q.status === "nostoragedevice") {
     // Read successfully but reported no SD card / storage device.
     where.push(`c.local_storage AND s.last_success_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id)`);
+  }
+  else if (q.status === "sdproblem" || q.status === "sdok") {
+    // Read at least once: no SD card / storage device, or a device reporting an error (or OK).
+    const bad = `EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id AND d.health_status IN ('unhealthy', 'degraded'))`;
+    const none = `NOT EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id)`;
+    where.push(`c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND ${q.status === "sdproblem" ? `(${none} OR ${bad})` : `NOT ${none} AND NOT ${bad}`}`);
   }
   else if (q.status && ["online", "offline", "unknown"].includes(q.status)) {
     where.push(`c.monitoring_enabled AND s.connection_status = ${p(q.status)}`);
@@ -373,6 +379,9 @@ export async function getSummary(orgId: string) {
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND NOT c.local_storage)::int AS without_local_storage,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND d.devices > 0 AND d.bad = 0)::int AS sd_ok,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND coalesce(d.devices, 0) = 0)::int AS sd_missing,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND d.bad > 0)::int AS sd_error,
             count(*) FILTER (WHERE c.priority = 'critical')::int AS critical_area,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND s.connection_status = 'offline')::int AS critical_area_offline,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND EXISTS (
@@ -384,6 +393,9 @@ export async function getSummary(orgId: string) {
             count(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status <> 'offline')::int AS cameras_with_storage_data,
             count(s.total_bytes) FILTER (WHERE c.monitoring_enabled AND s.connection_status = 'offline')::int AS offline_with_storage_data
      FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id
+     LEFT JOIN LATERAL (
+       SELECT count(*) AS devices, count(*) FILTER (WHERE health_status IN ('unhealthy', 'degraded')) AS bad
+       FROM storage_devices WHERE camera_id = c.id) d ON true
      WHERE c.organization_id = $1 AND c.deleted_at IS NULL`,
     [orgId],
   );
@@ -412,6 +424,8 @@ export async function getSummary(orgId: string) {
     camerasWithStorageData: r.cameras_with_storage_data,
     offlineWithStorageData: r.offline_with_storage_data,
     withoutLocalStorage: r.without_local_storage,
+    /** SD cards of monitored cameras that record locally and were read at least once. */
+    sdCard: { ok: r.sd_ok, missing: r.sd_missing, error: r.sd_error },
     criticalArea: { total: r.critical_area, offline: r.critical_area_offline, withProblems: r.critical_area_problems },
     alerts: alerts.rows[0],
   };

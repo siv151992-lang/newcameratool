@@ -4,7 +4,7 @@ import { createRegistry } from "../../src/integrations/registry.js";
 import { runCheck } from "../../src/monitoring/checkService.js";
 import { Scheduler } from "../../src/monitoring/scheduler.js";
 import type { NotificationEvent } from "../../src/notifications/types.js";
-import { createCamera, removeCameras, updateCamera } from "../../src/services/cameraService.js";
+import { createCamera, getSummary, listCameras, listQuerySchema, removeCameras, updateCamera } from "../../src/services/cameraService.js";
 import { updateMonitoringSettings } from "../../src/services/settingsService.js";
 import { MockHikvisionCamera } from "../../src/testing/mockHikvision.js";
 import { createTestUser, prepareDb, resetData, testOrgId } from "../helpers.js";
@@ -213,6 +213,24 @@ describe("storage checks", () => {
     await pool.query("UPDATE cameras SET priority = 'critical' WHERE id = $1", [id]);
     await runCheck(id, "manual", deps);
     expect((await alerts(id)).filter((a) => a.type === "not_recording")).toMatchObject([{ severity: "critical", status: "active" }]);
+  });
+
+  it("counts SD cards that are OK, missing or reporting an error, and filters the cameras with a problem", async () => {
+    const id = await addCamera();
+    await runCheck(id, "manual", deps);
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ ok: 1, missing: 0, error: 0 });
+    const list = async (status: "sdproblem" | "sdok") => (await listCameras(testOrgId, listQuerySchema.parse({ status }))).items.map((c) => c.id);
+    expect(await list("sdok")).toEqual([id]);
+
+    cam.setDisks([{ id: 1, name: "hdde", status: "error", capacityMb: 121942, freeMb: 0, property: "RW" }]);
+    await runCheck(id, "manual", deps);
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ ok: 0, missing: 0, error: 1 });
+    expect(await list("sdproblem")).toEqual([id]);
+
+    cam.setDisks([]);
+    await runCheck(id, "manual", deps);
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ ok: 0, missing: 1, error: 0 });
+    expect(await list("sdproblem")).toEqual([id]);
   });
 
   it("uses per-camera thresholds", async () => {

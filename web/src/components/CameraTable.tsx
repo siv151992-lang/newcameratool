@@ -293,6 +293,8 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
               <option value="healthy">Healthy</option>
               <option value="warning">Warning</option>
               <option value="critical">Critical</option>
+              <option value="sdproblem">SD card problem</option>
+              <option value="sdok">SD card OK</option>
               <option value="nostoragedevice">No SD card detected</option>
               <option value="nolocalstorage">No local storage (records elsewhere)</option>
             </optgroup>

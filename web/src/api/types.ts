@@ -197,6 +197,7 @@ export interface Summary {
   offlineWithStorageData: number;
   withoutLocalStorage: number;
   criticalArea: { total: number; offline: number; withProblems: number };
+  sdCard: { ok: number; missing: number; error: number };
   alerts: { active: number; acknowledged: number; critical: number };
 }
 

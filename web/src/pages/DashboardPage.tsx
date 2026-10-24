@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, CircleStop, Download, HardDrive, Plus, WifiOff, ShieldAlert } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, Download, HardDrive, MemoryStick, Plus, ShieldAlert, WifiOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -72,11 +72,11 @@ export function DashboardPage() {
         <StatTile label="Storage warnings" value={s?.storageWarning ?? "—"} icon={<AlertTriangle className={`${icon} text-warn`} />} to="/cameras?status=warning" />
         <StatTile label="Critical storage" value={s?.storageCritical ?? "—"} icon={<AlertOctagon className={`${icon} text-bad`} />} to="/cameras?status=critical" />
         <StatTile
-          label="Not recording"
-          value={s?.notRecording ?? "—"}
-          icon={<CircleStop className={`${icon} text-warn`} />}
-          hint={s ? `${s.recording} recording now` : undefined}
-          to="/cameras?recording=idle"
+          label="SD card problems"
+          value={s ? s.sdCard.missing + s.sdCard.error : "—"}
+          icon={<MemoryStick className={`${icon} ${s && s.sdCard.missing + s.sdCard.error > 0 ? "text-bad" : "text-good"}`} />}
+          hint={s ? sdCardHint(s.sdCard) : undefined}
+          to="/cameras?status=sdproblem"
         />
         <StatTile
           label="Total capacity"
@@ -142,4 +142,12 @@ function capacityHint(s: Summary): string {
     s.withoutLocalStorage && `${s.withoutLocalStorage} without local storage`,
   ].filter(Boolean);
   return `From ${s.camerasWithStorageData} of ${s.monitoredCameras} monitored cameras${notes.length ? ` (${notes.join(", ")})` : ""}`;
+}
+
+/** "73 cards OK · 2 without an SD card · 1 card error" */
+function sdCardHint(sd: Summary["sdCard"]): string {
+  const parts = [`${sd.ok} card${sd.ok === 1 ? "" : "s"} OK`];
+  if (sd.missing) parts.push(`${sd.missing} without an SD card`);
+  if (sd.error) parts.push(`${sd.error} card error${sd.error === 1 ? "" : "s"}`);
+  return parts.join(" · ");
 }
