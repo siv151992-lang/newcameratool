@@ -133,7 +133,7 @@ paths:
         "403": { description: SIGNUP_DISABLED }
         "409": { description: Username taken, or ACCOUNT_EXISTS for an invited address that has an account }
         "410": { description: "INVITATION_EXPIRED, INVITATION_REVOKED or INVITATION_ACCEPTED" }
-        "503": { description: EMAIL_UNAVAILABLE (no SMTP_HOST or PUBLIC_URL) }
+        "503": { description: EMAIL_UNAVAILABLE (no mail server or dashboard address in Settings → Email & sign-in) }
   /auth/verify-email:
     post:
       tags: [Auth]

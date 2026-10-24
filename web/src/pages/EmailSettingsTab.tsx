@@ -134,6 +134,12 @@ export function EmailSettingsTab() {
         <Card title="Dashboard address">
           <div className="p-4">
             {field("publicUrl", "Address people open the dashboard at", "Used for the links in emails, such as https://cctv.example.com.", { inputMode: "url", placeholder: "https://cctv.example.com" })}
+            {draft.publicUrl.trim() !== window.location.origin && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-ink-secondary">
+                {s.publicUrl ? "You opened this page at" : "Not set yet. You opened this page at"} <code>{window.location.origin}</code>
+                <Button size="sm" onClick={() => set("publicUrl", window.location.origin)}>Use this address</Button>
+              </div>
+            )}
           </div>
         </Card>
 

@@ -57,7 +57,7 @@ export async function listInvitations(orgId: string) {
 async function deliver(orgId: string, email: string, role: Role, token: string, inviter: string) {
   const { rows } = await pool.query<{ name: string }>("SELECT name FROM organizations WHERE id = $1", [orgId]);
   const link = await publicLink(invitationPath(token));
-  if (!link) return { sent: false, error: "PUBLIC_URL is not set on the server, so the link could not be emailed" };
+  if (!link) return { sent: false, error: "The dashboard address is not set, so the link could not be emailed. A system administrator can set it in Settings → Email & sign-in" };
   const roleName = role === "admin" ? "Org Admin" : role === "operator" ? "Operator" : "Viewer";
   return trySendMail({
     to: email,
