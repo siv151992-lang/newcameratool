@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Copy, Mail, Send } from "lucide-react";
+import { Copy, KeyRound, Mail, Send, UserPlus } from "lucide-react";
 import { useState } from "react";
 import { api, ApiError } from "../api/client";
 import type { Invitation, InvitationSent, Role } from "../api/types";
-import { Button, Card, ConfirmDialog, Dialog, EmptyState, Field, Input, Select, Spinner } from "../components/ui";
+import { Button, Card, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, Select, Spinner } from "../components/ui";
 import { useToast } from "../components/toast";
 import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { absoluteTime, relativeTime } from "../lib/format";
@@ -234,6 +234,7 @@ export function QuickInvite() {
   const [role, setRole] = useState<Role>("viewer");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<{ email: string; sent: InvitationSent } | null>(null);
+  const [creating, setCreating] = useState(false);
   const send = useMutation({
     mutationFn: () => api<InvitationSent>("/invitations", { method: "POST", body: { email: email.trim(), role } }),
     onSuccess: (r) => {
@@ -247,7 +248,10 @@ export function QuickInvite() {
   });
 
   return (
-    <Card title={`Add someone to ${user?.organizationName ?? "this organization"}`}>
+    <Card
+      title={`Add a user to ${user?.organizationName ?? "this organization"}`}
+      actions={<Button size="sm" variant="ghost" icon={<KeyRound className="h-4 w-4" />} onClick={() => setCreating(true)}>Create with password</Button>}
+    >
       <form
         className="space-y-3 p-4"
         onSubmit={(e) => {
@@ -272,15 +276,84 @@ export function QuickInvite() {
               )}
             </Field>
           </div>
-          <Button type="submit" variant="primary" icon={<Send className="h-4 w-4" />} loading={send.isPending} disabled={!email.trim()}>Send link</Button>
+          <Button type="submit" variant="primary" icon={<UserPlus className="h-4 w-4" />} loading={send.isPending} disabled={!email.trim()}>Add user</Button>
         </div>
-        <p className="text-xs text-ink-secondary">They get an email with a link to create their account and join. Nothing else to fill in.</p>
+        <p className="text-xs text-ink-secondary">They get an email with a link to create their account and join. No email? Use Create with password.</p>
         {sent && (
           <div className="rounded-md border border-line bg-raised p-3 text-sm">
             <InvitationLink email={sent.email} sent={sent.sent} />
           </div>
         )}
       </form>
+      <CreateUserDialog open={creating} onClose={() => setCreating(false)} />
     </Card>
+  );
+}
+
+const emptyAccount = { displayName: "", username: "", email: "", password: "", role: "viewer" as Role };
+
+/** An account with a password, added at once: for people who cannot receive the email link. */
+function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [form, setForm] = useState(emptyAccount);
+  const [error, setError] = useState<unknown>(null);
+  const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+  const fieldError = (f: string) => (error instanceof ApiError ? error.fieldErrors.find((e) => e.field === f)?.message : undefined);
+  const close = () => {
+    setForm(emptyAccount);
+    setError(null);
+    onClose();
+  };
+  const create = useMutation({
+    mutationFn: () =>
+      api("/users", {
+        method: "POST",
+        body: { username: form.username.trim(), displayName: form.displayName.trim() || undefined, email: form.email.trim() || undefined, password: form.password, role: form.role },
+      }),
+    onSuccess: () => {
+      toast("success", `${form.username.trim()} can sign in now with the password you set`);
+      void qc.invalidateQueries({ queryKey: ["users"] });
+      close();
+    },
+    onError: setError,
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onClose={close}
+      title="Create a user with a password"
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          <Button variant="primary" icon={<UserPlus className="h-4 w-4" />} loading={create.isPending} disabled={!form.username.trim() || !form.password} onClick={() => create.mutate()}>Create user</Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-ink-secondary">The account works at once. Tell them the username and password yourself; they can change the password under Account &amp; theme.</p>
+        <Field label="Name">{(id) => <Input id={id} autoComplete="off" value={form.displayName} onChange={set("displayName")} autoFocus />}</Field>
+        <Field label="Username" required hint="Letters, numbers, dot, dash and underscore" error={fieldError("username")}>
+          {(id, d) => <Input id={id} aria-describedby={d} autoComplete="off" value={form.username} invalid={!!fieldError("username")} onChange={set("username")} />}
+        </Field>
+        <Field label="Email (optional)" error={fieldError("email")}>
+          {(id, d) => <Input id={id} aria-describedby={d} type="email" autoComplete="off" value={form.email} invalid={!!fieldError("email")} onChange={set("email")} />}
+        </Field>
+        <Field label="Password" required hint="At least 10 characters" error={fieldError("password")}>
+          {(id, d) => <Input id={id} aria-describedby={d} type="password" autoComplete="new-password" value={form.password} invalid={!!fieldError("password")} onChange={set("password")} />}
+        </Field>
+        <Field label="Role">
+          {(id) => (
+            <Select id={id} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
+              <option value="viewer">{ROLE_LABELS.viewer}: read-only</option>
+              <option value="operator">{ROLE_LABELS.operator}: run checks and manage alerts</option>
+              <option value="admin">{ROLE_LABELS.admin}: everything, including users</option>
+            </Select>
+          )}
+        </Field>
+        <ErrorMessage error={error instanceof ApiError && error.fieldErrors.length ? null : error} />
+      </div>
+    </Dialog>
   );
 }

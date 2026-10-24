@@ -219,8 +219,16 @@ describe("invitations", () => {
     await createTestUser("operator", "olga");
     const olga = await signedIn("olga");
     expect((await olga.post("/api/invitations", { email: "x@example.com", role: "admin" })).status).toBe(403);
-    // Members are no longer created directly.
-    expect((await alice.post("/api/users", { username: "direct", password: "Direct-Pass-123", role: "viewer" })).status).toBe(404);
+    expect((await olga.post("/api/users", { username: "sneaky", password: "Sneaky-Pass-123", role: "admin" })).status).toBe(403);
+  });
+
+  it("lets an Org Admin create a user with a password, without email", async () => {
+    expect((await alice.post("/api/users", { username: "direct", password: "short", role: "viewer" })).status).toBe(400);
+    expect((await alice.post("/api/users", { username: "direct", displayName: "Direct User", password: "Direct-Pass-123", role: "operator" })).status).toBe(201);
+    expect((await alice.post("/api/users", { username: "direct", password: "Direct-Pass-123", role: "viewer" })).status).toBe(409);
+    const direct = await client().login("direct", "Direct-Pass-123");
+    expect(direct.status).toBe(200);
+    expect(direct.body.user).toMatchObject({ username: "direct", role: "operator", organizationId: testOrgId });
   });
 });
 

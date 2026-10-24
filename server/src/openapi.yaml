@@ -743,6 +743,25 @@ paths:
       summary: Members of the current organization (users:manage, Org Admin)
       responses:
         "200": { description: OK }
+    post:
+      tags: [Admin]
+      summary: Create an account with a password and add it to the current organization (users:manage)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                displayName: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10 }
+                role: { type: string, enum: [admin, operator, viewer] }
+      responses:
+        "201": { description: Created }
+        "409": { description: Username or email already in use }
   /users/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }

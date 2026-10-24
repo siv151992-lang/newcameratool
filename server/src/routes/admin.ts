@@ -44,6 +44,7 @@ import {
   updateMonitoringSettings,
 } from "../services/settingsService.js";
 import { invite, inviteSchema, listInvitations, resend, revoke } from "../services/invitationService.js";
+import { createUser, createUserSchema } from "../services/userService.js";
 
 const isSystemAdmin = (req: Request) => req.auth!.user.isSystemAdmin;
 
@@ -156,6 +157,11 @@ export const usersRouter = Router();
 usersRouter.use(requirePermission("users:manage"));
 usersRouter.get("/", async (req, res) => {
   res.json(await listMembers(orgOf(req)));
+});
+/** Creates an account with a password and adds it here: for people without email, no invitation needed. */
+usersRouter.post("/", async (req, res) => {
+  const id = await createUser(orgOf(req), parse(createUserSchema, req.body), actorOf(req), req.ip);
+  res.status(201).json({ id });
 });
 usersRouter.patch("/:id", async (req, res) => {
   await updateMember(orgOf(req), param(req), parse(updateMemberSchema, req.body), { ...actorOf(req), isSystemAdmin: isSystemAdmin(req) }, req.ip);
