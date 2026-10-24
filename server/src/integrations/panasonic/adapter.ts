@@ -26,6 +26,9 @@ export class PanasonicAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {}
 
+  /** Live video: the second (sub) stream, which is H.264 on most models. */
+  readonly rtspPath = "/MediaInput/h264/stream_2";
+
   /** The current picture for the live view (JPEG at 1280 wide). */
   getSnapshot(camera: CameraConfig) {
     return fetchSnapshot(this.http, camera, "/cgi-bin/camera?resolution=1280");

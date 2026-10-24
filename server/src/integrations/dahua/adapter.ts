@@ -26,6 +26,9 @@ export class DahuaAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {}
 
+  /** Live video: the second (sub) stream, which is H.264 on most models. */
+  readonly rtspPath = "/cam/realmonitor?channel=1&subtype=1";
+
   /** The current picture for the live view (Channel 1). */
   getSnapshot(camera: CameraConfig) {
     return fetchSnapshot(this.http, camera, "/cgi-bin/snapshot.cgi?channel=1");

@@ -55,6 +55,8 @@ services:
       DATABASE_PASSWORD_FILE: /run/cctv-secrets/db_password
       TRUST_PROXY: uniquelocal
       COOKIE_SECURE: "true"
+      # Smooth live video through the go2rtc service below. Remove both to show pictures only.
+      LIVE_VIDEO_URL: http://go2rtc:1984
     volumes:
       - secrets:/run/cctv-secrets:ro
       # Generated credential encryption key (used when CREDENTIAL_ENCRYPTION_KEY is not set). Back it up.
@@ -90,6 +92,17 @@ services:
     # LAN addresses; if not, use `network_mode: host` and point DATABASE_URL at the host's database port.
     healthcheck:
       disable: true
+
+  go2rtc:
+    # Turns camera RTSP streams into video browsers can play. Not published on any host port: only
+    # the api reaches it, and it passes the video on to signed-in users. It must reach the cameras
+    # on RTSP port 554, like the worker reaches them on HTTP.
+    image: alexxit/go2rtc:1.9.4
+    restart: unless-stopped
+    volumes:
+      - ./deploy/go2rtc.yaml:/config/go2rtc.yaml:ro
+    expose:
+      - "1984"
 
   caddy:
     image: caddy:2-alpine

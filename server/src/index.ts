@@ -11,6 +11,7 @@ import { getCipher } from "./security/cipher.js";
 import { syncBrands } from "./services/brandService.js";
 import { bootstrapAdmin } from "./services/bootstrap.js";
 import { detectDashboardAddress } from "./services/dashboardAddress.js";
+import { attachLiveVideo } from "./services/liveVideoProxy.js";
 
 async function main() {
   getCipher(); // fail fast if the encryption key is missing or malformed
@@ -23,6 +24,7 @@ async function main() {
   // Other API instances or the worker may change integrations: reload them periodically too.
   setInterval(() => void registry.refresh().catch((err) => logger.warn({ err: (err as Error).message }, "Could not reload brand integrations")), 30_000).unref();
   const server = createApp().listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));
+  attachLiveVideo(server);
   // With thousands of cameras the first AI analysis takes a while: start it now, not on the first visit.
   setTimeout(() => {
     void (async () => {

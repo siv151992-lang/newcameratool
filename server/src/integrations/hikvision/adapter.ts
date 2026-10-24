@@ -69,6 +69,9 @@ export class HikvisionAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {}
 
+  /** Live video: the second (sub) stream, which is H.264 on most models. */
+  readonly rtspPath = "/Streaming/Channels/102";
+
   /** The current picture for the live view (Main stream of channel 1). */
   getSnapshot(camera: CameraConfig) {
     return fetchSnapshot(this.http, camera, "/ISAPI/Streaming/channels/101/picture");

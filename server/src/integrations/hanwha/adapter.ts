@@ -29,6 +29,9 @@ export class HanwhaAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {}
 
+  /** Live video: the second (sub) stream, which is H.264 on most models. */
+  readonly rtspPath = "/profile2/media.smp";
+
   /** The current picture for the live view (SUNAPI snapshot). */
   getSnapshot(camera: CameraConfig) {
     return fetchSnapshot(this.http, camera, "/stw-cgi/video.cgi?msubmenu=snapshot&action=view");

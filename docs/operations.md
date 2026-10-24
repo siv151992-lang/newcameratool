@@ -97,6 +97,21 @@ minute. `AI_MODEL` (default `claude-opus-5-5`) and `AI_EFFORT` (default `medium`
 Forecasts improve with history: they need at least 6 hours of measurements, and 30-day projections need
 about a week of steady data.
 
+## Live view
+
+Org Admins and Operators open a camera's live view from the camera list (video icon) or the camera
+page. Every viewing is in the audit log; viewers cannot open it.
+
+- **Video** (smooth, no sound): Docker Compose runs the `go2rtc` service and sets `LIVE_VIDEO_URL`.
+  The api registers the camera's RTSP stream in go2rtc (port 554, the second stream, usually H.264)
+  and relays the browser's WebSocket to it after checking the session. go2rtc publishes no host port.
+  The camera must have RTSP turned on, and the camera user needs live view permission. Browsers play
+  H.264; set the camera's second stream to H.264 if the video does not start.
+- **Pictures** (about one a second): always available, also without go2rtc, through each brand's
+  snapshot API (`GET /api/cameras/:id/snapshot`).
+
+Nothing is recorded or stored. A live video connection closes after an hour.
+
 ## Upgrades
 
 ```bash

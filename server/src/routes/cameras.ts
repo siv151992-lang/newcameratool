@@ -27,6 +27,7 @@ import {
 import { testCameraConfig, testSavedCamera } from "../services/connectionService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
+import { liveVideoEnabled, prepareStream } from "../services/liveVideoService.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
 export const camerasRouter = Router();
@@ -111,6 +112,11 @@ camerasRouter.post("/bulk-local-storage", write, async (req, res) => {
   res.json(await setLocalStorage(orgOf(req), ids, localStorage, actorOf(req), req.ip));
 });
 
+// Whether smooth live video is set up (go2rtc); without it the live view shows pictures.
+camerasRouter.get("/live-video", requirePermission("cameras:live"), (_req, res) => {
+  res.json({ enabled: liveVideoEnabled() });
+});
+
 camerasRouter.get("/:id", read, async (req, res) => {
   res.json(await getCamera(param(req), orgOf(req)));
 });
@@ -147,6 +153,13 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
   const outcome = await runCheck(param(req), "manual", { registry, notifier });
   if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
   res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req), orgOf(req)) });
+});
+
+// Live video: registers the camera's stream, then the page opens /api/cameras/:id/live/ws (liveVideoProxy).
+camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+  await prepareStream(orgOf(req), param(req));
+  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req), details: { video: true } });
+  res.json({ ok: true });
 });
 
 // Live view: the current picture. `start=1` on the first picture of a viewing records it in the audit log.

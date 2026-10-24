@@ -62,8 +62,8 @@ export function createApp() {
     app.use("/api/docs", helmet({ contentSecurityPolicy: { directives: { "script-src": ["'self'", "'unsafe-inline'"] } } }), swaggerUi.serve, swaggerUi.setup(spec));
   }
 
-  // blob: images: the live view shows camera pictures fetched by the page itself.
-  app.use(helmet({ crossOriginEmbedderPolicy: false, contentSecurityPolicy: { directives: { "img-src": ["'self'", "data:", "blob:"] } } }));
+  // blob: images and media: the live view shows camera pictures and video fetched by the page itself.
+  app.use(helmet({ crossOriginEmbedderPolicy: false, contentSecurityPolicy: { directives: { "img-src": ["'self'", "data:", "blob:"], "media-src": ["'self'", "blob:"] } } }));
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
   app.use("/api", apiLimiter, authenticate);

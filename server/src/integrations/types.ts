@@ -176,6 +176,8 @@ export interface CameraBrandAdapter {
   getRecordingStatus?(camera: CameraConfig): Promise<RecordingReading>;
   /** How far back the recordings on the camera's own storage go; null when it holds none. */
   getRecordingRange?(camera: CameraConfig): Promise<RecordingRange | null>;
+  /** Optional: the RTSP path of a stream browsers can play (H.264, usually the second stream), for live video. */
+  readonly rtspPath?: string;
   /** Optional: the current picture, for the live view. */
   getSnapshot?(camera: CameraConfig): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
 }

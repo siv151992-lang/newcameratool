@@ -1,0 +1,109 @@
+import { useEffect, useRef, useState } from "react";
+import { api } from "../api/client";
+import { ErrorMessage, Spinner } from "./ui";
+
+/** Codecs go2rtc may send; the browser says which it can play (H.265 only where supported). */
+const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0", "mp4a.40.2", "mp4a.40.5", "flac", "opus"];
+
+/**
+ * Smooth video over a WebSocket (go2rtc's MSE stream, relayed by the server) into a <video>.
+ * Stays near the live edge and drops old video so memory does not grow.
+ */
+export function LiveVideo({ cameraId, name, onFailed }: { cameraId: string; name: string; onFailed: (message: string) => void }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const el = video.current;
+    if (!el) return;
+    if (typeof MediaSource === "undefined") {
+      onFailed("This browser cannot play live video. Showing pictures instead.");
+      return;
+    }
+    let stopped = false;
+    let ws: WebSocket | null = null;
+    let buffer: SourceBuffer | null = null;
+    const queue: ArrayBuffer[] = [];
+    let gotVideo = false;
+
+    const flush = () => {
+      if (!buffer || buffer.updating) return;
+      const ranges = buffer.buffered;
+      if (ranges.length > 0) {
+        const end = ranges.end(ranges.length - 1);
+        if (end - el.currentTime > 3) el.currentTime = end - 0.5; // fell behind: jump to live
+        if (end - ranges.start(0) > 30) return buffer.remove(ranges.start(0), end - 15);
+      }
+      const next = queue.shift();
+      if (next) buffer.appendBuffer(next);
+    };
+    const fail = (message: string) => {
+      if (stopped) return;
+      stopped = true;
+      ws?.close();
+      setError(message);
+      onFailed(message);
+    };
+
+    void (async () => {
+      try {
+        await api(`/cameras/${cameraId}/live/prepare`, { method: "POST" });
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+      if (stopped) return;
+      const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${scheme}://${window.location.host}/api/cameras/${cameraId}/live/ws`);
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => ws!.send(JSON.stringify({ type: "mse", value: CODECS.filter((c) => MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)).join() }));
+      ws.onmessage = (ev) => {
+        if (typeof ev.data !== "string") {
+          gotVideo = true;
+          queue.push(ev.data as ArrayBuffer);
+          return flush();
+        }
+        const msg = JSON.parse(ev.data) as { type: string; value: string };
+        if (msg.type === "error") return fail(`The camera stream could not be opened: ${msg.value}`);
+        if (msg.type !== "mse") return;
+        const source = new MediaSource();
+        el.src = URL.createObjectURL(source);
+        source.addEventListener("sourceopen", () => {
+          URL.revokeObjectURL(el.src);
+          try {
+            buffer = source.addSourceBuffer(msg.value);
+          } catch {
+            return fail("This browser cannot play the camera's video format (often H.265). Set the camera's second stream to H.264, or use pictures.");
+          }
+          buffer.mode = "segments";
+          buffer.addEventListener("updateend", flush);
+          flush();
+        }, { once: true });
+      };
+      ws.onclose = () => fail(gotVideo ? "The video stopped. Close and open the live view to try again." : "The camera's video could not be opened. Check that RTSP is turned on in the camera (port 554).");
+    })();
+
+    return () => {
+      stopped = true;
+      ws?.close();
+      el.removeAttribute("src");
+      el.load();
+    };
+  }, [cameraId, onFailed]);
+
+  return (
+    <div className="relative flex h-full w-full items-center justify-center">
+      <video
+        ref={video}
+        className="h-full w-full object-contain"
+        autoPlay
+        muted
+        playsInline
+        aria-label={`Live video from ${name}`}
+        onPlaying={() => setPlaying(true)}
+      />
+      {!playing && !error && <div className="absolute inset-0 flex items-center justify-center"><Spinner label="Starting video" /></div>}
+      {error && <div className="absolute inset-x-3 bottom-3"><ErrorMessage error={new Error(error)} /></div>}
+    </div>
+  );
+}

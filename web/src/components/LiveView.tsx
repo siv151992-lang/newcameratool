@@ -1,5 +1,9 @@
-import { Maximize2, Pause, Play, Video } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import clsx from "clsx";
+import { Image, Maximize2, Pause, Play, Video } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../api/client";
+import { LiveVideo } from "./LiveVideo";
 import { Button, Dialog, ErrorMessage, Spinner } from "./ui";
 
 /** Time between pictures, and before trying again after an error. */
@@ -13,8 +17,64 @@ const RETRY_MS = 5000;
 export function LiveViewDialog({ camera, onClose }: { camera: { id: string; name: string } | null; onClose: () => void }) {
   return (
     <Dialog open={!!camera} onClose={onClose} title={camera ? `Live view: ${camera.name}` : "Live view"} size="xl">
-      {camera && <LivePicture key={camera.id} cameraId={camera.id} name={camera.name} />}
+      {camera && <LiveViewBody key={camera.id} cameraId={camera.id} name={camera.name} />}
     </Dialog>
+  );
+}
+
+/** Smooth video when the server has the video service (go2rtc), else, or on request, pictures. */
+function LiveViewBody({ cameraId, name }: { cameraId: string; name: string }) {
+  const option = useQuery({ queryKey: ["live-video"], queryFn: () => api<{ enabled: boolean }>("/cameras/live-video"), staleTime: 5 * 60_000 });
+  const [chosen, setChosen] = useState<"video" | "picture" | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const onFailed = useCallback((message: string) => {
+    setNotice(message);
+    setChosen("picture");
+  }, []);
+  const mode = chosen ?? (option.isLoading ? null : option.data?.enabled ? "video" : "picture");
+  if (!mode) return <Spinner />;
+
+  return (
+    <div className="space-y-3">
+      {option.data?.enabled && (
+        <div className="inline-flex rounded-md border border-line p-0.5" role="group" aria-label="Live view type">
+          {(["video", "picture"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              onClick={() => {
+                setNotice(null);
+                setChosen(m);
+              }}
+              className={clsx("inline-flex items-center gap-1.5 rounded px-3 py-1 text-sm", mode === m ? "bg-accent text-white" : "text-ink-secondary hover:text-ink")}
+            >
+              {m === "video" ? <Video className="h-4 w-4" aria-hidden /> : <Image className="h-4 w-4" aria-hidden />}
+              {m === "video" ? "Video" : "Pictures"}
+            </button>
+          ))}
+        </div>
+      )}
+      {notice && mode === "picture" && <p className="text-sm text-warn">{notice}</p>}
+      {mode === "video" ? <VideoFrame cameraId={cameraId} name={name} onFailed={onFailed} /> : <LivePicture cameraId={cameraId} name={name} />}
+    </div>
+  );
+}
+
+function VideoFrame({ cameraId, name, onFailed }: { cameraId: string; name: string; onFailed: (message: string) => void }) {
+  const frame = useRef<HTMLDivElement>(null);
+  return (
+    <div className="space-y-3">
+      <div ref={frame} className="relative mx-auto flex aspect-video max-h-[55vh] items-center justify-center overflow-hidden rounded-md bg-black">
+        <LiveVideo cameraId={cameraId} name={name} onFailed={onFailed} />
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-ink-secondary">Live video from the camera's second stream, without sound.</p>
+        <Button size="sm" icon={<Maximize2 className="h-4 w-4" />} onClick={() => void frame.current?.requestFullscreen?.()}>
+          Full screen
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -82,7 +142,7 @@ function LivePicture({ cameraId, name }: { cameraId: string; name: string }) {
       {error && <ErrorMessage error={new Error(`${error}${src ? " Showing the last picture; trying again." : " Trying again."}`)} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-ink-secondary">
-          {updatedAt ? `Picture from ${updatedAt.toLocaleTimeString()}. ` : ""}Refreshes about once a second. For smooth video and sound, use the camera's or NVR's own software.
+          {updatedAt ? `Picture from ${updatedAt.toLocaleTimeString()}. ` : ""}Refreshes about once a second.
         </p>
         <div className="flex gap-2">
           <Button size="sm" icon={paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />} onClick={() => setPaused(!paused)}>

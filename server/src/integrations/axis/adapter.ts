@@ -25,6 +25,9 @@ export class AxisAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {}
 
+  /** Live video: the second (sub) stream, which is H.264 on most models. */
+  readonly rtspPath = "/axis-media/media.amp?videocodec=h264";
+
   /** The current picture for the live view (VAPIX JPEG image). */
   getSnapshot(camera: CameraConfig) {
     return fetchSnapshot(this.http, camera, "/axis-cgi/jpg/image.cgi");

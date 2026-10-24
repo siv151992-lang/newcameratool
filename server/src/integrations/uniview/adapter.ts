@@ -36,6 +36,9 @@ export class UniviewAdapter implements CameraBrandAdapter {
     this.onvif = new OnvifAdapter(http);
   }
 
+  /** Live video: the second (sub) stream, which is H.264 on most models. */
+  readonly rtspPath = "/media/video2";
+
   /** The current picture for the live view (LAPI, channel 0 main stream). */
   getSnapshot(camera: CameraConfig) {
     return fetchSnapshot(this.http, camera, "/LAPI/V1.0/Channels/0/Media/Video/Streams/0/Snapshot");

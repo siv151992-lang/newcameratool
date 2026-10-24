@@ -1,0 +1,10 @@
+# go2rtc for live video (see docker-compose.yml). Streams are added by the api when someone opens
+# a live view; nothing is recorded. Only the API port is used, inside the Compose network.
+api:
+  listen: ":1984"
+rtsp:
+  listen: ""
+webrtc:
+  listen: ""
+log:
+  level: warn
