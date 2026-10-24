@@ -256,3 +256,36 @@ export function parseOnvifRecording(xml: string): RecordingReading {
   });
   return combineRecording(channels);
 }
+
+const mediaParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  removeNSPrefix: true,
+  parseTagValue: false,
+  trimValues: true,
+  isArray: (name) => name === "Profiles",
+});
+
+/**
+ * trt:GetProfilesResponse → the profile to stream: the first with H.264 video (what browsers play),
+ * else the first. Its token, as an attribute of <Profiles token="…">.
+ */
+export function parseOnvifProfileToken(xml: string): string {
+  soapBody(xml); // faults and invalid XML
+  const doc = mediaParser.parse(xml.trim()) as XmlNode;
+  const response = child(child(child(doc, "Envelope"), "Body"), "GetProfilesResponse");
+  const key = response ? Object.keys(response).find((k) => k.toLowerCase() === "profiles") : undefined;
+  const profiles = (key ? (response![key] as unknown[]) : []).filter(isNode);
+  const token = (p: XmlNode) => (typeof p["@_token"] === "string" ? (p["@_token"] as string) : undefined);
+  const h264 = profiles.find((p) => /h\.?264/i.test(text(child(p, "VideoEncoderConfiguration"), "Encoding") ?? ""));
+  const chosen = token(h264 ?? {}) ?? profiles.map(token).find(Boolean);
+  if (!chosen) throw new CameraApiError("API_UNAVAILABLE", "The camera lists no media profile to stream");
+  return chosen;
+}
+
+/** trt:GetStreamUriResponse / GetSnapshotUriResponse → <MediaUri><Uri>. */
+export function parseOnvifMediaUri(xml: string, response: "GetStreamUriResponse" | "GetSnapshotUriResponse"): string {
+  const uri = text(child(soapResponse(xml, response), "MediaUri"), "Uri");
+  if (!uri) throw new CameraApiError("API_UNAVAILABLE", "The camera did not give a media address");
+  return uri;
+}

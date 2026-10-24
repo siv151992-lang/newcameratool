@@ -22,8 +22,11 @@ import {
   parseOnvifServices,
   parseOnvifStorage,
   parseOnvifSystemTime,
+  parseOnvifMediaUri,
+  parseOnvifProfileToken,
 } from "./parser.js";
-import { NS, soapEnvelope } from "./soap.js";
+import { escapeXml, NS, soapEnvelope } from "./soap.js";
+import { fetchSnapshot } from "../snapshot.js";
 
 export const ONVIF_DEVICE_SERVICE_PATH = "/onvif/device_service";
 export const ONVIF_RECORDING_SERVICE_PATH = "/onvif/recording_service";
@@ -46,6 +49,7 @@ const ACTIONS = {
   recording: { path: ONVIF_RECORDING_SERVICE_PATH, action: `${NS.trc}/GetRecordingJobs`, body: "<trc:GetRecordingJobs/>", auth: true },
   services: { path: ONVIF_DEVICE_SERVICE_PATH, action: `${NS.tds}/GetServices`, body: "<tds:GetServices><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>", auth: true },
   summary: { path: ONVIF_SEARCH_SERVICE_PATH, action: `${NS.tse}/GetRecordingSummary`, body: "<tse:GetRecordingSummary/>", auth: true },
+  profiles: { path: "/onvif/media_service", action: `${NS.trt}/GetProfiles`, body: "<trt:GetProfiles/>", auth: true },
   // ONVIF requires GetSystemDateAndTime to work without credentials.
   systemTime: { path: ONVIF_DEVICE_SERVICE_PATH, action: `${NS.tds}/GetSystemDateAndTime`, body: "<tds:GetSystemDateAndTime/>", auth: false },
 } satisfies Record<string, SoapAction>;
@@ -57,7 +61,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["ws-security (UsernameToken digest)", "digest"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
     storageEndpoint: `POST ${ONVIF_DEVICE_SERVICE_PATH} (GetStorageDevices)`,
     defaultTimeoutMs: 10000,
     notes:
@@ -162,6 +166,36 @@ export class OnvifAdapter implements CameraBrandAdapter {
     }
     const days = Math.max(0, Math.round(((now - summary.from) / 86_400_000) * 100) / 100);
     return { oldest: new Date(summary.from + localOffsetMin * 60_000).toISOString().slice(0, 19), days };
+  }
+
+  /** The media profile to stream (H.264 where there is one), per camera. */
+  private async profileToken(camera: CameraConfig): Promise<string> {
+    return parseOnvifProfileToken(await this.authenticated(camera, await this.atService(camera, ACTIONS.profiles, NS.trt)));
+  }
+
+  private async mediaUri(camera: CameraConfig, kind: "Stream" | "Snapshot"): Promise<string> {
+    const token = escapeXml(await this.profileToken(camera));
+    const body = kind === "Stream"
+      ? `<trt:GetStreamUri><trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream><tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup><trt:ProfileToken>${token}</trt:ProfileToken></trt:GetStreamUri>`
+      : `<trt:GetSnapshotUri><trt:ProfileToken>${token}</trt:ProfileToken></trt:GetSnapshotUri>`;
+    const op = await this.atService(camera, { ...ACTIONS.profiles, action: `${NS.trt}/Get${kind}Uri`, body }, NS.trt);
+    return parseOnvifMediaUri(await this.authenticated(camera, op), kind === "Stream" ? "GetStreamUriResponse" : "GetSnapshotUriResponse");
+  }
+
+  /** Live video: the RTSP address the camera gives for its H.264 profile (Media service, GetStreamUri). */
+  liveRtspUrl(camera: CameraConfig): Promise<string> {
+    return this.mediaUri(camera, "Stream");
+  }
+
+  /**
+   * The current picture (GetSnapshotUri), fetched from the camera's own address only: the host in
+   * the reply is ignored, its port, path and query are used.
+   */
+  async getSnapshot(camera: CameraConfig) {
+    const uri = new URL(await this.mediaUri(camera, "Snapshot"));
+    const protocol = uri.protocol === "https:" ? "https" : "http";
+    const port = uri.port ? Number(uri.port) : protocol === "https" ? 443 : 80;
+    return fetchSnapshot(this.http, { ...camera, protocol, port }, `${uri.pathname}${uri.search}`);
   }
 
   /**

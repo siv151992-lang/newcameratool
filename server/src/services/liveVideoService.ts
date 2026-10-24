@@ -6,6 +6,7 @@ import type { CameraConfig, RecordingList } from "../integrations/types.js";
 import { HttpError } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
 import { getCameraConfig, getCameraRow } from "./cameraService.js";
+import { onvifAdapter } from "./liveViewService.js";
 import { getMonitoringSettings } from "./settingsService.js";
 
 /**
@@ -21,6 +22,19 @@ export const streamName = (cameraId: string) => `camera_${cameraId}`;
 export function rtspUrl(camera: Pick<CameraConfig, "host" | "username" | "password">, path: string): string {
   const host = isIP(camera.host) === 6 ? `[${camera.host}]` : camera.host;
   return `rtsp://${encodeURIComponent(camera.username)}:${encodeURIComponent(camera.password)}@${host}:${RTSP_PORT}${path}`;
+}
+
+/**
+ * An RTSP address the camera gave (ONVIF) with the stored credentials, always at the camera's own
+ * address: the host in the reply is ignored, so a camera cannot point go2rtc elsewhere.
+ */
+export function withCredentials(uri: string, camera: Pick<CameraConfig, "host" | "username" | "password">): string {
+  const u = new URL(uri);
+  if (u.protocol !== "rtsp:" && u.protocol !== "rtsps:") throw new Error(`not an RTSP address (${u.protocol})`);
+  u.hostname = isIP(camera.host) === 6 ? `[${camera.host}]` : camera.host;
+  u.username = encodeURIComponent(camera.username);
+  u.password = encodeURIComponent(camera.password);
+  return u.toString();
 }
 
 const base = () => config.LIVE_VIDEO_URL!.replace(/\/+$/, "");
@@ -39,9 +53,20 @@ export async function prepareStream(orgId: string, cameraId: string): Promise<st
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Smooth live video is not set up on this server");
   const row = await getCameraRow(cameraId, orgId);
   const adapter = registry.get(row.brand_key);
-  if (!adapter.rtspPath) throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `Live video is not available for ${adapter.meta.displayName} cameras yet`);
   const { requestTimeoutMs } = await getMonitoringSettings();
-  const src = rtspUrl(await getCameraConfig(cameraId, requestTimeoutMs), adapter.rtspPath);
+  const config = await getCameraConfig(cameraId, requestTimeoutMs);
+  let src: string;
+  if (adapter.rtspPath) src = rtspUrl(config, adapter.rtspPath);
+  else {
+    // Asked from the camera (ONVIF), for ONVIF cameras and brands without a stream path of their own.
+    const via = adapter.liveRtspUrl ? adapter : onvifAdapter();
+    if (!via?.liveRtspUrl) throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `Live video is not available for ${adapter.meta.displayName} cameras`);
+    try {
+      src = withCredentials(await via.liveRtspUrl(config), config);
+    } catch (err) {
+      throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `The camera's video address could not be read over ONVIF: ${(err as Error).message}. Turn on ONVIF in the camera.`);
+    }
+  }
   const name = streamName(cameraId);
   const hash = createHash("sha256").update(src).digest("hex");
   try {
