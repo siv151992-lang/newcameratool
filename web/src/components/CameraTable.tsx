@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, HardDrive, HardDriveDownload, Pause, Pencil, Play, RefreshCw, Search, ShieldAlert, Trash2, Video } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
-import { useCheckNow, useDownloadCameraReport, useRemoveCameras, useSetLocalStorage, useSetMonitoring, useSetPriority } from "../hooks/cameras";
+import { useCheckNow, useDownloadCameraReport, useRemoveCameras, useSetLocalStorage, useSetPriority } from "../hooks/cameras";
 import { useColumnVisibility } from "../hooks/columns";
 import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, formatDays, relativeTime } from "../lib/format";
 import { ColumnsMenu } from "./ColumnsMenu";
@@ -39,20 +39,8 @@ interface ColumnDef {
 }
 
 const COLUMNS: ColumnDef[] = [
-  {
-    key: "host",
-    label: "IP address",
-    sortKey: "host",
-    cellClassName: "tabular whitespace-nowrap text-ink-secondary",
-    render: (c) => (
-      <>
-        {c.host}
-        {c.port !== (c.protocol === "https" ? 443 : 80) && `:${c.port}`}
-      </>
-    ),
-  },
-  { key: "brand", label: "Brand", sortKey: "brand", cellClassName: "whitespace-nowrap text-ink-secondary", render: (c) => c.brandName },
-  { key: "location", label: "Location", sortKey: "location", cellClassName: "min-w-[110px] text-ink-secondary", render: (c) => c.location ?? "—" },
+  { key: "brand", label: "Brand", sortKey: "brand", cellClassName: "min-w-[90px] max-w-[130px] text-ink-secondary", render: (c) => c.brandName },
+  { key: "location", label: "Location", sortKey: "location", cellClassName: "min-w-[80px] text-ink-secondary", render: (c) => c.location ?? "—" },
   {
     key: "connection",
     label: "Connection",
@@ -64,26 +52,19 @@ const COLUMNS: ColumnDef[] = [
     key: "recording",
     label: "Recording",
     sortKey: "recording",
-    cellClassName: "",
-    render: (c) => (c.localStorage === false ? <span className="text-ink-muted">—</span> : <RecordingBadge state={c.status.recording.state} detail={c.status.recording.detail} />),
-  },
-  {
-    key: "recordingDays",
-    label: "Recordings",
-    sortKey: "recordingDays",
-    align: "right",
-    cellClassName: "tabular whitespace-nowrap text-right",
-    render: (c) =>
-      c.localStorage === false || c.status.recording.daysAvailable === null ? (
-        <span className="text-ink-muted" title={c.status.recording.rangeError ?? undefined}>
-          {c.status.recording.rangeError ? "Not read" : "—"}
-        </span>
-      ) : (
-        <span title={c.status.recording.oldest ? `Oldest recording ${c.status.recording.oldest.replace("T", " ")} (camera time)` : undefined}>
-          {c.status.recording.daysAtLeast && "≥ "}
-          {formatDays(c.status.recording.daysAvailable)}
-        </span>
-      ),
+    cellClassName: "whitespace-nowrap",
+    render: (c) => {
+      if (c.localStorage === false) return <span className="text-ink-muted">—</span>;
+      const r = c.status.recording;
+      return (
+        <>
+          <RecordingBadge state={r.state} detail={r.detail} />
+          <div className="tabular mt-0.5 text-xs text-ink-secondary" title={r.oldest ? `Oldest recording ${r.oldest.replace("T", " ")} (camera time)` : (r.rangeError ?? undefined)}>
+            {r.daysAvailable !== null ? `${r.daysAtLeast ? "≥ " : ""}${formatDays(r.daysAvailable)} stored` : r.rangeError ? "Days not read" : ""}
+          </div>
+        </>
+      );
+    },
   },
   {
     key: "password",
@@ -91,39 +72,51 @@ const COLUMNS: ColumnDef[] = [
     cellClassName: "whitespace-nowrap",
     render: (c) => (c.password.status === "unknown" ? <span className="text-ink-muted">—</span> : <PasswordBadge status={c.password.status} title={c.password.changedAt ? `Changed ${relativeTime(c.password.changedAt)}` : undefined} />),
   },
-  { key: "health", label: "Storage health", sortKey: "health", cellClassName: "", render: (c) => (c.localStorage === false ? <NoLocalStorageBadge /> : <HealthBadge health={c.status.storageHealth} />) },
   {
-    key: "usage",
-    label: "Usage",
+    key: "storage",
+    label: "Storage",
     sortKey: "usage",
-    cellClassName: "",
-    render: (c) => (
-      <UsageMeter percent={c.status.usedPercentage} warning={c.warningThreshold ?? undefined} critical={c.criticalThreshold ?? undefined} compact />
-    ),
+    cellClassName: "min-w-[170px]",
+    render: (c) => {
+      if (c.localStorage === false) return <NoLocalStorageBadge />;
+      return (
+        <>
+          <div className="flex items-center gap-2">
+            <HealthBadge health={c.status.storageHealth} />
+            {c.status.usedPercentage !== null && <span className="tabular text-xs text-ink-secondary">{c.status.usedPercentage.toFixed(1)}%</span>}
+          </div>
+          {c.status.totalBytes !== null && (
+            <>
+              <div className="mt-1 max-w-[150px]">
+                <UsageMeter percent={c.status.usedPercentage} warning={c.warningThreshold ?? undefined} critical={c.criticalThreshold ?? undefined} compact hideLabel />
+              </div>
+              <div className="tabular mt-0.5 whitespace-nowrap text-xs text-ink-secondary">
+                {formatBytes(c.status.usedBytes)} of {formatBytes(c.status.totalBytes)} · {formatBytes(c.status.freeBytes)} free
+              </div>
+            </>
+          )}
+        </>
+      );
+    },
   },
-  { key: "total", label: "Total", align: "right", cellClassName: "tabular whitespace-nowrap", render: (c) => formatBytes(c.status.totalBytes) },
-  { key: "used", label: "Used", align: "right", cellClassName: "tabular whitespace-nowrap", render: (c) => formatBytes(c.status.usedBytes) },
-  { key: "available", label: "Available", align: "right", cellClassName: "tabular whitespace-nowrap", render: (c) => formatBytes(c.status.freeBytes) },
   {
-    key: "lastSuccess",
-    label: "Last success",
+    key: "lastCheck",
+    label: "Last check",
     sortKey: "lastSuccess",
-    cellClassName: "whitespace-nowrap text-ink-secondary",
-    render: (c) => <span title={absoluteTime(c.status.lastSuccessAt)}>{relativeTime(c.status.lastSuccessAt)}</span>,
-  },
-  {
-    key: "lastError",
-    label: "Last error",
-    cellClassName: "max-w-[220px]",
-    render: ({ status: s }) =>
-      s.lastErrorCode ? (
-        <span title={s.lastErrorMessage ?? undefined} className="block truncate text-xs">
-          <span className="font-medium text-ink">{errorCategory(s.lastErrorCode)}:</span>{" "}
-          <span className="text-ink-secondary">{ERROR_LABELS[s.lastErrorCode] ?? s.lastErrorCode}</span>
-        </span>
-      ) : (
-        <span className="text-ink-muted">—</span>
-      ),
+    cellClassName: "max-w-[200px]",
+    render: ({ status: s }) => (
+      <>
+        <div className="whitespace-nowrap text-ink-secondary" title={absoluteTime(s.lastSuccessAt)}>
+          {s.lastSuccessAt ? `OK ${relativeTime(s.lastSuccessAt)}` : "Never succeeded"}
+        </div>
+        {s.lastErrorCode && (
+          <div title={s.lastErrorMessage ?? undefined} className="truncate text-xs">
+            <span className="font-medium text-ink">{errorCategory(s.lastErrorCode)}:</span>{" "}
+            <span className="text-ink-secondary">{ERROR_LABELS[s.lastErrorCode] ?? s.lastErrorCode}</span>
+          </div>
+        )}
+      </>
+    ),
   },
 ];
 const COLUMN_KEYS = COLUMNS.map((c) => c.key);
@@ -140,7 +133,7 @@ function useDebounced<T>(value: T, ms = 300) {
 function SortHeader({ label, k, sort, order, onSort, className }: { label: string; k: SortKey; sort: SortKey; order: "asc" | "desc"; onSort: (k: SortKey) => void; className?: string }) {
   const active = sort === k;
   return (
-    <th scope="col" aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"} className={clsx("whitespace-nowrap px-3 py-2 font-medium", className)}>
+    <th scope="col" aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"} className={clsx("whitespace-nowrap px-2 py-2 font-medium", className)}>
       <button className="inline-flex items-center gap-1 hover:text-ink" onClick={() => onSort(k)}>
         {label}
         {active && (order === "asc" ? <ArrowUp className="h-3 w-3" aria-hidden /> : <ArrowDown className="h-3 w-3" aria-hidden />)}
@@ -150,7 +143,7 @@ function SortHeader({ label, k, sort, order, onSort, className }: { label: strin
 }
 
 function IconAction({ label, onClick, children, disabled, to }: { label: string; onClick?: () => void; children: ReactNode; disabled?: boolean; to?: string }) {
-  const cls = "inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary hover:bg-line/60 hover:text-ink disabled:opacity-40";
+  const cls = "inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-secondary hover:bg-line/60 hover:text-ink disabled:opacity-40";
   if (to) {
     return (
       <Link to={to} className={cls} aria-label={label} title={label}>
@@ -202,7 +195,6 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const locations = useQuery({ queryKey: ["cameras", "locations"], queryFn: () => api<string[]>("/cameras/locations"), staleTime: 60_000 });
 
   const checkNow = useCheckNow();
-  const setMonitoring = useSetMonitoring();
   const remove = useRemoveCameras();
 
   const onSort = (k: SortKey) => {
@@ -429,21 +421,21 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
             <thead className="border-b border-line text-xs text-ink-secondary">
               <tr>
                 {canWrite && (
-                  <th scope="col" className="w-10 px-3 py-2">
+                  <th scope="col" className="sticky left-0 z-[1] w-9 bg-surface px-2 py-2">
                     <input type="checkbox" aria-label="Select all cameras on this page" checked={allSelected} onChange={toggleAll} />
                   </th>
                 )}
-                <SortHeader label="Camera" k="name" sort={sort} order={order} onSort={onSort} />
+                <SortHeader label="Camera" k="name" sort={sort} order={order} onSort={onSort} className={clsx("sticky z-[1] bg-surface", canWrite ? "left-9" : "left-0")} />
                 {visibleColumns.map((col) =>
                   col.sortKey ? (
                     <SortHeader key={col.key} label={col.label} k={col.sortKey} sort={sort} order={order} onSort={onSort} className={col.align === "right" ? "text-right" : undefined} />
                   ) : (
-                    <th key={col.key} scope="col" className={clsx("whitespace-nowrap px-3 py-2 font-medium", col.align === "right" && "text-right")}>
+                    <th key={col.key} scope="col" className={clsx("whitespace-nowrap px-2 py-2 font-medium", col.align === "right" && "text-right")}>
                       {col.label}
                     </th>
                   ),
                 )}
-                <th scope="col" className="px-3 py-2 text-right font-medium">Actions</th>
+                <th scope="col" className="px-2 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -452,23 +444,26 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                 return (
                   <tr key={c.id} className="border-b border-line last:border-0 hover:bg-page/60">
                     {canWrite && (
-                      <td className="px-3 py-2">
+                      <td className="sticky left-0 z-[1] w-9 bg-surface px-2 py-2">
                         <input type="checkbox" aria-label={`Select ${c.name}`} checked={selected.has(c.id)} onChange={() => toggle(c.id)} />
                       </td>
                     )}
-                    <td className="min-w-[180px] px-3 py-2">
+                    <td className={clsx("sticky z-[1] min-w-[190px] bg-surface px-2 py-2", canWrite ? "left-9" : "left-0")}>
                       <Link to={`/cameras/${c.id}`} className="font-medium text-ink hover:text-accent-ink hover:underline">
                         {c.name}
                       </Link>
-                      <div className="text-xs text-ink-muted">{c.model ?? "Model unknown"}</div>
+                      <div className="tabular text-xs text-ink-muted">
+                        {c.host}
+                        {c.port !== (c.protocol === "https" ? 443 : 80) && `:${c.port}`} · {c.model ?? "Model unknown"}
+                      </div>
                       {c.priority === "critical" && <div className="mt-1"><CriticalAreaBadge /></div>}
                     </td>
                     {visibleColumns.map((col) => (
-                      <td key={col.key} className={clsx("px-3 py-2", col.align === "right" && "text-right", col.cellClassName)}>
+                      <td key={col.key} className={clsx("px-2 py-2", col.align === "right" && "text-right", col.cellClassName)}>
                         {col.render(c)}
                       </td>
                     ))}
-                    <td className="whitespace-nowrap px-3 py-2 text-right">
+                    <td className="whitespace-nowrap px-2 py-2 text-right">
                       <IconAction label={`View ${c.name}`} to={`/cameras/${c.id}`}>
                         <Eye className="h-4 w-4" />
                       </IconAction>
@@ -490,15 +485,6 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                         <>
                           <IconAction label={`Edit ${c.name}`} to={`/cameras/${c.id}/edit`}>
                             <Pencil className="h-4 w-4" />
-                          </IconAction>
-                          <IconAction
-                            label={c.monitoringEnabled ? `Disable monitoring for ${c.name}` : `Enable monitoring for ${c.name}`}
-                            onClick={() => setMonitoring.mutate({ id: c.id, enabled: !c.monitoringEnabled })}
-                          >
-                            {c.monitoringEnabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                          </IconAction>
-                          <IconAction label={`Remove ${c.name}`} onClick={() => setRemoving([c])}>
-                            <Trash2 className="h-4 w-4" />
                           </IconAction>
                         </>
                       )}

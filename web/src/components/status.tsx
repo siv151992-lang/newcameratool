@@ -78,17 +78,20 @@ export function UsageMeter({
   warning = 80,
   critical = 90,
   compact,
+  hideLabel,
 }: {
   percent: number | null;
   warning?: number;
   critical?: number;
   compact?: boolean;
+  /** The percentage is shown elsewhere next to it. */
+  hideLabel?: boolean;
 }) {
   if (percent === null || percent === undefined) return <span className="text-sm text-ink-muted">—</span>;
   const tone = percent >= critical ? "bg-bad" : percent >= warning ? "bg-warn" : "bg-accent";
   const track = percent >= critical ? "bg-bad/15" : percent >= warning ? "bg-warn/20" : "bg-accent/15";
   return (
-    <div className={clsx("flex items-center gap-2", compact ? "min-w-[110px]" : "min-w-[160px]")}>
+    <div className={clsx("flex items-center gap-2", hideLabel ? "w-full" : compact ? "min-w-[110px]" : "min-w-[160px]")}>
       <div
         className={clsx("h-2 flex-1 overflow-hidden rounded-full", track)}
         role="meter"
@@ -99,7 +102,7 @@ export function UsageMeter({
       >
         <div className={clsx("h-full rounded-full", tone)} style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
       </div>
-      <span className="tabular w-12 text-right text-sm text-ink">{percent.toFixed(1)}%</span>
+      {!hideLabel && <span className="tabular w-12 text-right text-sm text-ink">{percent.toFixed(1)}%</span>}
     </div>
   );
 }

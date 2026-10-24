@@ -197,7 +197,7 @@ export function AppShell() {
             <span className="hidden sm:inline">Sign out</span>
           </Button>
         </header>
-        <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
+        <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6">
           <Outlet />
         </main>
       </div>
