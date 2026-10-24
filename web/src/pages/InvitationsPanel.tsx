@@ -26,7 +26,7 @@ interface InviteState {
 
 /**
  * Invitations into the current organization. People join only when they accept; the link expires
- * and stops working once used or revoked. If the email cannot be sent, the Org Admin copies the link.
+ * and stops working once used or revoked. The link is also shown for the Org Admin to share in chat.
  */
 export function useInvitations() {
   const { user } = useAuth();
@@ -46,9 +46,8 @@ export function useInvitations() {
     onSuccess: (sent) => {
       setError(null);
       announce(sent, inviting!.email);
-      // Keep the dialog open to show the link when the email could not be sent.
-      if (sent.emailSent) setInviting(null);
-      else setInviting((s) => s && { ...s, sent });
+      // Show the link every time, to share in chat as well as (or instead of) the email.
+      setInviting((s) => s && { ...s, sent });
     },
     onError: (e) => setError(e instanceof ApiError && e.fieldErrors[0] ? e.fieldErrors[0].message : (e as Error).message),
   });
@@ -56,7 +55,7 @@ export function useInvitations() {
     mutationFn: (inv: Invitation) => api<InvitationSent>(`/invitations/${inv.id}/resend`, { method: "POST" }),
     onSuccess: (sent, inv) => {
       announce(sent, inv.email);
-      if (!sent.emailSent) setInviting({ email: inv.email, role: inv.role, sent });
+      setInviting({ email: inv.email, role: inv.role, sent });
     },
     onError: (e: Error) => toast("error", e.message),
   });
@@ -113,11 +112,23 @@ function InvitationLink({ email, sent }: { email: string; sent: InvitationSent }
   const url = `${window.location.origin}${sent.link}`;
   return (
     <div className="space-y-3">
-      <p>
-        The invitation for <strong>{email}</strong> is ready, but the email was not sent
-        {sent.emailError ? <>: <span className="text-ink-secondary">{sent.emailError}</span></> : "."}
-      </p>
-      <p className="text-ink-secondary">Copy the link and send it to them yourself. It works once, only for {email}, and is shown only now.</p>
+      {sent.emailSent ? (
+        <p>The invitation was emailed to <strong>{email}</strong>. You can also send them this link in a chat message.</p>
+      ) : (
+        <>
+          <p>
+            The invitation for <strong>{email}</strong> is ready, but the email was not sent
+            {sent.emailError ? <>: <span className="text-ink-secondary">{sent.emailError}</span></> : "."}
+          </p>
+          <p>Copy the link and send it to them yourself.</p>
+        </>
+      )}
+      <p className="text-ink-secondary">It works once, only for {email}, and is shown only now. Resending makes a new link.</p>
+      {/^(localhost|127\.|\[::1\])/.test(window.location.hostname) && (
+        <p className="text-warn">
+          This link starts with {window.location.hostname}, which opens only on this computer. Open the dashboard at its network address (such as http://10.0.0.5:8080) and invite again to get a link others can open.
+        </p>
+      )}
       <div className="flex gap-2">
         <Input readOnly value={url} aria-label="Invitation link" onFocus={(e) => e.target.select()} />
         <Button
