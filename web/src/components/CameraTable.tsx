@@ -227,7 +227,10 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
     else next.add(id);
     setSelected(next);
   };
-  const filtered = !!(debouncedSearch || brand || status || location || usage || recording);
+  const filtered = !!(debouncedSearch || brand || status || location || usage || recording || password || priority);
+  const clearFilters = () => {
+    for (const reset of [setSearch, setBrand, setStatus, setLocation, setUsage, setRecording, setPassword, setPriority]) reset("");
+  };
   const total = cameras.data?.total ?? 0;
   const [selectingAll, setSelectingAll] = useState(false);
   const report = useDownloadCameraReport();
@@ -245,90 +248,109 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
 
   return (
     <section className="rounded-lg border border-line bg-surface">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line p-3">
-        {title && <h2 className="mr-2 text-sm font-semibold">{title}</h2>}
-        <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-ink-muted" aria-hidden />
-          <Input
-            type="search"
-            placeholder="Search name, IP, location…"
-            aria-label="Search cameras"
-            className="pl-8"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      <div className="space-y-2 border-b border-line p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {title && <h2 className="mr-2 text-sm font-semibold">{title}</h2>}
+          <div className="relative min-w-[200px] flex-1 sm:max-w-md">
+            <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-ink-muted" aria-hidden />
+            <Input
+              type="search"
+              placeholder="Search name, IP, location…"
+              aria-label="Search cameras"
+              className="pl-8"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {filtered && (
+              <Button variant="ghost" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            )}
+            <Button
+              icon={<Download className="h-4 w-4" />}
+              onClick={() => report.download(params)}
+              loading={report.downloading}
+              disabled={cameras.isSuccess && total === 0}
+              title={filtered ? "Status report (CSV) of the cameras matching these filters" : "Status report (CSV) of all cameras"}
+            >
+              {filtered ? `Download report (${total})` : "Download report"}
+            </Button>
+            <ColumnsMenu columns={COLUMNS} {...columnVisibility} />
+          </div>
         </div>
-        <Select aria-label="Filter by brand" className="w-auto" value={brand} onChange={(e) => setBrand(e.target.value)}>
-          <option value="">All brands</option>
-          {brands.data?.filter((b) => b.supportStatus !== "planned" || b.cameraCount > 0).map((b) => (
-            <option key={b.key} value={b.key}>
-              {b.displayName}
-            </option>
-          ))}
-        </Select>
-        <Select aria-label="Filter by status" className="w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All statuses</option>
-          <optgroup label="Connection">
-            <option value="online">Online</option>
-            <option value="offline">Offline</option>
-            <option value="unknown">Unknown</option>
-            <option value="disabled">Monitoring disabled</option>
-          </optgroup>
-          <optgroup label="Storage health">
-            <option value="healthy">Healthy</option>
-            <option value="warning">Warning</option>
-            <option value="critical">Critical</option>
-            <option value="nostoragedevice">No SD card detected</option>
-            <option value="nolocalstorage">No local storage (records elsewhere)</option>
-          </optgroup>
-        </Select>
-        <Select aria-label="Filter by location" className="w-auto" value={location} onChange={(e) => setLocation(e.target.value)}>
-          <option value="">All locations</option>
-          {locations.data?.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </Select>
-        <Select aria-label="Filter by recording status" className="w-auto" value={recording} onChange={(e) => setRecording(e.target.value)}>
-          <option value="">Any recording status</option>
-          <option value="recording">Recording</option>
-          <option value="idle">Not recording</option>
-          <option value="error">Recording error</option>
-          <option value="unknown">Recording unknown</option>
-        </Select>
-        <Select aria-label="Filter by priority" className="w-auto" value={priority} onChange={(e) => setPriority(e.target.value)}>
-          <option value="">Any priority</option>
-          <option value="critical">Critical areas</option>
-          <option value="normal">Normal priority</option>
-        </Select>
-        <Select aria-label="Filter by camera password" className="w-auto" value={password} onChange={(e) => setPassword(e.target.value)}>
-          <option value="">Any password</option>
-          <option value="ok">Password meets policy</option>
-          <option value="weak">Weak password</option>
-          <option value="expired">Password change due</option>
-        </Select>
-        <Select aria-label="Filter by storage usage" className="w-auto" value={usage} onChange={(e) => setUsage(e.target.value)}>
-          {Object.entries(USAGE_FILTERS).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v.label}
-            </option>
-          ))}
-        </Select>
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            icon={<Download className="h-4 w-4" />}
-            onClick={() => report.download(params)}
-            loading={report.downloading}
-            disabled={cameras.isSuccess && total === 0}
-            title={filtered ? "Status report (CSV) of the cameras matching these filters" : "Status report (CSV) of all cameras"}
-          >
-            {filtered ? `Download report (${total})` : "Download report"}
-          </Button>
-          <ColumnsMenu columns={COLUMNS} {...columnVisibility} />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7">
+          <Select aria-label="Filter by brand" className="w-full" value={brand} onChange={(e) => setBrand(e.target.value)}>
+            <option value="">All brands</option>
+            {brands.data?.filter((b) => b.supportStatus !== "planned" || b.cameraCount > 0).map((b) => (
+              <option key={b.key} value={b.key}>
+                {b.displayName}
+              </option>
+            ))}
+          </Select>
+          <Select aria-label="Filter by status" className="w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">All statuses</option>
+            <optgroup label="Connection">
+              <option value="online">Online</option>
+              <option value="offline">Offline</option>
+              <option value="unknown">Unknown</option>
+              <option value="disabled">Monitoring disabled</option>
+            </optgroup>
+            <optgroup label="Storage health">
+              <option value="healthy">Healthy</option>
+              <option value="warning">Warning</option>
+              <option value="critical">Critical</option>
+              <option value="nostoragedevice">No SD card detected</option>
+              <option value="nolocalstorage">No local storage (records elsewhere)</option>
+            </optgroup>
+          </Select>
+          <Select aria-label="Filter by location" className="w-full" value={location} onChange={(e) => setLocation(e.target.value)}>
+            <option value="">All locations</option>
+            {locations.data?.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </Select>
+          <Select aria-label="Filter by recording status" className="w-full" value={recording} onChange={(e) => setRecording(e.target.value)}>
+            <option value="">Any recording</option>
+            <option value="recording">Recording</option>
+            <option value="idle">Not recording</option>
+            <option value="error">Recording error</option>
+            <option value="unknown">Recording unknown</option>
+          </Select>
+          <Select aria-label="Filter by priority" className="w-full" value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <option value="">Any priority</option>
+            <option value="critical">Critical areas</option>
+            <option value="normal">Normal priority</option>
+          </Select>
+          <Select aria-label="Filter by camera password" className="w-full" value={password} onChange={(e) => setPassword(e.target.value)}>
+            <option value="">Any password</option>
+            <option value="ok">Password meets policy</option>
+            <option value="weak">Weak password</option>
+            <option value="expired">Password change due</option>
+          </Select>
+          <Select aria-label="Filter by storage usage" className="w-full" value={usage} onChange={(e) => setUsage(e.target.value)}>
+            {Object.entries(USAGE_FILTERS).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v.label}
+              </option>
+            ))}
+          </Select>
         </div>
-        {canWrite && selected.size > 0 && (
-          <>
+      </div>
+
+      {canWrite && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-accent-soft/30 px-4 py-2 text-sm">
+          <span>{selected.size} selected</span>
+          {allSelected && total > selected.size && (
+            <Button size="sm" variant="ghost" loading={selectingAll} onClick={() => void selectAllMatching()}>
+              Select all {total} matching cameras
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear selection</Button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               icon={<ShieldAlert className="h-4 w-4" />}
@@ -363,29 +385,15 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
             >
               Uses local storage
             </Button>
-          </>
-        )}
-        {canWrite && selected.size > 0 && (
-          <Button
-            variant="danger"
-            size="sm"
-            icon={<Trash2 className="h-4 w-4" />}
-            onClick={() => setRemoving(items.filter((c) => selected.has(c.id)))}
-          >
-            Remove {items.filter((c) => selected.has(c.id)).length} on this page
-          </Button>
-        )}
-      </div>
-
-      {canWrite && selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-accent-soft/30 px-4 py-2 text-sm">
-          <span>{selected.size} selected</span>
-          {allSelected && total > selected.size && (
-            <Button size="sm" variant="ghost" loading={selectingAll} onClick={() => void selectAllMatching()}>
-              Select all {total} matching cameras
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<Trash2 className="h-4 w-4" />}
+              onClick={() => setRemoving(items.filter((c) => selected.has(c.id)))}
+            >
+              Remove {items.filter((c) => selected.has(c.id)).length} on this page
             </Button>
-          )}
-          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear selection</Button>
+          </div>
         </div>
       )}
 
