@@ -155,7 +155,10 @@ export class MockHikvisionCamera {
     const routes: Record<string, () => string> = {
       "/ISAPI/ContentMgmt/Storage": () => this.storage,
       "/ISAPI/System/deviceInfo": () => this.deviceInfo,
-      ...(this.recordingStatusApi ? { "/ISAPI/ContentMgmt/Recording/status": () => recordingXml(this.recording) } : this.searchRoutes(body)),
+      // Recordings can always be searched (playback); some firmware has no Recording/status. A
+      // broken recording state breaks the search too.
+      ...(["recording", "idle", "error"].includes(this.recording) ? this.searchRoutes(body) : {}),
+      ...(this.recordingStatusApi ? { "/ISAPI/ContentMgmt/Recording/status": () => recordingXml(this.recording) } : {}),
     };
     if (this.mode === "not-found" || !routes[path]) {
       res.statusCode = 404;

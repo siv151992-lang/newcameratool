@@ -28,7 +28,7 @@ import {
 import { testCameraConfig, testSavedCamera } from "../services/connectionService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
-import { liveVideoEnabled, prepareStream } from "../services/liveVideoService.js";
+import { listRecordings, liveVideoEnabled, preparePlayback, prepareStream } from "../services/liveVideoService.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
 export const camerasRouter = Router();
@@ -165,6 +165,18 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
 camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   await prepareStream(orgOf(req), param(req));
   await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req), details: { video: true } });
+  res.json({ ok: true });
+});
+
+// Recordings on the camera's own storage: what a day holds, and playback from a time (through go2rtc).
+camerasRouter.get("/:id/recordings", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+  const { date } = parse(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD") }), req.query);
+  res.json(await listRecordings(orgOf(req), param(req), date));
+});
+camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+  const { start } = parse(z.object({ start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS") }).strict(), req.body);
+  await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start);
+  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start } });
   res.json({ ok: true });
 });
 

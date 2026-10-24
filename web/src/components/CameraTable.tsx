@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, toQuery } from "../api/client";
@@ -11,6 +11,7 @@ import { useColumnVisibility } from "../hooks/columns";
 import { absoluteTime, ERROR_LABELS, errorCategory, formatBytes, formatDays, relativeTime } from "../lib/format";
 import { ColumnsMenu } from "./ColumnsMenu";
 import { LiveViewDialog } from "./LiveView";
+import { RecordingsDialog } from "./Recordings";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
 import { ConnectionBadge, CriticalAreaBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
@@ -175,6 +176,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [removing, setRemoving] = useState<Camera[] | null>(null);
   const [live, setLive] = useState<Camera | null>(null);
+  const [recordings, setRecordings] = useState<Camera | null>(null);
   const setLocalStorage = useSetLocalStorage();
   const setCameraPriority = useSetPriority();
   const debouncedSearch = useDebounced(search);
@@ -470,9 +472,14 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                         <Eye className="h-4 w-4" />
                       </IconAction>
                       {can("cameras:live") && (
-                        <IconAction label={`Live view of ${c.name}`} onClick={() => setLive(c)}>
-                          <Video className="h-4 w-4" />
-                        </IconAction>
+                        <>
+                          <IconAction label={`Live view of ${c.name}`} onClick={() => setLive(c)}>
+                            <Video className="h-4 w-4" />
+                          </IconAction>
+                          <IconAction label={`Recordings of ${c.name}`} onClick={() => setRecordings(c)}>
+                            <Film className="h-4 w-4" />
+                          </IconAction>
+                        </>
                       )}
                       {can("cameras:check") && (
                         <IconAction
@@ -505,6 +512,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
       )}
 
       <LiveViewDialog camera={live} onClose={() => setLive(null)} />
+      <RecordingsDialog camera={recordings} onClose={() => setRecordings(null)} />
       <RemoveCamerasDialog
         open={!!removing}
         names={removing?.map((c) => c.name) ?? []}

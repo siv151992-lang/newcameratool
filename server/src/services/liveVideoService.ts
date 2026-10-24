@@ -44,9 +44,20 @@ export async function prepareStream(orgId: string, cameraId: string): Promise<st
   const src = rtspUrl(await getCameraConfig(cameraId, requestTimeoutMs), adapter.rtspPath);
   const name = streamName(cameraId);
   const hash = createHash("sha256").update(src).digest("hex");
-  let res: Response;
   try {
     if (registered.get(name) === hash && (await streamExists(name))) return name;
+  } catch {
+    // checked again when the stream is added
+  }
+  await putStream(name, src);
+  registered.set(name, hash);
+  return name;
+}
+
+/** Adds (or replaces) a go2rtc stream. */
+async function putStream(name: string, src: string) {
+  let res: Response;
+  try {
     res = await fetch(`${base()}/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT", signal: AbortSignal.timeout(5000) });
   } catch (err) {
     logger.warn({ err: (err as Error).message, url: base() }, "Live video service unreachable");
@@ -59,6 +70,47 @@ export async function prepareStream(orgId: string, cameraId: string): Promise<st
     logger.warn({ status: res.status, reason }, "Live video service refused the camera stream");
     throw new HttpError(502, "LIVE_VIDEO_SERVICE", `The live video service refused the camera stream (HTTP ${res.status}${reason ? `: ${reason}` : ""}). See: docker compose logs go2rtc`);
   }
-  registered.set(name, hash);
-  return name;
+}
+
+// ------------------------------------------------------------------ playback of recordings
+
+/** Per camera: how its playback times differ from the local times shown (firmware answering in UTC). */
+const playbackShift = new Map<string, number>();
+const DAY_MS = 86_400_000;
+const wall = (ms: number) => new Date(ms).toISOString().slice(0, 19);
+
+/** One session's playback stream of a camera (each viewer plays their own time). */
+export const playbackStreamName = (cameraId: string, sessionId: string) => `playback_${cameraId}_${sessionId.slice(0, 12)}`;
+
+async function playbackAdapter(orgId: string, cameraId: string) {
+  const row = await getCameraRow(cameraId, orgId);
+  const adapter = registry.get(row.brand_key);
+  if (!adapter.listRecordings || !adapter.playbackRtspPath) {
+    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `Playing recordings is not available for ${adapter.meta.displayName} cameras yet`);
+  }
+  const { requestTimeoutMs } = await getMonitoringSettings();
+  return { adapter, config: await getCameraConfig(cameraId, requestTimeoutMs) };
+}
+
+/** Recorded periods on the camera's storage on `date` (YYYY-MM-DD, camera local time). */
+export async function listRecordings(orgId: string, cameraId: string, date: string) {
+  const { adapter, config } = await playbackAdapter(orgId, cameraId);
+  const from = Date.parse(`${date}T00:00:00Z`);
+  const to = from + DAY_MS;
+  let result = await adapter.listRecordings!(config, from, to);
+  // Firmware answering in UTC also reads the requested day in UTC: ask for the local day again.
+  if (result.shiftMs) result = await adapter.listRecordings!(config, from - result.shiftMs, to - result.shiftMs);
+  playbackShift.set(cameraId, result.shiftMs);
+  const segments = result.segments
+    .filter((s) => s.end > from && s.start < to)
+    .map((s) => ({ start: wall(Math.max(s.start, from)), end: wall(Math.min(s.end, to)) }));
+  return { date, cameraNow: wall(result.nowMs), segments };
+}
+
+/** Points this session's playback stream at the recordings from `start` (camera local time). */
+export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string) {
+  if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Playing recordings needs the live video service (go2rtc), which is not set up on this server");
+  const { adapter, config } = await playbackAdapter(orgId, cameraId);
+  const startMs = Date.parse(`${start}Z`) - (playbackShift.get(cameraId) ?? 0);
+  await putStream(playbackStreamName(cameraId, sessionId), rtspUrl(config, adapter.playbackRtspPath!(startMs)));
 }

@@ -3,15 +3,16 @@ import net from "node:net";
 import { SESSION_COOKIE, getSession } from "../auth/sessions.js";
 import { config } from "../config.js";
 import { logger } from "../lib/logger.js";
-import { prepareStream } from "./liveVideoService.js";
+import { getCameraRow } from "./cameraService.js";
+import { playbackStreamName, prepareStream } from "./liveVideoService.js";
 
 /**
- * Passes a browser's live video WebSocket (/api/cameras/:id/live/ws) through to go2rtc after
+ * Passes a browser's live video or playback WebSocket (/api/cameras/:id/live/ws, /playback/ws) through to go2rtc after
  * checking the session, the cameras:live permission and that the camera is in the session's
  * organization. The bytes are relayed unchanged; nothing is stored.
  */
 
-const PATH = /^\/api\/cameras\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/live\/ws$/i;
+const PATH = /^\/api\/cameras\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(live|playback)\/ws$/i;
 const MAX_VIEWING_MS = 60 * 60_000; // a forgotten window does not stream forever
 
 function cookie(header: string | undefined, name: string): string | undefined {
@@ -53,7 +54,13 @@ async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer
   if (!auth.user.organizationId || !auth.user.permissions.includes("cameras:live")) return refuse("403 Forbidden");
   let name: string;
   try {
-    name = await prepareStream(auth.user.organizationId, match[1]!);
+    if (match[2]!.toLowerCase() === "live") {
+      name = await prepareStream(auth.user.organizationId, match[1]!);
+    } else {
+      // Playback was pointed at its start time by POST .../playback/prepare for this session.
+      await getCameraRow(match[1]!, auth.user.organizationId);
+      name = playbackStreamName(match[1]!, auth.sessionId);
+    }
   } catch {
     return refuse("502 Bad Gateway");
   }

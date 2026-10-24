@@ -176,6 +176,14 @@ export interface CameraBrandAdapter {
   getRecordingStatus?(camera: CameraConfig): Promise<RecordingReading>;
   /** How far back the recordings on the camera's own storage go; null when it holds none. */
   getRecordingRange?(camera: CameraConfig): Promise<RecordingRange | null>;
+  /**
+   * Optional: recorded segments on the camera's own storage between two wall-clock times (camera
+   * local time), merged and sorted, with the camera's time now; `shiftMs` turns those times back
+   * into the ones the camera uses for playback.
+   */
+  listRecordings?(camera: CameraConfig, fromMs: number, toMs: number): Promise<{ segments: { start: number; end: number }[]; nowMs: number; shiftMs: number }>;
+  /** Optional: the RTSP path that plays the recordings from `startMs` (camera time, as listRecordings sent it). */
+  playbackRtspPath?(startMs: number): string;
   /** Optional: the RTSP path of a stream browsers can play (H.264, usually the second stream), for live video. */
   readonly rtspPath?: string;
   /** Optional: the current picture, for the live view. */

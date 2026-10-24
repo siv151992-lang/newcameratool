@@ -9,7 +9,21 @@ const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0",
  * Smooth video over a WebSocket (go2rtc's MSE stream, relayed by the server) into a <video>.
  * Stays near the live edge and drops old video so memory does not grow.
  */
-export function LiveVideo({ cameraId, name, onFailed }: { cameraId: string; name: string; onFailed: (message: string) => void }) {
+export function LiveVideo({
+  cameraId,
+  name,
+  onFailed,
+  playbackStart,
+  onTime,
+}: {
+  cameraId: string;
+  name: string;
+  onFailed: (message: string) => void;
+  /** Play the camera's recordings from this camera time (YYYY-MM-DDTHH:MM:SS) instead of live. */
+  playbackStart?: string;
+  /** Seconds played so far. */
+  onTime?: (seconds: number) => void;
+}) {
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,13 +62,14 @@ export function LiveVideo({ cameraId, name, onFailed }: { cameraId: string; name
 
     void (async () => {
       try {
-        await api(`/cameras/${cameraId}/live/prepare`, { method: "POST" });
+        if (playbackStart) await api(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart } });
+        else await api(`/cameras/${cameraId}/live/prepare`, { method: "POST" });
       } catch (e) {
         return fail((e as Error).message);
       }
       if (stopped) return;
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${scheme}://${window.location.host}/api/cameras/${cameraId}/live/ws`);
+      ws = new WebSocket(`${scheme}://${window.location.host}/api/cameras/${cameraId}/${playbackStart ? "playback" : "live"}/ws`);
       ws.binaryType = "arraybuffer";
       ws.onopen = () => ws!.send(JSON.stringify({ type: "mse", value: CODECS.filter((c) => MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)).join() }));
       ws.onmessage = (ev) => {
@@ -80,7 +95,12 @@ export function LiveVideo({ cameraId, name, onFailed }: { cameraId: string; name
           flush();
         }, { once: true });
       };
-      ws.onclose = () => fail(gotVideo ? "The video stopped. Close and open the live view to try again." : "The camera's video could not be opened. Check that RTSP is turned on in the camera (port 554).");
+      ws.onclose = () =>
+        fail(
+          gotVideo
+            ? playbackStart ? "Playback stopped (end of the recording, or the camera closed it)." : "The video stopped. Close and open the live view to try again."
+            : playbackStart ? "The recording could not be opened. The camera user needs the Playback permission, and RTSP must be on (port 554)." : "The camera's video could not be opened. Check that RTSP is turned on in the camera (port 554).",
+        );
     })();
 
     return () => {
@@ -89,7 +109,7 @@ export function LiveVideo({ cameraId, name, onFailed }: { cameraId: string; name
       el.removeAttribute("src");
       el.load();
     };
-  }, [cameraId, onFailed]);
+  }, [cameraId, onFailed, playbackStart]);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center">
@@ -101,6 +121,7 @@ export function LiveVideo({ cameraId, name, onFailed }: { cameraId: string; name
         playsInline
         aria-label={`Live video from ${name}`}
         onPlaying={() => setPlaying(true)}
+        onTimeUpdate={(e) => onTime?.(e.currentTarget.currentTime)}
       />
       {!playing && !error && <div className="absolute inset-0 flex items-center justify-center"><Spinner label="Starting video" /></div>}
       {error && <div className="absolute inset-x-3 bottom-3"><ErrorMessage error={new Error(error)} /></div>}

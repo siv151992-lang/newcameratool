@@ -210,13 +210,13 @@ export function parseCameraTime(xml: string): { nowMs: number; offsetMinutes?: n
 }
 
 /** Body of POST /ISAPI/ContentMgmt/search for track 101 between two wall-clock times. */
-export function searchRequestXml(fromMs: number, toMs: number, searchId: string, maxResults = 40): string {
+export function searchRequestXml(fromMs: number, toMs: number, searchId: string, maxResults = 40, position = 0): string {
   const t = (ms: number) => `${wallClockText(ms)}Z`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <CMSearchDescription><searchID>${searchId}</searchID>
 <trackIDList><trackID>101</trackID></trackIDList>
 <timeSpanList><timeSpan><startTime>${t(fromMs)}</startTime><endTime>${t(toMs)}</endTime></timeSpan></timeSpanList>
-<maxResults>${maxResults}</maxResults><searchResultPostion>0</searchResultPostion>
+<maxResults>${maxResults}</maxResults><searchResultPostion>${position}</searchResultPostion>
 <metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList>
 </CMSearchDescription>`;
 }
@@ -246,6 +246,19 @@ export function parseSearchLatestEnd(xml: string): number | undefined {
     .map((item) => wallClockMs(text(item.timeSpan as XmlNode, "endTime")))
     .filter((v): v is number => v !== undefined);
   return ends.length ? Math.max(...ends) : undefined;
+}
+
+/** POST /ISAPI/ContentMgmt/search → the recorded segments returned (as sent), and whether more follow. */
+export function parseSearchSegments(xml: string): { segments: { start: number; end: number }[]; more: boolean } {
+  const root = findRoot(parseXml(xml), "CMSearchResult");
+  const status = text(root, "responseStatusStrg") ?? "";
+  if (text(root, "responseStatus") === "false" && !/^no\s*match/i.test(status)) {
+    throw new CameraApiError("API_ERROR", `Recording search failed: ${status || "no reason given"}`);
+  }
+  const segments = list(root, "matchList", "searchMatchItem")
+    .map((item) => ({ start: wallClockMs(text(item.timeSpan as XmlNode, "startTime")), end: wallClockMs(text(item.timeSpan as XmlNode, "endTime")) }))
+    .filter((s): s is { start: number; end: number } => s.start !== undefined && s.end !== undefined && s.end > s.start);
+  return { segments, more: /^more$/i.test(status) };
 }
 
 /** POST /ISAPI/ContentMgmt/search → the start of the oldest recorded segment returned (as sent), if any. */

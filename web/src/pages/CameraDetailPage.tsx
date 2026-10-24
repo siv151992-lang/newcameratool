@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertOctagon, ArrowLeft, KeyRound, Pause, Pencil, Play, PlugZap, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff } from "lucide-react";
+import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Alert, CameraDetail, CameraHistory, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
 import { LiveViewDialog } from "../components/LiveView";
+import { RecordingsDialog } from "../components/Recordings";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
 import { ConnectionBadge, CriticalAreaBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
 import { issueLabel } from "../lib/cameraPassword";
@@ -100,6 +101,7 @@ export function CameraDetailPage() {
   const [showTable, setShowTable] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [live, setLive] = useState(false);
+  const [showRecordings, setShowRecordings] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null);
 
   const camera = useQuery({ queryKey: ["camera", id], queryFn: () => api<CameraDetail>(`/cameras/${id}`), refetchInterval: 30_000 });
@@ -155,9 +157,14 @@ export function CameraDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {can("cameras:live") && (
-            <Button icon={<Video className="h-4 w-4" />} onClick={() => setLive(true)}>
-              Live view
-            </Button>
+            <>
+              <Button icon={<Video className="h-4 w-4" />} onClick={() => setLive(true)}>
+                Live view
+              </Button>
+              <Button icon={<Film className="h-4 w-4" />} onClick={() => setShowRecordings(true)}>
+                Recordings
+              </Button>
+            </>
           )}
           {can("cameras:check") && (
             <>
@@ -471,6 +478,7 @@ export function CameraDetailPage() {
         {testResult && <Diagnostics result={testResult} />}
       </Dialog>
       <LiveViewDialog camera={live ? c : null} onClose={() => setLive(false)} />
+      <RecordingsDialog camera={showRecordings ? c : null} onClose={() => setShowRecordings(false)} />
       <RemoveCamerasDialog
         open={removing}
         names={[c.name]}

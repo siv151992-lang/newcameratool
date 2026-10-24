@@ -23,6 +23,7 @@ import {
   parseTrackSchedule,
   RECORDING_RECENT_MINUTES,
   recordingFromSegments,
+  parseSearchSegments,
   searchRequestXml,
   toLocalWallClock,
   type TrackSchedule,
@@ -54,7 +55,7 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     supportStatus: "supported",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices", "nas"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices", "nas"],
     storageEndpoint: `GET ${HIKVISION_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -186,6 +187,41 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     // Recordings from the very start of a shortened search: the card may hold more.
     const atLeast = lookback < RANGE_LOOKBACK_DAYS[0]! && days >= lookback - 1;
     return { oldest: wallClockText(oldestLocal), days, ...(atLeast ? { atLeast } : {}) };
+  }
+
+  /**
+   * Recordings between two local wall-clock times, for playback: searched page by page, merged
+   * where one segment ends as the next starts. Firmware that answers in UTC is detected as for
+   * the recording range and its times shifted to local time (shiftMs).
+   */
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number) {
+    const { nowMs, offsetMinutes } = parseCameraTime(await this.step("reading the camera's clock", () => this.getXml(camera, HIKVISION_TIME_PATH)));
+    const id = randomUUID().toUpperCase();
+    const found: { start: number; end: number }[] = [];
+    for (let page = 0; page < 25; page++) {
+      const { segments, more } = await this.step("searching its recordings", async () =>
+        parseSearchSegments(await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(fromMs, toMs, id, 50, page * 50))),
+      );
+      found.push(...segments);
+      if (!more || segments.length === 0) break;
+    }
+    let shiftMs = 0;
+    if (offsetMinutes && found.length) {
+      const latest = Math.max(...found.map((s) => s.end));
+      if (toLocalWallClock(latest, nowMs, offsetMinutes) !== latest) shiftMs = offsetMinutes * 60_000;
+    }
+    const merged: { start: number; end: number }[] = [];
+    for (const s of found.map((x) => ({ start: x.start + shiftMs, end: x.end + shiftMs })).sort((a, b) => a.start - b.start)) {
+      const last = merged.at(-1);
+      if (last && s.start <= last.end + 2000) last.end = Math.max(last.end, s.end);
+      else merged.push({ ...s });
+    }
+    return { segments: merged, nowMs, shiftMs };
+  }
+
+  /** Recordings of track 101 from a camera time (YYYYMMDDTHHMMSSZ, the camera's own clock). */
+  playbackRtspPath(startMs: number): string {
+    return `/Streaming/tracks/101?starttime=${wallClockText(startMs).replace(/[-:]/g, "")}Z`;
   }
 
   /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */

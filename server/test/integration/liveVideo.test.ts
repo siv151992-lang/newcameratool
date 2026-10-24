@@ -7,6 +7,7 @@ import { createApp } from "../../src/app.js";
 import { config } from "../../src/config.js";
 import { pool } from "../../src/db/pool.js";
 import { attachLiveVideo } from "../../src/services/liveVideoProxy.js";
+import { MockHikvisionCamera } from "../../src/testing/mockHikvision.js";
 import { createTestUser, PASSWORD, prepareDb, resetData } from "../helpers.js";
 
 /** Stands in for go2rtc: records registered streams and answers the WebSocket with one text frame. */
@@ -57,8 +58,12 @@ async function sessionCookie(role: "admin" | "viewer") {
   return { cookie: String(res.headers["set-cookie"]).split(";")[0]!, csrf: res.body.csrfToken as string };
 }
 
+const cam = new MockHikvisionCamera("admin", "Cam P@ss:1");
+let camPort: number;
+
 beforeAll(async () => {
   await prepareDb();
+  camPort = await cam.start();
   await new Promise<void>((r) => fake.listen(0, "127.0.0.1", r));
   (config as { LIVE_VIDEO_URL?: string }).LIVE_VIDEO_URL = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -68,6 +73,7 @@ afterAll(async () => {
   (config as { LIVE_VIDEO_URL?: string }).LIVE_VIDEO_URL = undefined;
   server.close();
   fake.close();
+  await cam.stop();
 });
 beforeEach(async () => {
   await resetData();
@@ -115,5 +121,28 @@ describe("live video", () => {
     expect(await upgrade(`/api/cameras/${id}/live/ws`, { Cookie: viewer.cookie, Origin: origin })).toMatch(/^HTTP\/1\.1 403 /);
     expect(await upgrade(`/api/cameras/00000000-0000-0000-0000-000000000000/live/ws`, { Cookie: admin.cookie, Origin: origin })).toMatch(/^HTTP\/1\.1 502 /);
     expect(go2rtc.wsPaths).toEqual([]);
+  });
+
+  it("lists a day's recordings and plays them from a chosen time through go2rtc", async () => {
+    const admin = await sessionCookie("admin");
+    const id = (await request(app).post("/api/cameras").set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ name: "Lobby", host: "127.0.0.1", port: camPort, protocol: "http", brand: "Hikvision", username: "admin", password: "Cam P@ss:1" }).expect(201)).body.id as string;
+    const today = new Date().toISOString().slice(0, 10);
+    const day = (await request(app).get(`/api/cameras/${id}/recordings?date=${today}`).set("Cookie", admin.cookie).expect(200)).body;
+    expect(day.date).toBe(today);
+    expect(day.segments.length).toBeGreaterThan(0);
+    expect(day.segments[0].start).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+
+    await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ start: `${today}T00:30:00` }).expect(200);
+    const [name, src] = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))!;
+    expect(src).toBe(`rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/Streaming/tracks/101?starttime=${today.replace(/-/g, "")}T003000Z`);
+    const reply = await upgrade(`/api/cameras/${id}/playback/ws`, { Cookie: admin.cookie, Origin: `http://127.0.0.1:${port}` });
+    expect(reply).toMatch(/^HTTP\/1\.1 101 /);
+    expect(go2rtc.wsPaths).toEqual([`/api/ws?src=${name}`]);
+    expect((await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.playback'")).rows).toEqual([{ details: { start: `${today}T00:30:00` } }]);
+
+    const viewer = await sessionCookie("viewer");
+    await request(app).get(`/api/cameras/${id}/recordings?date=${today}`).set("Cookie", viewer.cookie).expect(403);
   });
 });
