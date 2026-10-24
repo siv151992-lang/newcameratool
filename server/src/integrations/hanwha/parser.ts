@@ -198,3 +198,33 @@ export function parseHanwhaRecording(storageBody: string, settingsBody: string, 
   if (enabled === true && used.some((s) => STATUS(s.status) === "healthy")) return result("recording", `Recording enabled to ${usedText}`);
   return result("unknown", `Storage: ${usedText}`);
 }
+
+/** "2026-10-24T08:00:00Z" or "2026-10-24 08:00:00" as a wall-clock instant (the zone is the caller's to know). */
+export function sunapiTimeMs(raw: string | undefined): number | undefined {
+  const m = /(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(raw ?? "");
+  return m ? Date.parse(`${m[1]}T${m[2]}Z`) : undefined;
+}
+
+/** system.cgi?msubmenu=date → how far the camera's local time is ahead of UTC (ms, whole minutes). */
+export function parseSunapiUtcOffset(body: string): number {
+  const keys = parseSunapiBody(body);
+  const get = (name: string) => [...keys].find(([k]) => k.split(".").pop()!.toLowerCase() === name)?.[1];
+  const local = sunapiTimeMs(get("localtime"));
+  const utc = sunapiTimeMs(get("utctime"));
+  return local !== undefined && utc !== undefined ? Math.round((local - utc) / 60_000) * 60_000 : 0;
+}
+
+/** recording.cgi?msubmenu=timeline → recorded periods as sent (UTC), from keys like Results.0.StartTime / EndTime. */
+export function parseSunapiTimeline(body: string): { start: number; end: number }[] {
+  const keys = parseSunapiBody(body);
+  const periods = new Map<string, { start?: number; end?: number }>();
+  for (const [k, v] of keys) {
+    const m = /^(.*)\.(StartTime|EndTime)$/i.exec(k);
+    if (!m) continue;
+    const p = periods.get(m[1]!) ?? {};
+    if (m[2]!.toLowerCase() === "starttime") p.start = sunapiTimeMs(v);
+    else p.end = sunapiTimeMs(v);
+    periods.set(m[1]!, p);
+  }
+  return [...periods.values()].filter((p): p is { start: number; end: number } => p.start !== undefined && p.end !== undefined && p.end > p.start);
+}

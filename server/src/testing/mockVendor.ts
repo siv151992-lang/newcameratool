@@ -123,6 +123,24 @@ export class MockVendorCamera {
       if (url.pathname === "/stw-cgi/eventstatus.cgi") {
         return res.end("Channel.0.Connected=True\r\nSystemEvent.SDFail=False\r\nSystemEvent.SDFull=False\r\nSystemEvent.SDInsert=True\r\n");
       }
+      if (sub === "date") {
+        // India time: 5 h 30 min ahead of UTC.
+        const utc = new Date();
+        const local = new Date(utc.getTime() + 330 * 60_000);
+        const t = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
+        return res.end(`TimeZone=India Standard Time\r\nLocalTime=${t(local)}\r\nUTCTime=${t(utc)}\r\n`);
+      }
+      if (url.pathname === "/stw-cgi/recording.cgi" && url.searchParams.get("msubmenu") === "timeline") {
+        // Continuous recording, in one-hour files, over the requested period up to now (UTC).
+        const from = Date.parse(url.searchParams.get("FromDate") ?? "");
+        const to = Math.min(Date.parse(url.searchParams.get("ToDate") ?? ""), Date.now());
+        const lines: string[] = [];
+        for (let t = from, i = 0; t < to && i < 48; t += 3_600_000, i++) {
+          const iso = (ms: number) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+          lines.push(`Results.${i}.StartTime=${iso(t)}`, `Results.${i}.EndTime=${iso(Math.min(t + 3_600_000, to))}`, `Results.${i}.Type=Normal`);
+        }
+        return res.end(lines.length ? `${lines.join("\r\n")}\r\n` : "TotalCount=0\r\n");
+      }
       if (sub === "deviceinfo") return res.end("Model=SIMULATED-WISENET\r\nSerialNumber=HANWHA0001\r\nFirmwareVersion=2.21.02\r\nConnectedMACAddress=00:09:18:00:00:01\r\n");
       return res.end("NG\r\nError Code: 600\r\nError Details: Submenu Not Found\r\n");
     }

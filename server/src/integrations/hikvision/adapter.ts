@@ -11,6 +11,9 @@ import {
   type RecordingRange,
   type RecordingReading,
   type StorageReading,
+  mergeSegments,
+  type RecordedSegment,
+  type RecordingList,
 } from "../types.js";
 import {
   parseCameraTime,
@@ -194,29 +197,31 @@ export class HikvisionAdapter implements CameraBrandAdapter {
    * where one segment ends as the next starts. Firmware that answers in UTC is detected as for
    * the recording range and its times shifted to local time (shiftMs).
    */
-  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number) {
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList> {
     const { nowMs, offsetMinutes } = parseCameraTime(await this.step("reading the camera's clock", () => this.getXml(camera, HIKVISION_TIME_PATH)));
-    const id = randomUUID().toUpperCase();
-    const found: { start: number; end: number }[] = [];
-    for (let page = 0; page < 25; page++) {
-      const { segments, more } = await this.step("searching its recordings", async () =>
-        parseSearchSegments(await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(fromMs, toMs, id, 50, page * 50))),
-      );
-      found.push(...segments);
-      if (!more || segments.length === 0) break;
-    }
+    const search = async (from: number, to: number) => {
+      const id = randomUUID().toUpperCase();
+      const found: RecordedSegment[] = [];
+      for (let page = 0; page < 25; page++) {
+        const { segments, more } = await this.step("searching its recordings", async () =>
+          parseSearchSegments(await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(from, to, id, 50, page * 50))),
+        );
+        found.push(...segments);
+        if (!more || segments.length === 0) break;
+      }
+      return found;
+    };
+    let found = await search(fromMs, toMs);
     let shiftMs = 0;
     if (offsetMinutes && found.length) {
       const latest = Math.max(...found.map((s) => s.end));
-      if (toLocalWallClock(latest, nowMs, offsetMinutes) !== latest) shiftMs = offsetMinutes * 60_000;
+      if (toLocalWallClock(latest, nowMs, offsetMinutes) !== latest) {
+        // Firmware answering in UTC also reads the requested period in UTC: ask for the local one.
+        shiftMs = offsetMinutes * 60_000;
+        found = await search(fromMs - shiftMs, toMs - shiftMs);
+      }
     }
-    const merged: { start: number; end: number }[] = [];
-    for (const s of found.map((x) => ({ start: x.start + shiftMs, end: x.end + shiftMs })).sort((a, b) => a.start - b.start)) {
-      const last = merged.at(-1);
-      if (last && s.start <= last.end + 2000) last.end = Math.max(last.end, s.end);
-      else merged.push({ ...s });
-    }
-    return { segments: merged, nowMs, shiftMs };
+    return { segments: mergeSegments(found.map((s) => ({ start: s.start + shiftMs, end: s.end + shiftMs }))), nowMs, shiftMs };
   }
 
   /** Recordings of track 101 from a camera time (YYYYMMDDTHHMMSSZ, the camera's own clock). */

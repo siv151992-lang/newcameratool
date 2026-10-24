@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "../config.js";
 import { registry } from "../integrations/registry.js";
-import type { CameraConfig } from "../integrations/types.js";
+import type { CameraConfig, RecordingList } from "../integrations/types.js";
 import { HttpError } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
 import { getCameraConfig, getCameraRow } from "./cameraService.js";
@@ -74,8 +74,8 @@ async function putStream(name: string, src: string) {
 
 // ------------------------------------------------------------------ playback of recordings
 
-/** Per camera: how its playback times differ from the local times shown (firmware answering in UTC). */
-const playbackShift = new Map<string, number>();
+/** Per camera: the last day listed, to turn a chosen local time into the camera's playback time. */
+const lastListing = new Map<string, RecordingList>();
 const DAY_MS = 86_400_000;
 const wall = (ms: number) => new Date(ms).toISOString().slice(0, 19);
 
@@ -97,20 +97,27 @@ export async function listRecordings(orgId: string, cameraId: string, date: stri
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
   const from = Date.parse(`${date}T00:00:00Z`);
   const to = from + DAY_MS;
-  let result = await adapter.listRecordings!(config, from, to);
-  // Firmware answering in UTC also reads the requested day in UTC: ask for the local day again.
-  if (result.shiftMs) result = await adapter.listRecordings!(config, from - result.shiftMs, to - result.shiftMs);
-  playbackShift.set(cameraId, result.shiftMs);
+  const result = await adapter.listRecordings!(config, from, to);
+  lastListing.set(cameraId, result);
   const segments = result.segments
     .filter((s) => s.end > from && s.start < to)
     .map((s) => ({ start: wall(Math.max(s.start, from)), end: wall(Math.min(s.end, to)) }));
-  return { date, cameraNow: wall(result.nowMs), segments };
+  return { date, cameraNow: wall(result.nowMs), segments, playsFromRecordingStart: result.playsFromRecordingStart ?? false };
 }
 
-/** Points this session's playback stream at the recordings from `start` (camera local time). */
-export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string) {
+/**
+ * Points this session's playback stream at the recordings from `start` (camera local time).
+ * Returns the time playback really starts (the recording's start, for brands that play by id).
+ */
+export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string): Promise<string> {
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Playing recordings needs the live video service (go2rtc), which is not set up on this server");
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
-  const startMs = Date.parse(`${start}Z`) - (playbackShift.get(cameraId) ?? 0);
-  await putStream(playbackStreamName(cameraId, sessionId), rtspUrl(config, adapter.playbackRtspPath!(startMs)));
+  const local = Date.parse(`${start}Z`);
+  const listing = lastListing.get(cameraId);
+  const shift = listing?.shiftMs ?? 0;
+  const segment = listing?.segments.find((s) => s.start <= local && local < s.end) ?? listing?.segments.find((s) => s.start > local);
+  const fromStart = listing?.playsFromRecordingStart && segment;
+  const path = adapter.playbackRtspPath!(local - shift, segment && { ...segment, start: segment.start - shift, end: segment.end - shift });
+  await putStream(playbackStreamName(cameraId, sessionId), rtspUrl(config, path));
+  return fromStart ? wall(segment.start) : start;
 }

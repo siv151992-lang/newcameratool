@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
-import { parseAxisDeviceInfo, parseAxisError, parseAxisRecording, parseAxisStorage } from "./parser.js";
+import { CameraApiError, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
+import { parseAxisDeviceInfo, parseAxisError, parseAxisRecording, parseAxisRecordings, parseAxisStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 export const AXIS_STORAGE_PATH = "/axis-cgi/param.cgi?action=list&group=root.Storage";
@@ -15,7 +15,7 @@ export class AxisAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices"],
     storageEndpoint: `GET ${AXIS_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -47,6 +47,25 @@ export class AxisAdapter implements CameraBrandAdapter {
 
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
     return parseAxisRecording(await this.getText(camera, AXIS_STORAGE_PATH));
+  }
+
+  /**
+   * Recordings on the camera's storage (record/list.cgi). Searched over a UTC period wide enough
+   * for any time zone, then kept to the requested local period. Axis plays a recording by its id,
+   * from its start.
+   */
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList> {
+    const iso = (ms: number) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+    const nowUtc = Date.now();
+    const xml = await this.getText(camera, `/axis-cgi/record/list.cgi?recordingid=all&starttime=${iso(fromMs - 14 * 3_600_000)}&stoptime=${iso(toMs + 14 * 3_600_000)}`);
+    const { segments, offsetMs } = parseAxisRecordings(xml, nowUtc);
+    return { segments: segments.filter((s) => s.end > fromMs && s.start < toMs).sort((a, b) => a.start - b.start), nowMs: nowUtc + offsetMs, shiftMs: offsetMs, playsFromRecordingStart: true };
+  }
+
+  /** The chosen recording, from its start. */
+  playbackRtspPath(_startMs: number, segment?: RecordedSegment): string {
+    if (!segment?.ref) throw new CameraApiError("API_UNAVAILABLE", "No recording at that time");
+    return `/axis-media/media.amp?recordingid=${encodeURIComponent(segment.ref)}`;
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

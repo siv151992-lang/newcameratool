@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
-import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiError } from "./parser.js";
+import { mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
+import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiError, parseSunapiTimeline, parseSunapiUtcOffset } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 export const HANWHA_STORAGE_PATH = "/stw-cgi/system.cgi?msubmenu=storageinfo&action=view";
@@ -17,7 +17,7 @@ export class HanwhaAdapter implements CameraBrandAdapter {
     supportStatus: "supported",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices"],
     storageEndpoint: `GET ${HANWHA_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -39,6 +39,27 @@ export class HanwhaAdapter implements CameraBrandAdapter {
 
   private async getText(camera: CameraConfig, path: string): Promise<string> {
     return requireOk(await this.http.request(camera, { path, accept: "application/json, text/plain, */*" }), path, parseSunapiError);
+  }
+
+  /**
+   * Recordings between two local times from the SUNAPI timeline (channel 0), which works in UTC:
+   * the camera's offset (system date) turns local times into UTC and back (shiftMs).
+   */
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList> {
+    const shiftMs = await this.getText(camera, "/stw-cgi/system.cgi?msubmenu=date&action=view").then(parseSunapiUtcOffset, () => 0);
+    const iso = (ms: number) => `${new Date(ms - shiftMs).toISOString().slice(0, 19)}Z`;
+    const body = await this.getText(
+      camera,
+      `/stw-cgi/recording.cgi?msubmenu=timeline&action=view&ChannelIDList=0&Type=All&FromDate=${encodeURIComponent(iso(fromMs))}&ToDate=${encodeURIComponent(iso(toMs))}`,
+    );
+    const segments = parseSunapiTimeline(body).map((p) => ({ start: p.start + shiftMs, end: p.end + shiftMs }));
+    return { segments: mergeSegments(segments), nowMs: Date.now() + shiftMs, shiftMs };
+  }
+
+  /** Playback from a UTC time (YYYYMMDDhhmmss, to 12 hours later), main profile. */
+  playbackRtspPath(startMs: number): string {
+    const c = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace(/[-T:]/g, "");
+    return `/recording/${c(startMs)}-${c(startMs + 12 * 3_600_000)}/play.smp`;
   }
 
   async getStorageStatus(camera: CameraConfig): Promise<StorageReading> {

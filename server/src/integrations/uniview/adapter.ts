@@ -19,7 +19,7 @@ export class UniviewAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices"],
     storageEndpoint: `GET ${UNIVIEW_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -73,6 +73,17 @@ export class UniviewAdapter implements CameraBrandAdapter {
 
   getRecordingRange(camera: CameraConfig): Promise<RecordingRange | null> {
     return this.onvif.getRecordingRange(camera);
+  }
+
+  /** The span the recordings cover, over ONVIF (Profile G); gaps are not listed. */
+  listRecordings(camera: CameraConfig) {
+    return this.onvif.recordedSpan(camera);
+  }
+
+  /** Replay of channel 1 from a UTC time (Unix seconds), to 12 hours later. */
+  playbackRtspPath(startMs: number): string {
+    const b = Math.floor(startMs / 1000);
+    return `/c1/b${b}/e${b + 12 * 3600}/replay/`;
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

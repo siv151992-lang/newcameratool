@@ -9,6 +9,7 @@ import {
   type ConnectionResult,
   type DeviceInfo,
   type RecordingRange,
+  type RecordingList,
   type RecordingReading,
   type StorageReading,
 } from "../types.js";
@@ -161,6 +162,27 @@ export class OnvifAdapter implements CameraBrandAdapter {
     }
     const days = Math.max(0, Math.round(((now - summary.from) / 86_400_000) * 100) / 100);
     return { oldest: new Date(summary.from + localOffsetMin * 60_000).toISOString().slice(0, 19), days };
+  }
+
+  /**
+   * The span the recordings cover (GetRecordingSummary: DataFrom to DataUntil), in the camera's
+   * local time, as one period: Profile G's summary does not list gaps. shiftMs turns local times
+   * into UTC for playback.
+   */
+  async recordedSpan(camera: CameraConfig): Promise<RecordingList> {
+    const summary = parseOnvifRecordingSummary(await this.authenticated(camera, await this.atService(camera, ACTIONS.summary, NS.tse)));
+    let now = Date.now() + this.offsetFor(camera);
+    let localOffsetMin = 0;
+    try {
+      const xml = await this.call(camera, ACTIONS.systemTime);
+      now = parseOnvifSystemTime(xml) ?? now;
+      localOffsetMin = parseOnvifLocalOffset(xml) ?? 0;
+    } catch {
+      // the camera's clock is optional here: our clock and UTC are used instead
+    }
+    const shiftMs = localOffsetMin * 60_000;
+    const segments = summary.from === undefined || summary.recordings === 0 ? [] : [{ start: summary.from + shiftMs, end: (summary.until ?? now) + shiftMs }];
+    return { segments, nowMs: now + shiftMs, shiftMs };
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

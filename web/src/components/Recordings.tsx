@@ -14,6 +14,8 @@ interface Day {
   date: string;
   cameraNow: string;
   segments: Segment[];
+  /** The camera plays a recording from its beginning (Axis), not from any time inside it. */
+  playsFromRecordingStart: boolean;
 }
 
 /** Camera wall-clock times ("YYYY-MM-DDTHH:MM:SS") are handled as UTC instants so no zone shifts them. */
@@ -43,6 +45,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   const [date, setDate] = useState(today);
   const [start, setStart] = useState<string | null>(null);
   const [played, setPlayed] = useState(0);
+  const [startedAt, setStartedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const video = useQuery({ queryKey: ["live-video"], queryFn: () => api<{ enabled: boolean }>("/cameras/live-video"), staleTime: 5 * 60_000 });
@@ -53,9 +56,11 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   const play = (t: string) => {
     setError(null);
     setPlayed(0);
+    setStartedAt(null);
     setStart(t);
   };
-  const position = start ? text(ms(start) + played * 1000) : null;
+  const from = startedAt ?? start;
+  const position = from ? text(ms(from) + played * 1000) : null;
   const jump = (seconds: number) => position && play(text(Math.max(dayStart, ms(position) + seconds * 1000)));
   const shiftDay = (days: number) => {
     setStart(null);
@@ -82,7 +87,10 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
         <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => shiftDay(-1)} aria-label="Previous day" />
         <Input type="date" aria-label="Day" className="w-auto" value={date} max={today()} onChange={(e) => e.target.value && (setStart(null), setDate(e.target.value))} />
         <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => shiftDay(1)} disabled={date >= today()} aria-label="Next day" />
-        <span className="text-xs text-ink-secondary">Times are the camera's clock{day.data ? ` (camera time now ${day.data.cameraNow.replace("T", " ")})` : ""}.</span>
+        <span className="text-xs text-ink-secondary">
+          Times are the camera's clock{day.data ? ` (camera time now ${day.data.cameraNow.replace("T", " ")})` : ""}.
+          {day.data?.playsFromRecordingStart && " This camera plays each recording from its beginning."}
+        </span>
       </div>
 
       {/* 24-hour timeline: recorded periods in color, the playing position as a line. */}
@@ -114,16 +122,20 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
       {start && (
         <div className="space-y-2">
           <div ref={frame} className="relative mx-auto flex aspect-video max-h-[42vh] items-center justify-center overflow-hidden rounded-md bg-black">
-            <LiveVideo key={start} cameraId={cameraId} name={name} playbackStart={start} onFailed={onFailed} onTime={setPlayed} />
+            <LiveVideo key={start} cameraId={cameraId} name={name} playbackStart={start} onFailed={onFailed} onTime={setPlayed} onPrepared={setStartedAt} />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="tabular text-sm">
               Playing <strong>{position?.replace("T", " ")}</strong>
-              <span className="text-ink-secondary"> · started at {clock(start)}</span>
+              <span className="text-ink-secondary"> · started at {clock(from!)}</span>
             </p>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" icon={<Rewind className="h-4 w-4" />} onClick={() => jump(-60)}>1 min back</Button>
-              <Button size="sm" icon={<FastForward className="h-4 w-4" />} onClick={() => jump(60)}>1 min ahead</Button>
+              {!day.data?.playsFromRecordingStart && (
+                <>
+                  <Button size="sm" icon={<Rewind className="h-4 w-4" />} onClick={() => jump(-60)}>1 min back</Button>
+                  <Button size="sm" icon={<FastForward className="h-4 w-4" />} onClick={() => jump(60)}>1 min ahead</Button>
+                </>
+              )}
               <Button size="sm" icon={<Maximize2 className="h-4 w-4" />} onClick={() => void frame.current?.requestFullscreen?.()}>Full screen</Button>
               <Button size="sm" icon={<Square className="h-4 w-4" />} onClick={() => setStart(null)}>Stop</Button>
             </div>

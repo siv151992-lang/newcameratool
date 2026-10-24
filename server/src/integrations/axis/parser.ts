@@ -124,3 +124,33 @@ export function parseAxisRecording(body: string): RecordingReading {
   });
   return combineRecording(channels);
 }
+
+/** "2026-10-24T13:30:00.123+05:30" → local wall-clock ms and the offset (ms) it states. */
+function axisLocal(raw: string | undefined): { local: number; offset: number } | undefined {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/.exec(raw?.trim() ?? "");
+  if (!m) return undefined;
+  const local = Date.parse(`${m[1]}Z`);
+  const z = m[2];
+  const offset = !z || z === "Z" ? 0 : (z[0] === "-" ? -1 : 1) * (Number(z.slice(1, 3)) * 60 + Number(z.slice(-2))) * 60_000;
+  return { local, offset };
+}
+
+/**
+ * record/list.cgi → recordings on the camera's storage in local time (starttimelocal), with their
+ * ids; an ongoing recording (no stop time) ends now. offsetMs: local time minus UTC.
+ */
+export function parseAxisRecordings(xml: string, nowUtcMs: number): { segments: { start: number; end: number; ref: string }[]; offsetMs: number } {
+  const segments: { start: number; end: number; ref: string }[] = [];
+  let offsetMs = 0;
+  for (const m of xml.matchAll(/<recording\b([^>]*)>/g)) {
+    const attr = (name: string) => new RegExp(`\\b${name}="([^"]*)"`).exec(m[1]!)?.[1];
+    const id = attr("recordingid");
+    const start = axisLocal(attr("starttimelocal")) ?? axisLocal(attr("starttime"));
+    if (!id || !start) continue;
+    offsetMs = start.offset;
+    const stop = axisLocal(attr("stoptimelocal")) ?? axisLocal(attr("stoptime"));
+    const end = stop ? stop.local : nowUtcMs + start.offset;
+    if (end > start.local) segments.push({ start: start.local, end, ref: id });
+  }
+  return { segments, offsetMs };
+}

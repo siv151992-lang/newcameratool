@@ -15,6 +15,7 @@ export function LiveVideo({
   onFailed,
   playbackStart,
   onTime,
+  onPrepared,
 }: {
   cameraId: string;
   name: string;
@@ -23,8 +24,13 @@ export function LiveVideo({
   playbackStart?: string;
   /** Seconds played so far. */
   onTime?: (seconds: number) => void;
+  /** The time playback really starts at (cameras that play a recording from its start). */
+  onPrepared?: (start: string) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
+  // Read at call time, so a new callback does not restart the stream.
+  const prepared = useRef(onPrepared);
+  prepared.current = onPrepared;
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,7 +68,10 @@ export function LiveVideo({
 
     void (async () => {
       try {
-        if (playbackStart) await api(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart } });
+        if (playbackStart) {
+          const r = await api<{ start?: string }>(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart } });
+          if (r.start) prepared.current?.(r.start);
+        }
         else await api(`/cameras/${cameraId}/live/prepare`, { method: "POST" });
       } catch (e) {
         return fail((e as Error).message);

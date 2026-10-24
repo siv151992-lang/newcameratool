@@ -202,3 +202,29 @@ export function parseDahuaRecording(body: string): RecordingReading {
     }));
   return combineRecording(list);
 }
+
+/** "2026-10-24 14:00:00" (camera local time) as a wall-clock instant. */
+export function dahuaTimeMs(raw: string | undefined): number | undefined {
+  const m = /(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(raw ?? "");
+  return m ? Date.parse(`${m[1]}T${m[2]}Z`) : undefined;
+}
+
+/** A wall-clock instant as Dahua writes it in queries ("2026-10-24 14:00:00") or playback URLs ("2026_10_24_14_00_00"). */
+export const dahuaTime = (ms: number, sep: " " | "_" = " ") => {
+  const t = new Date(ms).toISOString().slice(0, 19);
+  return sep === " " ? t.replace("T", " ") : t.replace(/[-T:]/g, "_");
+};
+
+/** mediaFileFind.cgi?action=findNextFile → the files' start and end times, and how many were found. */
+export function parseDahuaFiles(body: string): { found: number; segments: { start: number; end: number }[] } {
+  const found = Number(/^found=(\d+)/m.exec(body)?.[1] ?? 0);
+  const items = new Map<string, { start?: number; end?: number }>();
+  for (const m of body.matchAll(/^items\[(\d+)\]\.(StartTime|EndTime)=(.+)$/gm)) {
+    const item = items.get(m[1]!) ?? {};
+    if (m[2] === "StartTime") item.start = dahuaTimeMs(m[3]);
+    else item.end = dahuaTimeMs(m[3]);
+    items.set(m[1]!, item);
+  }
+  const segments = [...items.values()].filter((i): i is { start: number; end: number } => i.start !== undefined && i.end !== undefined && i.end > i.start);
+  return { found, segments };
+}

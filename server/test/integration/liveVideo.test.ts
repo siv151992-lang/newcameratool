@@ -8,6 +8,7 @@ import { config } from "../../src/config.js";
 import { pool } from "../../src/db/pool.js";
 import { attachLiveVideo } from "../../src/services/liveVideoProxy.js";
 import { MockHikvisionCamera } from "../../src/testing/mockHikvision.js";
+import { MockVendorCamera } from "../../src/testing/mockVendor.js";
 import { createTestUser, PASSWORD, prepareDb, resetData } from "../helpers.js";
 
 /** Stands in for go2rtc: records registered streams and answers the WebSocket with one text frame. */
@@ -59,11 +60,14 @@ async function sessionCookie(role: "admin" | "viewer") {
 }
 
 const cam = new MockHikvisionCamera("admin", "Cam P@ss:1");
+const wisenet = new MockVendorCamera("admin", "Cam P@ss:1", "hanwha");
 let camPort: number;
+let wisenetPort: number;
 
 beforeAll(async () => {
   await prepareDb();
   camPort = await cam.start();
+  wisenetPort = await wisenet.start();
   await new Promise<void>((r) => fake.listen(0, "127.0.0.1", r));
   (config as { LIVE_VIDEO_URL?: string }).LIVE_VIDEO_URL = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -74,6 +78,7 @@ afterAll(async () => {
   server.close();
   fake.close();
   await cam.stop();
+  await wisenet.stop();
 });
 beforeEach(async () => {
   await resetData();
@@ -144,5 +149,19 @@ describe("live video", () => {
 
     const viewer = await sessionCookie("viewer");
     await request(app).get(`/api/cameras/${id}/recordings?date=${today}`).set("Cookie", viewer.cookie).expect(403);
+  });
+
+  it("plays Hanwha recordings: the timeline in UTC shown in local time, playback in UTC", async () => {
+    const admin = await sessionCookie("admin");
+    const id = (await request(app).post("/api/cameras").set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ name: "Gate", host: "127.0.0.1", port: wisenetPort, protocol: "http", brand: "Hanwha", username: "admin", password: "Cam P@ss:1" }).expect(201)).body.id as string;
+    const localToday = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    const day = (await request(app).get(`/api/cameras/${id}/recordings?date=${localToday}`).set("Cookie", admin.cookie).expect(200)).body;
+    expect(day.segments[0].start).toBe(`${localToday}T00:00:00`);
+    await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ start: `${localToday}T05:30:00` }).expect(200);
+    const src = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))![1];
+    // 05:30 in India is 00:00 UTC.
+    expect(src).toBe(`rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/recording/${localToday.replace(/-/g, "")}000000-${localToday.replace(/-/g, "")}120000/play.smp`);
   });
 });

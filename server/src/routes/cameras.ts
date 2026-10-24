@@ -175,9 +175,9 @@ camerasRouter.get("/:id/recordings", requirePermission("cameras:live"), liveView
 });
 camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const { start } = parse(z.object({ start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS") }).strict(), req.body);
-  await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start);
-  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start } });
-  res.json({ ok: true });
+  const from = await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start);
+  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from } });
+  res.json({ ok: true, start: from });
 });
 
 // Live view: the current picture. `start=1` on the first picture of a viewing records it in the audit log.

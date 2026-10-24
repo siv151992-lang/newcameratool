@@ -118,6 +118,30 @@ export interface RecordingRange {
   atLeast?: boolean;
 }
 
+export interface RecordedSegment {
+  start: number;
+  end: number;
+  ref?: string;
+}
+export interface RecordingList {
+  segments: RecordedSegment[];
+  nowMs: number;
+  shiftMs: number;
+  /** Playback starts at the beginning of the chosen recording, not at any time inside it. */
+  playsFromRecordingStart?: boolean;
+}
+
+/** Merges touching or overlapping segments (2 s tolerance) and sorts them. */
+export function mergeSegments(segments: RecordedSegment[]): RecordedSegment[] {
+  const merged: RecordedSegment[] = [];
+  for (const s of [...segments].sort((a, b) => a.start - b.start)) {
+    const last = merged.at(-1);
+    if (last && !s.ref && !last.ref && s.start <= last.end + 2000) last.end = Math.max(last.end, s.end);
+    else merged.push({ ...s });
+  }
+  return merged;
+}
+
 export interface DeviceInfo {
   deviceName?: string;
   model?: string;
@@ -177,13 +201,17 @@ export interface CameraBrandAdapter {
   /** How far back the recordings on the camera's own storage go; null when it holds none. */
   getRecordingRange?(camera: CameraConfig): Promise<RecordingRange | null>;
   /**
-   * Optional: recorded segments on the camera's own storage between two wall-clock times (camera
-   * local time), merged and sorted, with the camera's time now; `shiftMs` turns those times back
-   * into the ones the camera uses for playback.
+   * Optional: recorded segments on the camera's own storage between two camera local times,
+   * merged and sorted, with the camera's local time now. Playback times are local time minus
+   * `shiftMs` (e.g. UTC for cameras that play back in UTC). `ref` identifies a recording for
+   * brands that play a recording by its id rather than from a time.
    */
-  listRecordings?(camera: CameraConfig, fromMs: number, toMs: number): Promise<{ segments: { start: number; end: number }[]; nowMs: number; shiftMs: number }>;
-  /** Optional: the RTSP path that plays the recordings from `startMs` (camera time, as listRecordings sent it). */
-  playbackRtspPath?(startMs: number): string;
+  listRecordings?(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList>;
+  /**
+   * Optional: the RTSP path that plays the recordings from `startMs` (local time minus shiftMs).
+   * Brands that play by recording id get the segment containing it, and play from its start.
+   */
+  playbackRtspPath?(startMs: number, segment?: RecordedSegment): string;
   /** Optional: the RTSP path of a stream browsers can play (H.264, usually the second stream), for live video. */
   readonly rtspPath?: string;
   /** Optional: the current picture, for the live view. */

@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
-import { parseDahuaDeviceInfo, parseDahuaError, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
+import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
+import { dahuaTime, dahuaTimeMs, parseDahuaDeviceInfo, parseDahuaError, parseDahuaFiles, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 export const DAHUA_STORAGE_PATH = "/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo";
@@ -16,7 +16,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices"],
     storageEndpoint: `GET ${DAHUA_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -48,6 +48,41 @@ export class DahuaAdapter implements CameraBrandAdapter {
 
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
     return parseDahuaRecording(await this.getText(camera, DAHUA_RECORDING_PATH));
+  }
+
+  /**
+   * Recordings of channel 1 between two local times: mediaFileFind (create, findFile, then
+   * findNextFile until the files run out; closed and destroyed afterwards). Dahua uses local time throughout.
+   */
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList> {
+    const finder = "/cgi-bin/mediaFileFind.cgi";
+    const now = await this.getText(camera, "/cgi-bin/global.cgi?action=getCurrentTime").then((t) => dahuaTimeMs(t), () => undefined);
+    const id = /result=(\d+)/.exec(await this.getText(camera, `${finder}?action=factory.create`))?.[1];
+    if (!id) throw new CameraApiError("INVALID_RESPONSE", "The camera did not open a recording search");
+    const found: RecordedSegment[] = [];
+    try {
+      await this.getText(
+        camera,
+        `${finder}?action=findFile&object=${id}&condition.Channel=1&condition.StartTime=${encodeURIComponent(dahuaTime(fromMs))}&condition.EndTime=${encodeURIComponent(dahuaTime(toMs))}&condition.Types[0]=dav`,
+      ).catch((err: unknown) => {
+        // "Error" here means no files in the period on many models.
+        if (!(err instanceof CameraApiError) || err.code !== "API_ERROR") throw err;
+      });
+      for (let page = 0; page < 30; page++) {
+        const { found: n, segments } = parseDahuaFiles(await this.getText(camera, `${finder}?action=findNextFile&object=${id}&count=100`).catch(() => "found=0"));
+        found.push(...segments);
+        if (n < 100) break;
+      }
+    } finally {
+      await this.getText(camera, `${finder}?action=close&object=${id}`).catch(() => undefined);
+      await this.getText(camera, `${finder}?action=destroy&object=${id}`).catch(() => undefined);
+    }
+    return { segments: mergeSegments(found), nowMs: now ?? Date.now(), shiftMs: 0 };
+  }
+
+  /** Channel 1 main stream from a local time (to 12 hours later; it stops at the end of the recordings). */
+  playbackRtspPath(startMs: number): string {
+    return `/cam/playback?channel=1&subtype=0&starttime=${dahuaTime(startMs, "_")}&endtime=${dahuaTime(startMs + 12 * 3_600_000, "_")}`;
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {
