@@ -79,9 +79,15 @@ export function EmailSettingsTab() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [testTo, setTestTo] = useState(user?.email ?? "");
+  const [detecting, setDetecting] = useState(false);
+  const [detected, setDetected] = useState<string | null>(null);
 
   useEffect(() => {
-    if (settings.data) setDraft(toDraft(settings.data));
+    if (!settings.data) return;
+    const d = toDraft(settings.data);
+    // Nothing saved yet: start from the address this page is open at (not a local-only one).
+    if (!d.publicUrl && !/^https?:\/\/(localhost|127\.)/.test(window.location.origin)) d.publicUrl = window.location.origin;
+    setDraft(d);
   }, [settings.data]);
 
   const save = useMutation({
@@ -106,6 +112,32 @@ export function EmailSettingsTab() {
   if (settings.isLoading || !draft) return settings.error ? <ErrorMessage error={settings.error} /> : <Spinner />;
   const s = settings.data!;
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft({ ...draft, [k]: v });
+  // Fill server, port, SSL and From from the mailbox address (its domain's mail service).
+  const detectFrom = async (email: string) => {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return;
+    setDetecting(true);
+    try {
+      const r = await api<{ found: boolean; provider?: string; smtpHost?: string; smtpPort?: number; smtpSecure?: boolean; passwordHint?: string }>(
+        `/settings/email/detect?email=${encodeURIComponent(email.trim())}`,
+      );
+      if (!r.found) {
+        setDetected(`Could not tell which mail service ${email.split("@")[1]} uses: choose a Provider or enter the server.`);
+        return;
+      }
+      setDraft((d) => d && {
+        ...d,
+        smtpHost: r.smtpHost!,
+        smtpPort: String(r.smtpPort),
+        smtpSecure: r.smtpSecure!,
+        smtpFrom: !d.smtpFrom || d.smtpFrom === settings.data?.smtpFrom ? email.trim() : d.smtpFrom,
+      });
+      setDetected(`${r.provider}: server, port and SSL filled in. ${r.passwordHint ?? ""}`);
+    } catch {
+      setDetected(null);
+    } finally {
+      setDetecting(false);
+    }
+  };
   const env = (k: string) => (s.fromEnvironment.includes(k) ? "From the server environment until saved here. " : "");
   const field = (k: keyof Draft & string, label: string, hint?: string, props: Record<string, unknown> = {}) => (
     <Field label={label} hint={`${env(k)}${hint ?? ""}` || undefined} error={errors[k]}>
@@ -146,7 +178,8 @@ export function EmailSettingsTab() {
         <Card title="Mail server (SMTP)">
           <div className="grid gap-4 p-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Field label="Provider" hint="Optional: fills in the server, port and security below.">
+              {detected && <p className="mb-3 rounded-md border border-line bg-raised px-3 py-2 text-sm">{detected}</p>}
+            <Field label="Provider" hint="Optional: the server, port and SSL below are also filled in from the Username.">
                 {(id, d) => (
                   <Select
                     id={id}
@@ -172,7 +205,11 @@ export function EmailSettingsTab() {
                 onChange={(e) => set("smtpSecure", e.target.checked)}
               />
             </div>
-            {field("smtpUser", "Username", "Usually the full email address of the sending mailbox.", { autoComplete: "off" })}
+            {field("smtpUser", "Username (mailbox address)", detecting ? "Looking up the mail service…" : "The full email address of the sending mailbox. Server, port and SSL are filled in from it.", {
+              autoComplete: "off",
+              type: "email",
+              onBlur: (e: { target: { value: string } }) => void detectFrom(e.target.value),
+            })}
             <Field
               label="Password"
               hint={draft.removePassword ? "The saved password will be removed." : s.smtpPasswordSet ? "A password is saved. Leave blank to keep it." : `${env("smtpPassword")}For Zoho Mail or Gmail with two-factor sign-in, use an app password.`}

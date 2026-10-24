@@ -21,6 +21,7 @@ import {
 import { camerasOutside, getNetworkSettings, networkSettingsSchema, updateNetworkSettings } from "../services/networkSettings.js";
 import { emailSettingsSchema, emailSettingsView, getEmailSettings, updateEmailSettings } from "../services/emailSettings.js";
 import { sendMail } from "../notifications/mailer.js";
+import { detectMailServer } from "../services/mailDetect.js";
 import { redirectUri } from "../auth/oauth.js";
 import { providerSettingsSchema, providerSettingsView, updateProviderSettings } from "../services/providerSettings.js";
 import { deviceLimiter } from "./limits.js";
@@ -97,6 +98,12 @@ settingsRouter.patch("/email", requirePermission(SYSTEM_PERMISSION), async (req,
   const fields = Object.keys(patch).map((k) => (k === "smtpPassword" ? (patch.smtpPassword ? "smtpPassword (changed)" : "smtpPassword (removed)") : k));
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.email_updated", entityType: "settings", entityId: "email", details: { fields }, organizationId: null });
   res.json(updated);
+});
+/** The mail server for a mailbox, worked out from its domain (Zoho Mail, Google, Microsoft 365). */
+settingsRouter.get("/email/detect", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const { email } = parse(z.object({ email: z.string().trim().email() }), req.query);
+  const found = await detectMailServer(email);
+  res.json(found ? { found: true, ...found } : { found: false });
 });
 /** Sends a test email with the saved settings, or with unsaved changes from the form (blank password keeps the saved one). */
 settingsRouter.post("/email/test", requirePermission(SYSTEM_PERMISSION), deviceLimiter, async (req, res) => {
