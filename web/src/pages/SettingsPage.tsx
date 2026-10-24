@@ -15,7 +15,7 @@ import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
 import { EmailSettingsTab } from "./EmailSettingsTab";
 import { useIdentities } from "./ConnectedAccounts";
-import { InvitationsCard, useInvitations } from "./InvitationsPanel";
+import { InvitationsCard, QuickInvite, useInvitations } from "./InvitationsPanel";
 import { OrganizationsTab } from "./OrganizationsTab";
 
 interface Section {
@@ -620,7 +620,8 @@ function UsersTab() {
 
   return (
     <div className="space-y-4">
-      <Card title={`Members of ${user?.organizationName ?? "this organization"}`} actions={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={invitations.open}>Invite member</Button>}>
+      <QuickInvite />
+      <Card title={`Members of ${user?.organizationName ?? "this organization"}`}>
         <div className="border-b border-line px-4 py-2 text-xs text-ink-secondary">
           <strong>Org Admin</strong>: everything in this organization, including its members · <strong>Operator</strong>: run checks and manage alerts · <strong>Viewer</strong>: read-only
         </div>

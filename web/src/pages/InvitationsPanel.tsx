@@ -224,3 +224,63 @@ export function InvitationsCard({ resend }: { resend: ReturnType<typeof useInvit
     </Card>
   );
 }
+
+/** Type an email address and press Send: the joining link is emailed and shown to copy. */
+export function QuickInvite() {
+  const { user } = useAuth();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<Role>("viewer");
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState<{ email: string; sent: InvitationSent } | null>(null);
+  const send = useMutation({
+    mutationFn: () => api<InvitationSent>("/invitations", { method: "POST", body: { email: email.trim(), role } }),
+    onSuccess: (r) => {
+      setError(null);
+      setSent({ email: email.trim(), sent: r });
+      if (r.emailSent) toast("success", `Invitation sent to ${email.trim()}`);
+      setEmail("");
+      void qc.invalidateQueries({ queryKey: ["invitations"] });
+    },
+    onError: (e) => setError(e instanceof ApiError && e.fieldErrors[0] ? e.fieldErrors[0].message : (e as Error).message),
+  });
+
+  return (
+    <Card title={`Add someone to ${user?.organizationName ?? "this organization"}`}>
+      <form
+        className="space-y-3 p-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (email.trim()) send.mutate();
+        }}
+      >
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[16rem] flex-1">
+            <Field label="Their email address" error={error ?? undefined}>
+              {(id, d) => <Input id={id} aria-describedby={d} type="email" autoComplete="off" placeholder="name@company.com" value={email} invalid={!!error} onChange={(e) => setEmail(e.target.value)} />}
+            </Field>
+          </div>
+          <div>
+            <Field label="Role">
+              {(id) => (
+                <Select id={id} className="w-auto" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+                  <option value="viewer">{ROLE_LABELS.viewer}</option>
+                  <option value="operator">{ROLE_LABELS.operator}</option>
+                  <option value="admin">{ROLE_LABELS.admin}</option>
+                </Select>
+              )}
+            </Field>
+          </div>
+          <Button type="submit" variant="primary" icon={<Send className="h-4 w-4" />} loading={send.isPending} disabled={!email.trim()}>Send link</Button>
+        </div>
+        <p className="text-xs text-ink-secondary">They get an email with a link to create their account and join. Nothing else to fill in.</p>
+        {sent && (
+          <div className="rounded-md border border-line bg-raised p-3 text-sm">
+            <InvitationLink email={sent.email} sent={sent.sent} />
+          </div>
+        )}
+      </form>
+    </Card>
+  );
+}
