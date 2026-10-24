@@ -57,6 +57,8 @@ services:
       COOKIE_SECURE: "true"
       # Smooth live video through the go2rtc service below. Remove both to show pictures only.
       LIVE_VIDEO_URL: http://go2rtc:1984
+      # ONVIF (Profile G) recordings: go2rtc plays them through this relay in the api.
+      PLAYBACK_RELAY_URL: rtsp://api:8554
     volumes:
       - secrets:/run/cctv-secrets:ro
       # Generated credential encryption key (used when CREDENTIAL_ENCRYPTION_KEY is not set). Back it up.
@@ -66,6 +68,7 @@ services:
         condition: service_healthy
     expose:
       - "4000"
+      - "8554"
 
   worker:
     # Same image as the api; built locally, never pulled from a registry.

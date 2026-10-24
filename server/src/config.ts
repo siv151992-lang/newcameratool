@@ -45,6 +45,9 @@ const schema = z.object({
   PUBLIC_URL: z.string().url().optional(),
   // Smooth live video: the go2rtc service's address (Docker Compose: http://go2rtc:1984). Unset: pictures only.
   LIVE_VIDEO_URL: z.string().url().optional(),
+  // Playing ONVIF (Profile G) recordings: go2rtc connects to this relay in the api, at this address
+  // (Docker Compose: rtsp://api:8554); the relay listens on its port.
+  PLAYBACK_RELAY_URL: z.string().regex(/^rtsp:\/\/[^/\s]+:\d+\/?$/, "PLAYBACK_RELAY_URL must look like rtsp://host:port").default("rtsp://127.0.0.1:8554"),
   // Docker Compose: the address Caddy serves and its HTTPS port, used to fill in the dashboard address.
   SITE_ADDRESS: z.string().optional(),
   HTTPS_PORT: z.coerce.number().int().optional(),

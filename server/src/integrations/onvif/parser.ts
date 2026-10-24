@@ -263,7 +263,7 @@ const mediaParser = new XMLParser({
   removeNSPrefix: true,
   parseTagValue: false,
   trimValues: true,
-  isArray: (name) => name === "Profiles",
+  isArray: (name) => name === "Profiles" || name === "RecordingInformation",
 });
 
 /**
@@ -284,8 +284,40 @@ export function parseOnvifProfileToken(xml: string): string {
 }
 
 /** trt:GetStreamUriResponse / GetSnapshotUriResponse → <MediaUri><Uri>. */
-export function parseOnvifMediaUri(xml: string, response: "GetStreamUriResponse" | "GetSnapshotUriResponse"): string {
-  const uri = text(child(soapResponse(xml, response), "MediaUri"), "Uri");
+export function parseOnvifMediaUri(xml: string, response: "GetStreamUriResponse" | "GetSnapshotUriResponse" | "GetReplayUriResponse"): string {
+  const r = soapResponse(xml, response);
+  const uri = text(child(r, "MediaUri"), "Uri") ?? text(r, "Uri");
   if (!uri) throw new CameraApiError("API_UNAVAILABLE", "The camera did not give a media address");
   return uri;
+}
+
+/** tse:FindRecordingsResponse → the search token. */
+export function parseOnvifSearchToken(xml: string): string {
+  const token = text(soapResponse(xml, "FindRecordingsResponse"), "SearchToken");
+  if (!token) throw new CameraApiError("INVALID_RESPONSE", "The camera did not start a recording search");
+  return token;
+}
+
+const utcMs = (v: string | undefined) => {
+  const ms = v ? Date.parse(/Z|[+-]\d{2}:?\d{2}$/.test(v) ? v : `${v}Z`) : NaN;
+  return Number.isFinite(ms) ? ms : undefined;
+};
+
+/**
+ * tse:GetRecordingSearchResultsResponse → each recording's token and the period it covers (UTC),
+ * and whether the search is complete.
+ */
+export function parseOnvifRecordingResults(xml: string): { recordings: { token: string; from: number; until: number }[]; done: boolean } {
+  soapBody(xml);
+  const doc = mediaParser.parse(xml.trim()) as XmlNode;
+  const list = child(child(child(child(doc, "Envelope"), "Body"), "GetRecordingSearchResultsResponse"), "ResultList");
+  const state = text(list, "SearchState") ?? "Completed";
+  const key = list ? Object.keys(list).find((k) => k.toLowerCase() === "recordinginformation") : undefined;
+  const recordings = (key ? (list![key] as unknown[]) : []).filter(isNode).flatMap((r) => {
+    const token = text(r, "RecordingToken");
+    const from = utcMs(text(r, "EarliestRecording"));
+    const until = utcMs(text(r, "LatestRecording"));
+    return token && from !== undefined && until !== undefined && until > from ? [{ token, from, until }] : [];
+  });
+  return { recordings, done: /completed/i.test(state) };
 }

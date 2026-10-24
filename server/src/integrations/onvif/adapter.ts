@@ -8,6 +8,7 @@ import {
   type CameraConfig,
   type ConnectionResult,
   type DeviceInfo,
+  type RecordedSegment,
   type RecordingRange,
   type RecordingList,
   type RecordingReading,
@@ -24,6 +25,8 @@ import {
   parseOnvifSystemTime,
   parseOnvifMediaUri,
   parseOnvifProfileToken,
+  parseOnvifRecordingResults,
+  parseOnvifSearchToken,
 } from "./parser.js";
 import { escapeXml, NS, soapEnvelope } from "./soap.js";
 import { fetchSnapshot } from "../snapshot.js";
@@ -31,6 +34,7 @@ import { fetchSnapshot } from "../snapshot.js";
 export const ONVIF_DEVICE_SERVICE_PATH = "/onvif/device_service";
 export const ONVIF_RECORDING_SERVICE_PATH = "/onvif/recording_service";
 export const ONVIF_SEARCH_SERVICE_PATH = "/onvif/search_service";
+export const ONVIF_REPLAY_SERVICE_PATH = "/onvif/replay_service";
 
 /** Clock differences below this are within what cameras accept for a WS-Security timestamp. */
 const MAX_CLOCK_SKEW_MS = 5000;
@@ -61,7 +65,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["ws-security (UsernameToken digest)", "digest"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices"],
     storageEndpoint: `POST ${ONVIF_DEVICE_SERVICE_PATH} (GetStorageDevices)`,
     defaultTimeoutMs: 10000,
     notes:
@@ -155,17 +159,9 @@ export class OnvifAdapter implements CameraBrandAdapter {
   async getRecordingRange(camera: CameraConfig): Promise<RecordingRange | null> {
     const summary = parseOnvifRecordingSummary(await this.authenticated(camera, await this.atService(camera, ACTIONS.summary, NS.tse)));
     if (summary.from === undefined || summary.recordings === 0) return null;
-    let now = Date.now() + this.offsetFor(camera);
-    let localOffsetMin = 0;
-    try {
-      const xml = await this.call(camera, ACTIONS.systemTime);
-      now = parseOnvifSystemTime(xml) ?? now;
-      localOffsetMin = parseOnvifLocalOffset(xml) ?? 0;
-    } catch {
-      // the camera's clock is optional here: our clock and UTC are used instead
-    }
+    const { now, shiftMs } = await this.cameraClock(camera);
     const days = Math.max(0, Math.round(((now - summary.from) / 86_400_000) * 100) / 100);
-    return { oldest: new Date(summary.from + localOffsetMin * 60_000).toISOString().slice(0, 19), days };
+    return { oldest: new Date(summary.from + shiftMs).toISOString().slice(0, 19), days };
   }
 
   /** The media profile to stream (H.264 where there is one), per camera. */
@@ -198,13 +194,8 @@ export class OnvifAdapter implements CameraBrandAdapter {
     return fetchSnapshot(this.http, { ...camera, protocol, port }, `${uri.pathname}${uri.search}`);
   }
 
-  /**
-   * The span the recordings cover (GetRecordingSummary: DataFrom to DataUntil), in the camera's
-   * local time, as one period: Profile G's summary does not list gaps. shiftMs turns local times
-   * into UTC for playback.
-   */
-  async recordedSpan(camera: CameraConfig): Promise<RecordingList> {
-    const summary = parseOnvifRecordingSummary(await this.authenticated(camera, await this.atService(camera, ACTIONS.summary, NS.tse)));
+  /** The camera's clock and its local time zone offset (shiftMs: local minus UTC). */
+  private async cameraClock(camera: CameraConfig): Promise<{ now: number; shiftMs: number }> {
     let now = Date.now() + this.offsetFor(camera);
     let localOffsetMin = 0;
     try {
@@ -214,9 +205,74 @@ export class OnvifAdapter implements CameraBrandAdapter {
     } catch {
       // the camera's clock is optional here: our clock and UTC are used instead
     }
-    const shiftMs = localOffsetMin * 60_000;
+    return { now, shiftMs: localOffsetMin * 60_000 };
+  }
+
+  /**
+   * The span the recordings cover (GetRecordingSummary: DataFrom to DataUntil), in the camera's
+   * local time, as one period: Profile G's summary does not list gaps. shiftMs turns local times
+   * into UTC for playback.
+   */
+  async recordedSpan(camera: CameraConfig): Promise<RecordingList> {
+    const summary = parseOnvifRecordingSummary(await this.authenticated(camera, await this.atService(camera, ACTIONS.summary, NS.tse)));
+    const { now, shiftMs } = await this.cameraClock(camera);
     const segments = summary.from === undefined || summary.recordings === 0 ? [] : [{ start: summary.from + shiftMs, end: (summary.until ?? now) + shiftMs }];
     return { segments, nowMs: now + shiftMs, shiftMs };
+  }
+
+  /** The recordings on the camera (Search service: FindRecordings, then its results), in UTC. */
+  private async findRecordings(camera: CameraConfig): Promise<{ token: string; from: number; until: number }[]> {
+    const find = await this.atService(
+      camera,
+      { ...ACTIONS.summary, action: `${NS.tse}/FindRecordings`, body: "<tse:FindRecordings><tse:Scope/><tse:MaxMatches>100</tse:MaxMatches><tse:KeepAliveTime>PT10S</tse:KeepAliveTime></tse:FindRecordings>" },
+      NS.tse,
+    );
+    const searchToken = escapeXml(parseOnvifSearchToken(await this.authenticated(camera, find)));
+    const results = {
+      ...find,
+      action: `${NS.tse}/GetRecordingSearchResults`,
+      body: `<tse:GetRecordingSearchResults><tse:SearchToken>${searchToken}</tse:SearchToken><tse:MaxResults>100</tse:MaxResults><tse:WaitTime>PT2S</tse:WaitTime></tse:GetRecordingSearchResults>`,
+    };
+    const recordings: { token: string; from: number; until: number }[] = [];
+    try {
+      for (let i = 0; i < 10; i++) {
+        const page = parseOnvifRecordingResults(await this.authenticated(camera, results));
+        recordings.push(...page.recordings);
+        if (page.done) return recordings;
+      }
+      return recordings;
+    } finally {
+      const end = { ...find, action: `${NS.tse}/EndSearch`, body: `<tse:EndSearch><tse:SearchToken>${searchToken}</tse:SearchToken></tse:EndSearch>` };
+      await this.authenticated(camera, end).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Recordings for playback (Profile G): each recording on the camera with the period it covers, in
+   * the camera's local time. Where the search is not supported, the recording summary's span.
+   */
+  async listRecordings(camera: CameraConfig): Promise<RecordingList> {
+    let found: { token: string; from: number; until: number }[];
+    try {
+      found = await this.findRecordings(camera);
+    } catch (err) {
+      if (err instanceof CameraApiError && err.code === "AUTH_FAILED") throw err;
+      return this.recordedSpan(camera);
+    }
+    const { now, shiftMs } = await this.cameraClock(camera);
+    const segments = found.map((r) => ({ start: r.from + shiftMs, end: Math.min(r.until, now) + shiftMs, ref: r.token })).sort((a, b) => a.start - b.start);
+    return { segments, nowMs: now + shiftMs, shiftMs };
+  }
+
+  /** The replay address of the recording holding `segment` (Replay service: GetReplayUri). */
+  async replayRtspUrl(camera: CameraConfig, segment?: RecordedSegment): Promise<string> {
+    const token = segment?.ref ?? (await this.findRecordings(camera))[0]?.token;
+    if (!token) throw new CameraApiError("API_UNAVAILABLE", "The camera has no recordings to play");
+    const body =
+      `<trp:GetReplayUri><trp:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream><tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trp:StreamSetup>` +
+      `<trp:RecordingToken>${escapeXml(token)}</trp:RecordingToken></trp:GetReplayUri>`;
+    const op = await this.atService(camera, { path: ONVIF_REPLAY_SERVICE_PATH, action: `${NS.trp}/GetReplayUri`, body, auth: true }, NS.trp);
+    return parseOnvifMediaUri(await this.authenticated(camera, op), "GetReplayUriResponse");
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

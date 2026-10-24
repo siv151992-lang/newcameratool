@@ -13,6 +13,7 @@ import { bootstrapAdmin } from "./services/bootstrap.js";
 import { refreshPasswordIssues } from "./services/cameraPasswordPolicy.js";
 import { detectDashboardAddress } from "./services/dashboardAddress.js";
 import { attachLiveVideo } from "./services/liveVideoProxy.js";
+import { startReplayRelay } from "./services/rtspReplayRelay.js";
 
 async function main() {
   getCipher(); // fail fast if the encryption key is missing or malformed
@@ -27,6 +28,11 @@ async function main() {
   setInterval(() => void registry.refresh().catch((err) => logger.warn({ err: (err as Error).message }, "Could not reload brand integrations")), 30_000).unref();
   const server = createApp().listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));
   attachLiveVideo(server);
+  if (config.LIVE_VIDEO_URL) {
+    await startReplayRelay(Number(new URL(config.PLAYBACK_RELAY_URL).port)).catch((err) =>
+      logger.warn({ err: (err as Error).message }, "Could not start the recording playback relay: ONVIF recordings will not play"),
+    );
+  }
   // With thousands of cameras the first AI analysis takes a while: start it now, not on the first visit.
   setTimeout(() => {
     void (async () => {

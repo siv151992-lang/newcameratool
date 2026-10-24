@@ -212,6 +212,12 @@ export interface CameraBrandAdapter {
    * Brands that play by recording id get the segment containing it, and play from its start.
    */
   playbackRtspPath?(startMs: number, segment?: RecordedSegment): string;
+  /**
+   * Optional: the replay address (without credentials) of the recording holding `segment`, asked from
+   * the camera (ONVIF Profile G GetReplayUri). It plays through the replay relay, which adds the
+   * start time; used by brands without playbackRtspPath.
+   */
+  replayRtspUrl?(camera: CameraConfig, segment?: RecordedSegment): Promise<string>;
   /** Optional: the full RTSP address (without credentials) of the live stream, asked from the camera (ONVIF). */
   liveRtspUrl?(camera: CameraConfig): Promise<string>;
   /** Optional: the RTSP path of a stream browsers can play (H.264, usually the second stream), for live video. */

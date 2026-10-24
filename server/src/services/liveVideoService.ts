@@ -8,6 +8,7 @@ import { logger } from "../lib/logger.js";
 import { getCameraConfig, getCameraRow } from "./cameraService.js";
 import { onvifAdapter } from "./liveViewService.js";
 import { getMonitoringSettings } from "./settingsService.js";
+import { registerReplay } from "./rtspReplayRelay.js";
 
 /**
  * Smooth live video through go2rtc (LIVE_VIDEO_URL): the server registers the camera's RTSP stream
@@ -38,6 +39,7 @@ export function withCredentials(uri: string, camera: Pick<CameraConfig, "host" |
 }
 
 const base = () => config.LIVE_VIDEO_URL!.replace(/\/+$/, "");
+const relayBase = () => config.PLAYBACK_RELAY_URL;
 
 /** Streams this process registered, by a hash of their source: re-registered when the camera changes. */
 const registered = new Map<string, string>();
@@ -107,22 +109,31 @@ const wall = (ms: number) => new Date(ms).toISOString().slice(0, 19);
 /** One session's playback stream of a camera (each viewer plays their own time). */
 export const playbackStreamName = (cameraId: string, sessionId: string) => `playback_${cameraId}_${sessionId.slice(0, 12)}`;
 
+/** The camera's adapter for playback; brands without playback of their own are asked over ONVIF (Profile G). */
 async function playbackAdapter(orgId: string, cameraId: string) {
   const row = await getCameraRow(cameraId, orgId);
-  const adapter = registry.get(row.brand_key);
-  if (!adapter.listRecordings || !adapter.playbackRtspPath) {
-    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `Playing recordings is not available for ${adapter.meta.displayName} cameras yet`);
+  const own = registry.get(row.brand_key);
+  const plays = (a: typeof own | undefined) => Boolean(a?.listRecordings && (a.playbackRtspPath || a.replayRtspUrl));
+  const adapter = plays(own) ? own : onvifAdapter();
+  if (!adapter || !plays(adapter)) {
+    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `Playing recordings is not available for ${own.meta.displayName} cameras yet`);
   }
   const { requestTimeoutMs } = await getMonitoringSettings();
-  return { adapter, config: await getCameraConfig(cameraId, requestTimeoutMs) };
+  return { adapter, own, config: await getCameraConfig(cameraId, requestTimeoutMs) };
 }
 
 /** Recorded periods on the camera's storage on `date` (YYYY-MM-DD, camera local time). */
 export async function listRecordings(orgId: string, cameraId: string, date: string) {
-  const { adapter, config } = await playbackAdapter(orgId, cameraId);
+  const { adapter, own, config } = await playbackAdapter(orgId, cameraId);
   const from = Date.parse(`${date}T00:00:00Z`);
   const to = from + DAY_MS;
-  const result = await adapter.listRecordings!(config, from, to);
+  let result: RecordingList;
+  try {
+    result = await adapter.listRecordings!(config, from, to);
+  } catch (err) {
+    if (adapter === own) throw err;
+    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `${own.meta.displayName} recordings are read over ONVIF (Profile G), which failed: ${(err as Error).message}. Turn on ONVIF in the camera.`);
+  }
   lastListing.set(cameraId, result);
   const segments = result.segments
     .filter((s) => s.end > from && s.start < to)
@@ -142,7 +153,30 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
   const shift = listing?.shiftMs ?? 0;
   const segment = listing?.segments.find((s) => s.start <= local && local < s.end) ?? listing?.segments.find((s) => s.start > local);
   const fromStart = listing?.playsFromRecordingStart && segment;
-  const path = adapter.playbackRtspPath!(local - shift, segment && { ...segment, start: segment.start - shift, end: segment.end - shift });
-  await putStream(playbackStreamName(cameraId, sessionId), rtspUrl(config, path));
-  return fromStart ? wall(segment.start) : start;
+  const utcSegment = segment && { ...segment, start: segment.start - shift, end: segment.end - shift };
+  const name = playbackStreamName(cameraId, sessionId);
+  if (adapter.playbackRtspPath) {
+    await putStream(name, rtspUrl(config, adapter.playbackRtspPath(local - shift, utcSegment)));
+    return fromStart ? wall(segment.start) : start;
+  }
+  // ONVIF replay: go2rtc plays through the relay, which adds the start time the camera needs.
+  let uri: URL;
+  try {
+    uri = new URL(await adapter.replayRtspUrl!(config, utcSegment));
+  } catch (err) {
+    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `The camera's recording address could not be read over ONVIF: ${(err as Error).message}`);
+  }
+  if (uri.protocol !== "rtsp:") throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `The camera gave a recording address that cannot be played (${uri.protocol})`);
+  // A time in a gap plays from the next recording.
+  const startUtc = Math.max(local - shift, utcSegment?.start ?? -Infinity);
+  const relayed = registerReplay(relayBase(), name, {
+    host: config.host,
+    port: uri.port ? Number(uri.port) : RTSP_PORT,
+    path: `${uri.pathname}${uri.search}`,
+    username: config.username,
+    password: config.password,
+    startUtcMs: startUtc,
+  });
+  await putStream(name, relayed);
+  return wall(startUtc + shift);
 }

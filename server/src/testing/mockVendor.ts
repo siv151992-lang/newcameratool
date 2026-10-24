@@ -46,6 +46,37 @@ export class MockVendorCamera {
     return md5(`${ha1}:${p.nonce}:${p.nc}:${p.cnonce}:${p.qop}:${ha2}`) === p.response;
   }
 
+  /** ONVIF Profile G: recording jobs, a recording summary (oldest recording 21 days ago), search and replay. */
+  private onvif(res: http.ServerResponse, body: string) {
+    res.setHeader("Content-Type", "application/soap+xml");
+    const env = (inner: string) => `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:trc="http://www.onvif.org/ver10/recording/wsdl" xmlns:tse="http://www.onvif.org/ver10/search/wsdl" xmlns:trp="http://www.onvif.org/ver10/replay/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><s:Body>${inner}</s:Body></s:Envelope>`;
+    if (body.includes("GetServices")) {
+      return res.end(env(`<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/recording/wsdl</tds:Namespace><tds:XAddr>http://camera/onvif/recording_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/search/wsdl</tds:Namespace><tds:XAddr>http://camera/onvif/search_service</tds:XAddr></tds:Service></tds:GetServicesResponse>`));
+    }
+    if (body.includes("GetSystemDateAndTime")) {
+      const d = new Date();
+      const at = (x: Date) => `<tt:Date><tt:Year>${x.getUTCFullYear()}</tt:Year><tt:Month>${x.getUTCMonth() + 1}</tt:Month><tt:Day>${x.getUTCDate()}</tt:Day></tt:Date><tt:Time><tt:Hour>${x.getUTCHours()}</tt:Hour><tt:Minute>${x.getUTCMinutes()}</tt:Minute><tt:Second>${x.getUTCSeconds()}</tt:Second></tt:Time>`;
+      return res.end(env(`<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:UTCDateTime>${at(d)}</tt:UTCDateTime><tt:LocalDateTime>${at(new Date(d.getTime() + 330 * 60_000))}</tt:LocalDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>`));
+    }
+    if (body.includes("GetRecordingJobs")) {
+      return res.end(env(`<trc:GetRecordingJobsResponse><trc:JobItem><trc:JobToken>RecordJob_1</trc:JobToken><trc:JobConfiguration><tt:RecordingToken>Recording_1</tt:RecordingToken><tt:Mode>Active</tt:Mode></trc:JobConfiguration></trc:JobItem></trc:GetRecordingJobsResponse>`));
+    }
+    if (body.includes("GetRecordingSummary")) {
+      const from = new Date(Date.now() - 21 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+      return res.end(env(`<tse:GetRecordingSummaryResponse><tse:Summary><tt:DataFrom>${from}</tt:DataFrom><tt:DataUntil>${new Date().toISOString().replace(/\.\d{3}Z$/, "Z")}</tt:DataUntil><tt:NumberRecordings>1</tt:NumberRecordings></tse:Summary></tse:GetRecordingSummaryResponse>`));
+    }
+    // Search (one recording: the last 3 days) and its replay address.
+    if (body.includes("FindRecordings")) return res.end(env(`<tse:FindRecordingsResponse><tse:SearchToken>Search_1</tse:SearchToken></tse:FindRecordingsResponse>`));
+    if (body.includes("GetRecordingSearchResults")) {
+      const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+      return res.end(env(`<tse:GetRecordingSearchResultsResponse><tse:ResultList><tt:SearchState>Completed</tt:SearchState><tt:RecordingInformation><tt:RecordingToken>Recording_1</tt:RecordingToken><tt:EarliestRecording>${iso(Date.now() - 3 * 86_400_000)}</tt:EarliestRecording><tt:LatestRecording>${iso(Date.now())}</tt:LatestRecording></tt:RecordingInformation></tse:ResultList></tse:GetRecordingSearchResultsResponse>`));
+    }
+    if (body.includes("EndSearch")) return res.end(env(`<tse:EndSearchResponse/>`));
+    if (body.includes("GetReplayUri")) return res.end(env(`<trp:GetReplayUriResponse><trp:Uri>rtsp://camera/onvif-media/record/Recording_1</trp:Uri></trp:GetReplayUriResponse>`));
+    res.statusCode = 400;
+    return res.end(env(`<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>ter:ActionNotSupported</s:Value></s:Subcode></s:Code><s:Reason><s:Text>Optional Action Not Implemented</s:Text></s:Reason></s:Fault>`));
+  }
+
   private handle(req: http.IncomingMessage, res: http.ServerResponse, requestBody = "") {
     const url = new URL(req.url ?? "/", "http://camera");
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
@@ -70,29 +101,7 @@ export class MockVendorCamera {
       if (url.pathname === "/LAPI/V1.0/Storage/Containers/DetailInfos") {
         return res.end(reply(0, { LocalHDDNum: 0, LocalHDDList: [], SDNum: 1, SDList: [{ ID: 1, RemainCapacity: Number(d.freeMiB), TotalCapacity: Number(d.sizeMiB), Manufacturer: "", Status: 3, Property: 0, FormatProgress: 0, GroupID: 0 }], NASNum: 0, NASList: [] }));
       }
-      if (url.pathname.startsWith("/onvif/")) {
-        // ONVIF Profile G: recording jobs and a recording summary (oldest recording 21 days ago).
-        res.setHeader("Content-Type", "application/soap+xml");
-        const env = (inner: string) => `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:trc="http://www.onvif.org/ver10/recording/wsdl" xmlns:tse="http://www.onvif.org/ver10/search/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><s:Body>${inner}</s:Body></s:Envelope>`;
-        const body = requestBody;
-        if (body.includes("GetServices")) {
-          return res.end(env(`<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/recording/wsdl</tds:Namespace><tds:XAddr>http://camera/onvif/recording_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/search/wsdl</tds:Namespace><tds:XAddr>http://camera/onvif/search_service</tds:XAddr></tds:Service></tds:GetServicesResponse>`));
-        }
-        if (body.includes("GetSystemDateAndTime")) {
-          const d = new Date();
-          const at = (x: Date) => `<tt:Date><tt:Year>${x.getUTCFullYear()}</tt:Year><tt:Month>${x.getUTCMonth() + 1}</tt:Month><tt:Day>${x.getUTCDate()}</tt:Day></tt:Date><tt:Time><tt:Hour>${x.getUTCHours()}</tt:Hour><tt:Minute>${x.getUTCMinutes()}</tt:Minute><tt:Second>${x.getUTCSeconds()}</tt:Second></tt:Time>`;
-          return res.end(env(`<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:UTCDateTime>${at(d)}</tt:UTCDateTime><tt:LocalDateTime>${at(new Date(d.getTime() + 330 * 60_000))}</tt:LocalDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>`));
-        }
-        if (body.includes("GetRecordingJobs")) {
-          return res.end(env(`<trc:GetRecordingJobsResponse><trc:JobItem><trc:JobToken>RecordJob_1</trc:JobToken><trc:JobConfiguration><tt:RecordingToken>Recording_1</tt:RecordingToken><tt:Mode>Active</tt:Mode></trc:JobConfiguration></trc:JobItem></trc:GetRecordingJobsResponse>`));
-        }
-        if (body.includes("GetRecordingSummary")) {
-          const from = new Date(Date.now() - 21 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
-          return res.end(env(`<tse:GetRecordingSummaryResponse><tse:Summary><tt:DataFrom>${from}</tt:DataFrom><tt:DataUntil>${new Date().toISOString().replace(/\.\d{3}Z$/, "Z")}</tt:DataUntil><tt:NumberRecordings>1</tt:NumberRecordings></tse:Summary></tse:GetRecordingSummaryResponse>`));
-        }
-        res.statusCode = 400;
-        return res.end(env(`<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>ter:ActionNotSupported</s:Value></s:Subcode></s:Code><s:Reason><s:Text>Optional Action Not Implemented</s:Text></s:Reason></s:Fault>`));
-      }
+      if (url.pathname.startsWith("/onvif/")) return this.onvif(res, requestBody);
       if (url.pathname === "/LAPI/V1.0/System/DeviceInfo") {
         return res.end(reply(0, { ID: 0, DeviceName: "SIMULATED-UNIVIEW", DeviceModel: "SIMULATED-UNIVIEW", SerialNumber: "UNV0001", FirmwareVersion: "GIPC-B6203.15.6" }));
       }
@@ -108,6 +117,7 @@ export class MockVendorCamera {
         const d = this.disks[0]!;
         return res.end(`<html><head><script>\nvar gsSdMode = "sdrec";\nvar sRemSD = "${d.freeMiB}";\nvar sRemSD2 = "-";\nvar sTotalSD = "${d.sizeMiB}";\nvar sTotalSD2 = "-";\nvar sTotalSDplus = 0;\n</script></head><body></body></html>`);
       }
+      if (url.pathname.startsWith("/onvif/")) return this.onvif(res, requestBody);
       res.statusCode = 404;
       return res.end("Not Found");
     }

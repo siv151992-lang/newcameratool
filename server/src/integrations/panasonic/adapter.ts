@@ -15,12 +15,13 @@ export class PanasonicAdapter implements CameraBrandAdapter {
     supportStatus: "supported",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices"],
     storageEndpoint: `GET ${PANASONIC_SDCARD_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
       "SD card capacity is read from the camera's SD memory card setup page (values in MB), so the camera user needs " +
-      "administrator rights. Model, serial, firmware and SD recording (SDrec) come from /cgi-bin/getinfo?FILE=1.",
+      "administrator rights. Model, serial, firmware and SD recording (SDrec) come from /cgi-bin/getinfo?FILE=1. " +
+      "Recordings play over ONVIF Profile G (turn on ONVIF in the camera).",
     compatibility: "Confirmed on WV-S35402-F2L (firmware 3.50). i-PRO / Panasonic cameras with the same web interface.",
   };
 
