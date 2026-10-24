@@ -155,6 +155,9 @@ export class BrandRegistry {
     const aliases: Record<string, string> = {
       hik: "hikvision",
       hikvision: "hikvision",
+      // Prama Hikvision (India) cameras run Hikvision firmware.
+      prama: "hikvision",
+      pramahikvision: "hikvision",
       cpplus: "dahua",
       amcrest: "dahua",
       axiscommunications: "axis",

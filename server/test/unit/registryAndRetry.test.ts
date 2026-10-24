@@ -11,6 +11,8 @@ describe("brand registry", () => {
     expect(registry.get("hikvision").meta.displayName).toBe("Hikvision");
     expect(registry.resolveKey("HIKVISION")).toBe("hikvision");
     expect(registry.resolveKey("Hik")).toBe("hikvision");
+    expect(registry.resolveKey("Prama")).toBe("hikvision");
+    expect(registry.resolveKey("Prama Hikvision")).toBe("hikvision");
   });
 
   it("refuses planned and unknown brands", () => {
