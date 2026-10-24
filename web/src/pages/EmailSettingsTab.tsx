@@ -114,7 +114,13 @@ export function EmailSettingsTab() {
 
   if (settings.isLoading || !draft) return settings.error ? <ErrorMessage error={settings.error} /> : <Spinner />;
   const s = settings.data!;
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft({ ...draft, [k]: v });
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+    const next = { ...draft, [k]: v };
+    // The usual ports decide SSL: 465 starts with SSL/TLS, 587 and 25 upgrade with STARTTLS.
+    if (k === "smtpPort" && v === "465") next.smtpSecure = true;
+    if (k === "smtpPort" && (v === "587" || v === "25")) next.smtpSecure = false;
+    setDraft(next);
+  };
   // Fill server, port, SSL and From from the mailbox address (its domain's mail service).
   const detectFrom = async (email: string) => {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return;
