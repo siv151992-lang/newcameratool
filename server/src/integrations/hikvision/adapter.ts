@@ -28,6 +28,7 @@ import {
   type TrackSchedule,
   wallClockText,
 } from "./parser.js";
+import { fetchSnapshot } from "../snapshot.js";
 
 export const HIKVISION_STORAGE_PATH = "/ISAPI/ContentMgmt/Storage";
 export const HIKVISION_DEVICE_INFO_PATH = "/ISAPI/System/deviceInfo";
@@ -53,7 +54,7 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     supportStatus: "supported",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices", "nas"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices", "nas"],
     storageEndpoint: `GET ${HIKVISION_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -67,6 +68,11 @@ export class HikvisionAdapter implements CameraBrandAdapter {
   private readonly noStatusApi = new Map<string, number>();
 
   constructor(private readonly http: CameraHttpClient) {}
+
+  /** The current picture for the live view (Main stream of channel 1). */
+  getSnapshot(camera: CameraConfig) {
+    return fetchSnapshot(this.http, camera, "/ISAPI/Streaming/channels/101/picture");
+  }
 
   private async getXml(camera: CameraConfig, path: string, body?: string): Promise<string> {
     const res = body === undefined

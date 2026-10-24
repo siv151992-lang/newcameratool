@@ -24,6 +24,8 @@ export interface CameraResponse {
   status: number;
   headers: http.IncomingHttpHeaders;
   body: string;
+  /** The body as received, for `binary` requests (images). */
+  raw?: Buffer;
 }
 
 export interface CameraRequest {
@@ -42,6 +44,8 @@ export interface CameraRequest {
   auth?: "auto" | "digest" | "none" | { authorization: string };
   /** The path as it may appear in error messages (e.g. with an API key in the query redacted). */
   displayPath?: string;
+  /** Keep the body as bytes in `raw` (images), with this size limit instead of the default. */
+  binary?: { maxBytes: number };
 }
 
 const RESERVED_HEADERS = new Set(["host", "authorization", "proxy-authorization", "cookie", "content-length", "transfer-encoding", "connection"]);
@@ -96,7 +100,7 @@ export class CameraHttpClient {
     if (res.status === 403) {
       throw new CameraApiError("PERMISSION_DENIED", "The camera user does not have permission to use this API", { httpStatus: 403 });
     }
-    return { status: res.status, headers: res.headers, body: res.body };
+    return { status: res.status, headers: res.headers, body: res.body, raw: res.raw };
   }
 
   private buildAuthorization(camera: CameraConfig, method: string, path: string, challenges: string[]): string {
@@ -170,7 +174,7 @@ export class CameraHttpClient {
         let size = 0;
         res.on("data", (c: Buffer) => {
           size += c.length;
-          if (size > MAX_BODY_BYTES) {
+          if (size > (request.binary?.maxBytes ?? MAX_BODY_BYTES)) {
             req.destroy(new CameraApiError("INVALID_RESPONSE", "Camera response exceeded the maximum allowed size"));
             return;
           }
@@ -182,7 +186,8 @@ export class CameraHttpClient {
           for (let i = 0; i < res.rawHeaders.length; i += 2) {
             if (res.rawHeaders[i]!.toLowerCase() === "www-authenticate") challenges.push(res.rawHeaders[i + 1]!);
           }
-          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString("utf8"), challenges });
+          const all = Buffer.concat(chunks);
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: request.binary ? "" : all.toString("utf8"), raw: request.binary ? all : undefined, challenges });
         });
         res.on("error", (e) => {
           clearTimeout(timer);

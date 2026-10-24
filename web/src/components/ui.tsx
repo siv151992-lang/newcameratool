@@ -206,7 +206,7 @@ export function Dialog({
   title: string;
   children: ReactNode;
   footer?: ReactNode;
-  size?: "md" | "lg";
+  size?: "md" | "lg" | "xl";
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -226,7 +226,7 @@ export function Dialog({
       aria-labelledby="dialog-title"
       className={clsx(
         "w-[calc(100%-2rem)] rounded-lg border border-line bg-surface p-0 text-ink shadow-xl backdrop:bg-black/50",
-        size === "lg" ? "max-w-2xl" : "max-w-md",
+        size === "xl" ? "max-w-5xl" : size === "lg" ? "max-w-2xl" : "max-w-md",
       )}
     >
       {open && (

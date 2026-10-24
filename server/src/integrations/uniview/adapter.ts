@@ -4,6 +4,7 @@ import { runDiagnostics } from "../diagnostics.js";
 import { CameraApiError, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordingRange, type RecordingReading, type StorageReading } from "../types.js";
 import { OnvifAdapter } from "../onvif/adapter.js";
 import { parseUniviewContainers, parseUniviewDeviceInfo, parseUniviewError, parseUniviewRecording, parseUniviewStorage } from "./parser.js";
+import { fetchSnapshot } from "../snapshot.js";
 
 /** Storage on current firmware (confirmed on IPC815SB-ADF14K-I0); older firmware uses Storage/Disks. */
 export const UNIVIEW_STORAGE_PATH = "/LAPI/V1.0/Storage/Containers/DetailInfos";
@@ -18,7 +19,7 @@ export class UniviewAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
     storageEndpoint: `GET ${UNIVIEW_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -33,6 +34,11 @@ export class UniviewAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {
     this.onvif = new OnvifAdapter(http);
+  }
+
+  /** The current picture for the live view (LAPI, channel 0 main stream). */
+  getSnapshot(camera: CameraConfig) {
+    return fetchSnapshot(this.http, camera, "/LAPI/V1.0/Channels/0/Media/Video/Streams/0/Snapshot");
   }
 
   private async getJson(camera: CameraConfig, path: string): Promise<string> {

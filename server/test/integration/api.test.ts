@@ -240,6 +240,34 @@ describe("cameras", () => {
   });
 });
 
+describe("live view", () => {
+  it("returns the camera's current picture to Org Admins and Operators, and logs the viewing", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const id = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send(cameraBody()).expect(201)).body.id;
+    const res = await agent.get(`/api/cameras/${id}/snapshot?start=1`).buffer(true).expect(200);
+    expect(res.headers["content-type"]).toBe("image/jpeg");
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect([res.body[0], res.body[1]]).toEqual([0xff, 0xd8]);
+    await agent.get(`/api/cameras/${id}/snapshot`).expect(200);
+    const logged = await pool.query("SELECT entity_id FROM audit_logs WHERE action = 'camera.live_view'");
+    expect(logged.rows).toEqual([{ entity_id: id }]);
+
+    const operator = await signIn("operator");
+    await operator.agent.get(`/api/cameras/${id}/snapshot`).expect(200);
+    const viewer = await signIn("viewer");
+    await viewer.agent.get(`/api/cameras/${id}/snapshot`).expect(403);
+  });
+
+  it("explains when the camera cannot give a picture", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const id = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send(cameraBody()).expect(201)).body.id;
+    cam.mode = "auth-fail";
+    expect((await agent.get(`/api/cameras/${id}/snapshot`).expect(422)).body.error.code).toBe("AUTH_FAILED");
+    cam.mode = "not-found";
+    expect((await agent.get(`/api/cameras/${id}/snapshot`).expect(422)).body.error.code).toBe("API_UNAVAILABLE");
+  });
+});
+
 describe("CSV import", () => {
   const rows = () => [
     { row: 2, name: "Cam A", ip: "127.0.0.1", brand: "Hikvision", model: "DS-2CD", username: "admin", password: "Cam-Pass-123", location: "Reception", port: String(port), protocol: "http" },

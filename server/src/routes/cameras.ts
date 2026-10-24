@@ -26,7 +26,8 @@ import {
 } from "../services/cameraService.js";
 import { testCameraConfig, testSavedCamera } from "../services/connectionService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
-import { deviceLimiter, importLimiter } from "./limits.js";
+import { getSnapshot } from "../services/liveViewService.js";
+import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
 export const camerasRouter = Router();
 const read = requirePermission("cameras:read");
@@ -146,6 +147,14 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
   const outcome = await runCheck(param(req), "manual", { registry, notifier });
   if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
   res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req), orgOf(req)) });
+});
+
+// Live view: the current picture. `start=1` on the first picture of a viewing records it in the audit log.
+camerasRouter.get("/:id/snapshot", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+  const { start } = parse(z.object({ start: z.literal("1").optional() }), req.query);
+  const snapshot = await getSnapshot(orgOf(req), param(req));
+  if (start) await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req) });
+  res.set({ "Content-Type": snapshot.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" }).send(snapshot.data);
 });
 
 camerasRouter.get("/:id/storage", read, async (req, res) => {

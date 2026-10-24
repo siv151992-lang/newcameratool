@@ -176,4 +176,6 @@ export interface CameraBrandAdapter {
   getRecordingStatus?(camera: CameraConfig): Promise<RecordingReading>;
   /** How far back the recordings on the camera's own storage go; null when it holds none. */
   getRecordingRange?(camera: CameraConfig): Promise<RecordingRange | null>;
+  /** Optional: the current picture, for the live view. */
+  getSnapshot?(camera: CameraConfig): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
 }

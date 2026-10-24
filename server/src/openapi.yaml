@@ -403,6 +403,17 @@ paths:
       responses:
         "200": { description: "{ outcome, camera }" }
         "409": { description: A check for this camera is already running }
+  /cameras/{id}/snapshot:
+    get:
+      tags: [Cameras]
+      summary: The camera's current picture for the live view (cameras:live, Org Admin and Operator)
+      description: Fetched from the camera with its stored credentials; never stored. `start=1` records the viewing in the audit log.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: start, in: query, required: false, schema: { type: string, enum: ["1"] } }
+      responses:
+        "200": { description: JPEG or PNG picture, content: { image/jpeg: {}, image/png: {} } }
+        "422": { description: The camera could not give a picture (unreachable, credentials, not supported) }
   /cameras/{id}/storage:
     parameters:
       - { $ref: "#/components/parameters/CameraId" }

@@ -3,6 +3,7 @@ import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
 import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
 import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiError } from "./parser.js";
+import { fetchSnapshot } from "../snapshot.js";
 
 export const HANWHA_STORAGE_PATH = "/stw-cgi/system.cgi?msubmenu=storageinfo&action=view";
 export const HANWHA_DEVICE_INFO_PATH = "/stw-cgi/system.cgi?msubmenu=deviceinfo&action=view";
@@ -16,7 +17,7 @@ export class HanwhaAdapter implements CameraBrandAdapter {
     supportStatus: "supported",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
     storageEndpoint: `GET ${HANWHA_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -27,6 +28,11 @@ export class HanwhaAdapter implements CameraBrandAdapter {
   };
 
   constructor(private readonly http: CameraHttpClient) {}
+
+  /** The current picture for the live view (SUNAPI snapshot). */
+  getSnapshot(camera: CameraConfig) {
+    return fetchSnapshot(this.http, camera, "/stw-cgi/video.cgi?msubmenu=snapshot&action=view");
+  }
 
   private async getText(camera: CameraConfig, path: string): Promise<string> {
     return requireOk(await this.http.request(camera, { path, accept: "application/json, text/plain, */*" }), path, parseSunapiError);

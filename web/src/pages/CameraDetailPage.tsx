@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertOctagon, ArrowLeft, KeyRound, Pause, Pencil, Play, PlugZap, RefreshCw, ServerCrash, Table2, Trash2, WifiOff } from "lucide-react";
+import { AlertOctagon, ArrowLeft, KeyRound, Pause, Pencil, Play, PlugZap, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Alert, CameraDetail, CameraHistory, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
+import { LiveViewDialog } from "../components/LiveView";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
 import { ConnectionBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
 import { UsageHistoryChart } from "../components/UsageHistoryChart";
@@ -97,6 +98,7 @@ export function CameraDetailPage() {
   const [hours, setHours] = useState(168);
   const [showTable, setShowTable] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [live, setLive] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null);
 
   const camera = useQuery({ queryKey: ["camera", id], queryFn: () => api<CameraDetail>(`/cameras/${id}`), refetchInterval: 30_000 });
@@ -150,6 +152,11 @@ export function CameraDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {can("cameras:live") && (
+            <Button icon={<Video className="h-4 w-4" />} onClick={() => setLive(true)}>
+              Live view
+            </Button>
+          )}
           {can("cameras:check") && (
             <>
               <Button
@@ -452,6 +459,7 @@ export function CameraDetailPage() {
       <Dialog open={!!testResult} onClose={() => setTestResult(null)} title={`Connection test: ${c.name}`}>
         {testResult && <Diagnostics result={testResult} />}
       </Dialog>
+      <LiveViewDialog camera={live ? c : null} onClose={() => setLive(false)} />
       <RemoveCamerasDialog
         open={removing}
         names={[c.name]}

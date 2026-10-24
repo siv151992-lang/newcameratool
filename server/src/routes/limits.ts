@@ -13,6 +13,8 @@ export const accountLimiter = rateLimit({ ...common, windowMs: 15 * 60_000, limi
 export const loginLimiter = rateLimit({ ...common, windowMs: 15 * 60_000, limit: 20, message: msg("Too many sign-in attempts. Try again in a few minutes.") });
 // Connection tests and manual checks make requests to devices on the network.
 export const deviceLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 60, message: msg("Too many device requests. Slow down and try again.") });
+// Live view asks for a picture about once a second per open camera.
+export const liveViewLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 300, message: msg("Too many live view requests. Close some live views and try again.") });
 export const importLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 30, message: msg("Too many import requests. Try again shortly.") });
 // Each AI question or summary calls an external, paid API.
 export const aiLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 20, message: msg("Too many AI requests. Wait a minute and try again.") });

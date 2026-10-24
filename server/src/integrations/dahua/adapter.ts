@@ -3,6 +3,7 @@ import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
 import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
 import { parseDahuaDeviceInfo, parseDahuaError, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
+import { fetchSnapshot } from "../snapshot.js";
 
 export const DAHUA_STORAGE_PATH = "/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo";
 export const DAHUA_DEVICE_INFO_PATH = "/cgi-bin/magicBox.cgi?action=getSystemInfo";
@@ -15,7 +16,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
     storageEndpoint: `GET ${DAHUA_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -24,6 +25,11 @@ export class DahuaAdapter implements CameraBrandAdapter {
   };
 
   constructor(private readonly http: CameraHttpClient) {}
+
+  /** The current picture for the live view (Channel 1). */
+  getSnapshot(camera: CameraConfig) {
+    return fetchSnapshot(this.http, camera, "/cgi-bin/snapshot.cgi?channel=1");
+  }
 
   private async getText(camera: CameraConfig, path: string): Promise<string> {
     return requireOk(await this.http.request(camera, { path, accept: "text/plain, */*" }), path, parseDahuaError);

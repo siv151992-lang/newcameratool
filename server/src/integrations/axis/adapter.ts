@@ -3,6 +3,7 @@ import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
 import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, RecordingReading, StorageReading } from "../types.js";
 import { parseAxisDeviceInfo, parseAxisError, parseAxisRecording, parseAxisStorage } from "./parser.js";
+import { fetchSnapshot } from "../snapshot.js";
 
 export const AXIS_STORAGE_PATH = "/axis-cgi/param.cgi?action=list&group=root.Storage";
 export const AXIS_DEVICE_INFO_PATH = "/axis-cgi/param.cgi?action=list&group=root.Brand,root.Properties";
@@ -14,7 +15,7 @@ export class AxisAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "multiple-storage-devices"],
     storageEndpoint: `GET ${AXIS_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -23,6 +24,11 @@ export class AxisAdapter implements CameraBrandAdapter {
   };
 
   constructor(private readonly http: CameraHttpClient) {}
+
+  /** The current picture for the live view (VAPIX JPEG image). */
+  getSnapshot(camera: CameraConfig) {
+    return fetchSnapshot(this.http, camera, "/axis-cgi/jpg/image.cgi");
+  }
 
   private async getText(camera: CameraConfig, path: string): Promise<string> {
     return requireOk(await this.http.request(camera, { path, accept: "text/plain, */*" }), path, parseAxisError);

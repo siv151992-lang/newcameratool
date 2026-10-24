@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { MOCK_PICTURE } from "./mockPicture.js";
 
 /**
  * A simulated Hikvision camera exposing the ISAPI storage and device-info endpoints behind
@@ -141,6 +142,10 @@ export class MockHikvisionCamera {
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
     this.requests.push({ path, authorized });
     if (!authorized) return this.challenge(res);
+    if (path === "/ISAPI/Streaming/channels/101/picture" && this.mode === "ok") {
+      res.setHeader("Content-Type", "image/jpeg");
+      return res.end(MOCK_PICTURE);
+    }
     res.setHeader("Content-Type", "application/xml");
     if (this.mode === "server-error") {
       res.statusCode = 500;
