@@ -202,18 +202,26 @@ describe("members", () => {
     await alice.patch(`/api/users/${op.id}`, { role: "admin" }).expect(204);
     const olga = await signIn("olga");
     expect((await olga.get("/api/auth/me").expect(200)).body.user.role).toBe("admin");
-    // With two Org Admins, one may be removed; the remaining one may not.
-    await olga.del(`/api/users/${aliceId}`).expect(204);
+    // With two Org Admins, one may be deleted; the remaining one may not.
+    expect((await olga.del(`/api/users/${aliceId}`).expect(200)).body).toEqual({ accountDeleted: true });
     expect((await olga.del(`/api/users/${op.id}`).expect(400)).body.error.code).toBe("SELF_LOCKOUT");
-    // Alice's open session loses access at once; her account remains.
-    await alice.get("/api/cameras").expect(403);
-    expect((await pool.query("SELECT 1 FROM users WHERE id = $1", [aliceId])).rowCount).toBe(1);
+    // Alice was in no other organization: her account and open session are gone.
+    await alice.get("/api/cameras").expect(401);
+    expect((await pool.query("SELECT 1 FROM users WHERE id = $1", [aliceId])).rowCount).toBe(0);
 
-    const audit = (await pool.query("SELECT action, organization_id FROM audit_logs WHERE action LIKE 'member.%' ORDER BY id")).rows;
+    const audit = (await pool.query("SELECT action, organization_id FROM audit_logs WHERE action IN ('member.updated', 'user.deleted') ORDER BY id")).rows;
     expect(audit).toEqual([
       { action: "member.updated", organization_id: testOrgId },
-      { action: "member.removed", organization_id: testOrgId },
+      { action: "user.deleted", organization_id: testOrgId },
     ]);
+  });
+
+  it("keeps an account that belongs to another organization when it is deleted here", async () => {
+    const carol = await createTestUser("viewer", "carol");
+    await pool.query("INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'viewer')", [otherOrgId, carol.id]);
+    const alice = await signIn("alice");
+    expect((await alice.del(`/api/users/${carol.id}`).expect(200)).body).toEqual({ accountDeleted: false });
+    expect((await pool.query("SELECT organization_id FROM organization_members WHERE user_id = $1", [carol.id])).rows).toEqual([{ organization_id: otherOrgId }]);
   });
 
   it("refuses to change an account shared with another organization, unless by the system administrator", async () => {

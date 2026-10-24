@@ -43,7 +43,7 @@ import {
   serverWideKeys,
   updateMonitoringSettings,
 } from "../services/settingsService.js";
-import { invite, inviteSchema, listInvitations, resend, revoke } from "../services/invitationService.js";
+import { deleteInvitation, invite, inviteSchema, listInvitations, resend, revoke } from "../services/invitationService.js";
 import { createUser, createUserSchema } from "../services/userService.js";
 
 const isSystemAdmin = (req: Request) => req.auth!.user.isSystemAdmin;
@@ -168,8 +168,7 @@ usersRouter.patch("/:id", async (req, res) => {
   res.status(204).end();
 });
 usersRouter.delete("/:id", async (req, res) => {
-  await removeMember(orgOf(req), param(req), actorOf(req), req.ip);
-  res.status(204).end();
+  res.json(await removeMember(orgOf(req), param(req), actorOf(req), req.ip));
 });
 
 /** Invitations into the current organization: people join only when they accept. */
@@ -184,6 +183,10 @@ invitationsRouter.post("/", async (req, res) => {
 });
 invitationsRouter.post("/:id/resend", async (req, res) => {
   res.json(await resend(orgOf(req), param(req), actorOf(req), req.ip));
+});
+invitationsRouter.delete("/:id", async (req, res) => {
+  await deleteInvitation(orgOf(req), param(req), actorOf(req), req.ip);
+  res.status(204).end();
 });
 invitationsRouter.post("/:id/revoke", async (req, res) => {
   await revoke(orgOf(req), param(req), actorOf(req), req.ip);

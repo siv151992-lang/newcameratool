@@ -38,7 +38,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "networks", label: "Camera networks", description: "The network ranges the monitor may contact cameras on.", icon: <Network className={icon} />, element: <NetworksTab /> },
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
-    can("users:manage") && { path: "users", label: "Users", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
+    can("users:manage") && { path: "users", label: "Users", description: `The people in ${user?.organizationName ?? "this organization"}: add them, set their roles, and delete them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
     can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
     { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, and your password.", icon: <Palette className={icon} />, element: <AccountTab /> },
@@ -609,9 +609,9 @@ function UsersTab() {
     },
   });
   const remove = useMutation({
-    mutationFn: (id: string) => api(`/users/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
-      toast("success", `${removing?.username} removed from ${user?.organizationName}`);
+    mutationFn: (id: string) => api<{ accountDeleted: boolean }>(`/users/${id}`, { method: "DELETE" }),
+    onSuccess: (r) => {
+      toast("success", r.accountDeleted ? `${removing?.username} deleted` : `${removing?.username} removed from ${user?.organizationName}; their account stays for their other organization`);
       setRemoving(null);
       void refresh();
     },
@@ -661,7 +661,7 @@ function UsersTab() {
                           {u.isActive ? "Disable" : "Enable"}
                         </Button>
                       )}
-                      {u.id !== user?.id && <Button size="sm" variant="ghost" onClick={() => setRemoving(u)}>Remove</Button>}
+                      {u.id !== user?.id && <Button size="sm" variant="ghost" onClick={() => setRemoving(u)}>Delete</Button>}
                     </td>
                   </tr>
                 ))}
@@ -676,13 +676,17 @@ function UsersTab() {
         <ConfirmDialog
           open={!!removing}
           danger
-          title={`Remove ${removing?.username} from ${user?.organizationName}?`}
-          confirmLabel="Remove"
+          title={`Delete ${removing?.username}?`}
+          confirmLabel="Delete"
           loading={remove.isPending}
           onCancel={() => setRemoving(null)}
           onConfirm={() => remove.mutate(removing!.id)}
         >
-          <p>They lose access to this organization at once. Their account is kept{removing?.otherOrganizations ? ", and so is their access to their other organization" : ""}.</p>
+          <p>
+            {removing?.otherOrganizations
+              ? `They lose access to ${user?.organizationName} at once. Their account is kept for their other organization.`
+              : "Their account is deleted and they are signed out at once. This cannot be undone; add them again to give access back."}
+          </p>
         </ConfirmDialog>
       </Card>
       <InvitationsCard resend={invitations.resend} />

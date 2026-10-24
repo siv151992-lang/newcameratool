@@ -28,6 +28,7 @@ function client() {
     get: (url: string) => agent.get(url),
     post: (url: string, body: object = {}) => agent.post(url).set("X-CSRF-Token", csrf).send(body).then(remember),
     patch: (url: string, body: object) => agent.patch(url).set("X-CSRF-Token", csrf).send(body),
+    csrf: () => csrf,
     login: (username: string, password = PASSWORD) => agent.post("/api/auth/login").send({ username, password }).then(remember),
   };
 }
@@ -220,6 +221,14 @@ describe("invitations", () => {
     const olga = await signedIn("olga");
     expect((await olga.post("/api/invitations", { email: "x@example.com", role: "admin" })).status).toBe(403);
     expect((await olga.post("/api/users", { username: "sneaky", password: "Sneaky-Pass-123", role: "admin" })).status).toBe(403);
+  });
+
+  it("deletes an invitation from the list, and its link stops working", async () => {
+    const r = await alice.post("/api/invitations", { email: "ravi@example.com", role: "viewer" });
+    const token = inviteLink("ravi@example.com");
+    await alice.agent.delete(`/api/invitations/${r.body.id}`).set("X-CSRF-Token", alice.csrf()).expect(204);
+    expect((await alice.get("/api/invitations")).body).toEqual([]);
+    expect((await client().get(`/api/auth/invitations/${token}`)).status).toBe(404);
   });
 
   it("lets an Org Admin create a user with a password, without email", async () => {

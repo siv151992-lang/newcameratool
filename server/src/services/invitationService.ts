@@ -139,6 +139,13 @@ export async function revoke(orgId: string, id: string, actor: Actor, ip?: strin
   await audit({ actor, ip, action: "invitation.revoked", entityType: "invitation", entityId: id, details: { email: inv.email } });
 }
 
+/** Deletes an invitation from the list, whatever its state; an open one's link stops working. */
+export async function deleteInvitation(orgId: string, id: string, actor: Actor, ip?: string | null) {
+  const inv = await getOwn(orgId, id);
+  await pool.query("DELETE FROM invitations WHERE id = $1", [id]);
+  await audit({ actor, ip, organizationId: orgId, action: "invitation.deleted", entityType: "invitation", entityId: id, details: { email: inv.email, status: inv.status } });
+}
+
 // ------------------------------------------------------------------ the invited person
 
 interface InvitationRow {

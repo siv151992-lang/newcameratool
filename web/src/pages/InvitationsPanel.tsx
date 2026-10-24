@@ -148,12 +148,12 @@ export function InvitationsCard({ resend }: { resend: ReturnType<typeof useInvit
   const toast = useToast();
   const qc = useQueryClient();
   const invitations = useQuery({ queryKey: ["invitations"], queryFn: () => api<Invitation[]>("/invitations") });
-  const [revoking, setRevoking] = useState<Invitation | null>(null);
-  const revoke = useMutation({
-    mutationFn: (id: string) => api(`/invitations/${id}/revoke`, { method: "POST" }),
+  const [deleting, setDeleting] = useState<Invitation | null>(null);
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/invitations/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast("success", `Invitation for ${revoking?.email} revoked`);
-      setRevoking(null);
+      toast("success", `Invitation for ${deleting?.email} deleted`);
+      setDeleting(null);
       void qc.invalidateQueries({ queryKey: ["invitations"] });
     },
     onError: (e: Error) => toast("error", e.message),
@@ -196,13 +196,11 @@ export function InvitationsCard({ resend }: { resend: ReturnType<typeof useInvit
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-right">
                     {(inv.status === "pending" || inv.status === "expired") && (
-                      <>
-                        <Button size="sm" variant="ghost" loading={resend.isPending && resend.variables?.id === inv.id} onClick={() => resend.mutate(inv)}>
-                          Send again
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setRevoking(inv)}>Revoke</Button>
-                      </>
+                      <Button size="sm" variant="ghost" loading={resend.isPending && resend.variables?.id === inv.id} onClick={() => resend.mutate(inv)}>
+                        Send again
+                      </Button>
                     )}
+                    <Button size="sm" variant="ghost" onClick={() => setDeleting(inv)}>Delete</Button>
                   </td>
                 </tr>
               ))}
@@ -211,15 +209,15 @@ export function InvitationsCard({ resend }: { resend: ReturnType<typeof useInvit
         </div>
       )}
       <ConfirmDialog
-        open={!!revoking}
+        open={!!deleting}
         danger
-        title={`Revoke the invitation for ${revoking?.email}?`}
-        confirmLabel="Revoke"
-        loading={revoke.isPending}
-        onCancel={() => setRevoking(null)}
-        onConfirm={() => revoke.mutate(revoking!.id)}
+        title={`Delete the invitation for ${deleting?.email}?`}
+        confirmLabel="Delete"
+        loading={remove.isPending}
+        onCancel={() => setDeleting(null)}
+        onConfirm={() => remove.mutate(deleting!.id)}
       >
-        <p>The link stops working at once. You can invite them again later.</p>
+        <p>{deleting?.status === "pending" ? "The link stops working at once. You can invite them again later." : "It is removed from this list."}</p>
       </ConfirmDialog>
     </Card>
   );

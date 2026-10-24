@@ -158,16 +158,24 @@ export async function updateMember(
 
 /** Removes someone from the organization. Their account stays (they may belong to other organizations). */
 export async function removeMember(orgId: string, userId: string, actor: Actor, ip?: string | null) {
-  await withTransaction(async (db) => {
+  return withTransaction(async (db) => {
     const m = await getMembership(orgId, userId, db);
     if (m.role === "admin") {
       if (userId === actor.id) throw new HttpError(400, "SELF_LOCKOUT", "You cannot remove yourself as Org Admin");
       await assertAnotherAdmin(orgId, userId, db);
     }
     await db.query("DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2", [orgId, userId]);
-    // Sessions open in this organization lose access at once.
-    await db.query("UPDATE sessions SET organization_id = NULL WHERE user_id = $1 AND organization_id = $2", [userId, orgId]);
-    await audit({ actor, ip, action: "member.removed", entityType: "user", entityId: userId, details: { username: m.username, role: m.role } }, db);
+    // An account in no other organization is deleted with its sessions; system administrators are kept.
+    const { rowCount } = await db.query(
+      `DELETE FROM users u WHERE u.id = $1 AND NOT u.is_system_admin
+         AND NOT EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id = u.id)`,
+      [userId],
+    );
+    const accountDeleted = Boolean(rowCount);
+    // Otherwise, sessions open in this organization lose access at once.
+    if (!accountDeleted) await db.query("UPDATE sessions SET organization_id = NULL WHERE user_id = $1 AND organization_id = $2", [userId, orgId]);
+    await audit({ actor, ip, action: accountDeleted ? "user.deleted" : "member.removed", entityType: "user", entityId: userId, details: { username: m.username, role: m.role } }, db);
+    return { accountDeleted };
   });
 }
 
