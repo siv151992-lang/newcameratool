@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import { registry } from "../integrations/registry.js";
 import type { CameraConfig } from "../integrations/types.js";
 import { HttpError } from "../lib/errors.js";
+import { logger } from "../lib/logger.js";
 import { getCameraConfig, getCameraRow } from "./cameraService.js";
 import { getMonitoringSettings } from "./settingsService.js";
 
@@ -43,12 +44,20 @@ export async function prepareStream(orgId: string, cameraId: string): Promise<st
   const src = rtspUrl(await getCameraConfig(cameraId, requestTimeoutMs), adapter.rtspPath);
   const name = streamName(cameraId);
   const hash = createHash("sha256").update(src).digest("hex");
+  let res: Response;
   try {
     if (registered.get(name) === hash && (await streamExists(name))) return name;
-    const res = await fetch(`${base()}/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT", signal: AbortSignal.timeout(5000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  } catch {
-    throw new HttpError(502, "LIVE_VIDEO_SERVICE", "The live video service is not answering. Check that the go2rtc container is running.");
+    res = await fetch(`${base()}/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT", signal: AbortSignal.timeout(5000) });
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, url: base() }, "Live video service unreachable");
+    throw new HttpError(502, "LIVE_VIDEO_SERVICE", `The live video service (go2rtc at ${base()}) is not answering. Check that the go2rtc container is running: docker compose ps go2rtc`);
+  }
+  // go2rtc adds the stream, then saves it to its config file; with a read-only config that save
+  // fails (HTTP 400) although the stream works. What counts is that the stream exists now.
+  if (!res.ok && !(await streamExists(name).catch(() => false))) {
+    const reason = (await res.text().catch(() => "")).trim().slice(0, 200);
+    logger.warn({ status: res.status, reason }, "Live video service refused the camera stream");
+    throw new HttpError(502, "LIVE_VIDEO_SERVICE", `The live video service refused the camera stream (HTTP ${res.status}${reason ? `: ${reason}` : ""}). See: docker compose logs go2rtc`);
   }
   registered.set(name, hash);
   return name;

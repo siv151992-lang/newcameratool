@@ -10,12 +10,14 @@ import { attachLiveVideo } from "../../src/services/liveVideoProxy.js";
 import { createTestUser, PASSWORD, prepareDb, resetData } from "../helpers.js";
 
 /** Stands in for go2rtc: records registered streams and answers the WebSocket with one text frame. */
-const go2rtc = { streams: new Map<string, string>(), wsPaths: [] as string[] };
+const go2rtc = { streams: new Map<string, string>(), wsPaths: [] as string[], readOnlyConfig: false };
 const fake = http.createServer((req, res) => {
   const url = new URL(req.url!, "http://x");
   if (url.pathname === "/api/streams" && req.method === "PUT") {
     go2rtc.streams.set(url.searchParams.get("name")!, url.searchParams.get("src")!);
-    return res.end();
+    // Like go2rtc with a read-only config file: the stream is added, saving the config fails.
+    if (go2rtc.readOnlyConfig) res.statusCode = 400;
+    return res.end(go2rtc.readOnlyConfig ? "open /config/go2rtc.yaml: read-only file system" : "");
   }
   if (url.pathname === "/api/streams") return res.end(JSON.stringify(Object.fromEntries(go2rtc.streams)));
   res.statusCode = 404;
@@ -71,6 +73,7 @@ beforeEach(async () => {
   await resetData();
   go2rtc.streams.clear();
   go2rtc.wsPaths = [];
+  go2rtc.readOnlyConfig = false;
 });
 
 async function addCamera(admin: { cookie: string; csrf: string }) {
@@ -92,6 +95,14 @@ describe("live video", () => {
     expect(reply).toMatch(/^HTTP\/1\.1 101 /);
     expect(reply).toContain('"type":"mse"');
     expect(go2rtc.wsPaths).toEqual([`/api/ws?src=camera_${id}`]);
+  });
+
+  it("works when go2rtc cannot save its config file (read-only mount)", async () => {
+    const admin = await sessionCookie("admin");
+    const id = await addCamera(admin);
+    go2rtc.readOnlyConfig = true;
+    await request(app).post(`/api/cameras/${id}/live/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf).expect(200);
+    expect(go2rtc.streams.has(`camera_${id}`)).toBe(true);
   });
 
   it("refuses without a session, from another site, and for viewers", async () => {
