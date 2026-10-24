@@ -49,6 +49,9 @@ const toDraft = (s: EmailSettings): Draft => ({
   passwordResetExpiryMinutes: String(s.passwordResetExpiryMinutes),
 });
 
+/** A localhost address opens only on the server itself: never suggest it for links. */
+const openedAtLocalhost = /^(localhost|127\.|\[::1\]$)/.test(window.location.hostname);
+
 function toBody(d: Draft) {
   const num = (v: string) => Number(v.trim());
   return {
@@ -86,7 +89,7 @@ export function EmailSettingsTab() {
     if (!settings.data) return;
     const d = toDraft(settings.data);
     // Nothing saved yet: start from the address this page is open at (not a local-only one).
-    if (!d.publicUrl && !/^https?:\/\/(localhost|127\.)/.test(window.location.origin)) d.publicUrl = window.location.origin;
+    if (!d.publicUrl && !openedAtLocalhost) d.publicUrl = window.location.origin;
     setDraft(d);
   }, [settings.data]);
 
@@ -165,8 +168,8 @@ export function EmailSettingsTab() {
 
         <Card title="Dashboard address">
           <div className="p-4">
-            {field("publicUrl", "Address people open the dashboard at", "Used for the links in emails, such as https://cctv.example.com.", { inputMode: "url", placeholder: "https://cctv.example.com" })}
-            {draft.publicUrl.trim() !== window.location.origin && (
+            {field("publicUrl", "Address people open the dashboard at", "Used for the links in emails, such as https://cctv.example.com. Filled in automatically from the server's address when empty.", { inputMode: "url", placeholder: "https://cctv.example.com" })}
+            {draft.publicUrl.trim() !== window.location.origin && !openedAtLocalhost && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-ink-secondary">
                 {s.publicUrl ? "You opened this page at" : "Not set yet. You opened this page at"} <code>{window.location.origin}</code>
                 <Button size="sm" onClick={() => set("publicUrl", window.location.origin)}>Use this address</Button>

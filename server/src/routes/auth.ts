@@ -22,6 +22,7 @@ import { logger } from "../lib/logger.js";
 import { parse } from "../lib/validate.js";
 import { pool } from "../db/pool.js";
 import { audit } from "../services/auditService.js";
+import { learnDashboardAddress } from "../services/dashboardAddress.js";
 import { accountLimiter, loginLimiter } from "./limits.js";
 
 export const authRouter = Router();
@@ -160,6 +161,8 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
     const result = await login(body.username, body.password, { ip: req.ip, userAgent: req.get("user-agent") });
     res.cookie(SESSION_COOKIE, result.token, cookieOptions());
     await audit({ actor: { id: result.user.id, username: result.user.username }, ip: req.ip, action: "auth.login", entityType: "user", entityId: result.user.id, organizationId: null });
+    // Links in emails need the address people open the dashboard at: learn it if it is not set.
+    await learnDashboardAddress(req.get("origin"), result.user.isSystemAdmin).catch(() => undefined);
     res.json({ user: result.user, csrfToken: result.csrfToken });
   } catch (err) {
     await audit({ actor: null, ip: req.ip, action: "auth.login_failed", entityType: "user", details: { username: body.username } });

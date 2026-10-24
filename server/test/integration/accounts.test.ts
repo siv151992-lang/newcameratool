@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { pool } from "../../src/db/pool.js";
 import { type MailMessage, setMailSender } from "../../src/notifications/mailer.js";
+import { getEmailSettings, updateEmailSettings } from "../../src/services/emailSettings.js";
 import { createTestOrg, createTestUser, PASSWORD, prepareDb, resetData, testOrgId } from "../helpers.js";
 
 const app = createApp();
@@ -281,5 +282,25 @@ describe("email and sign-in settings", () => {
     const audit = (await pool.query("SELECT details FROM audit_logs WHERE action = 'settings.email_updated' ORDER BY id")).rows;
     expect(audit[0].details.fields).toContain("smtpPassword (changed)");
     expect(JSON.stringify(audit)).not.toContain("Mailbox-Secret-1");
+  });
+});
+
+describe("dashboard address", () => {
+  const signInFrom = (username: string, origin: string) =>
+    request(app).post("/api/auth/login").set("Origin", origin).send({ username, password: PASSWORD }).expect(200);
+  const saved = async () => (await getEmailSettings()).publicUrl;
+
+  it("is learned from a system administrator's sign-in when not set, never from localhost", async () => {
+    await createTestUser("admin", "boss", testOrgId, { systemAdmin: true });
+    await createTestUser("admin", "orgadmin");
+    await updateEmailSettings({ publicUrl: null }, null);
+    await signInFrom("boss", "http://localhost:8080");
+    await signInFrom("orgadmin", "http://10.69.96.30");
+    expect(await saved()).toBeNull();
+    await signInFrom("boss", "http://10.69.96.25:8080");
+    expect(await saved()).toBe("http://10.69.96.25:8080");
+    // Once set, later sign-ins do not change it.
+    await signInFrom("boss", "https://10.69.96.99");
+    expect(await saved()).toBe("http://10.69.96.25:8080");
   });
 });

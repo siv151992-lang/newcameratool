@@ -10,12 +10,14 @@ import { startupHint } from "./lib/startupHint.js";
 import { getCipher } from "./security/cipher.js";
 import { syncBrands } from "./services/brandService.js";
 import { bootstrapAdmin } from "./services/bootstrap.js";
+import { detectDashboardAddress } from "./services/dashboardAddress.js";
 
 async function main() {
   getCipher(); // fail fast if the encryption key is missing or malformed
   await migrate(pool, (m) => logger.info(m));
   await syncBrands(registry);
   await bootstrapAdmin();
+  await detectDashboardAddress().catch((err) => logger.warn({ err: (err as Error).message }, "Could not fill in the dashboard address"));
   if (config.CAMERA_ALLOW_LOOPBACK) logger.warn("CAMERA_ALLOW_LOOPBACK is enabled: loopback camera addresses are allowed (development only)");
   if (!config.COOKIE_SECURE) logger.warn("COOKIE_SECURE=false: session cookies will be sent over plain HTTP. Use HTTPS in production.");
   // Other API instances or the worker may change integrations: reload them periodically too.

@@ -43,6 +43,9 @@ const schema = z.object({
   // The address people open the dashboard at (https://cctv.example.com). Links in invitation,
   // verification and password-reset emails use it; without it those emails are not sent.
   PUBLIC_URL: z.string().url().optional(),
+  // Docker Compose: the address Caddy serves and its HTTPS port, used to fill in the dashboard address.
+  SITE_ADDRESS: z.string().optional(),
+  HTTPS_PORT: z.coerce.number().int().optional(),
   // Sign in with Google / Zoho (OAuth client credentials). Settings → Email & sign-in overrides them.
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
