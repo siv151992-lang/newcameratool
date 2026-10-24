@@ -72,11 +72,11 @@ export function DashboardPage() {
         <StatTile label="Storage warnings" value={s?.storageWarning ?? "—"} icon={<AlertTriangle className={`${icon} text-warn`} />} to="/cameras?status=warning" />
         <StatTile label="Critical storage" value={s?.storageCritical ?? "—"} icon={<AlertOctagon className={`${icon} text-bad`} />} to="/cameras?status=critical" />
         <StatTile
-          label="SD card problems"
-          value={s ? s.sdCard.missing + s.sdCard.error : "—"}
-          icon={<MemoryStick className={`${icon} ${s && s.sdCard.missing + s.sdCard.error > 0 ? "text-bad" : "text-good"}`} />}
+          label="SD cards"
+          value={s?.sdCard.total ?? "—"}
+          icon={<MemoryStick className={`${icon} ${s && s.sdCard.error + s.sdCard.camerasWithout > 0 ? "text-bad" : "text-good"}`} />}
           hint={s ? sdCardHint(s.sdCard) : undefined}
-          to="/cameras?status=sdproblem"
+          to={s && s.sdCard.error + s.sdCard.camerasWithout > 0 ? "/cameras?status=sdproblem" : "/cameras?status=sdok"}
         />
         <StatTile
           label="Total capacity"
@@ -144,10 +144,10 @@ function capacityHint(s: Summary): string {
   return `From ${s.camerasWithStorageData} of ${s.monitoredCameras} monitored cameras${notes.length ? ` (${notes.join(", ")})` : ""}`;
 }
 
-/** "73 cards OK · 2 without an SD card · 1 card error" */
+/** "71 OK · 1 card error · 1 camera without a card" */
 function sdCardHint(sd: Summary["sdCard"]): string {
-  const parts = [`${sd.ok} card${sd.ok === 1 ? "" : "s"} OK`];
-  if (sd.missing) parts.push(`${sd.missing} without an SD card`);
+  const parts = [`${sd.ok} OK`];
   if (sd.error) parts.push(`${sd.error} card error${sd.error === 1 ? "" : "s"}`);
+  if (sd.camerasWithout) parts.push(`${sd.camerasWithout} camera${sd.camerasWithout === 1 ? "" : "s"} without a card`);
   return parts.join(" · ");
 }

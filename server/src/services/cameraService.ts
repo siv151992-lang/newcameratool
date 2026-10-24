@@ -379,9 +379,9 @@ export async function getSummary(orgId: string) {
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND NOT c.local_storage)::int AS without_local_storage,
-            count(*) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND d.devices > 0 AND d.bad = 0)::int AS sd_ok,
+            coalesce(sum(d.devices) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_total,
+            coalesce(sum(d.bad) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_error,
             count(*) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND coalesce(d.devices, 0) = 0)::int AS sd_missing,
-            count(*) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND d.bad > 0)::int AS sd_error,
             count(*) FILTER (WHERE c.priority = 'critical')::int AS critical_area,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND s.connection_status = 'offline')::int AS critical_area_offline,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND EXISTS (
@@ -424,8 +424,9 @@ export async function getSummary(orgId: string) {
     camerasWithStorageData: r.cameras_with_storage_data,
     offlineWithStorageData: r.offline_with_storage_data,
     withoutLocalStorage: r.without_local_storage,
-    /** SD cards of monitored cameras that record locally and were read at least once. */
-    sdCard: { ok: r.sd_ok, missing: r.sd_missing, error: r.sd_error },
+    /** SD cards (storage devices) of monitored cameras that record locally and were read at least once:
+     * how many, how many report an error, and how many such cameras have none. */
+    sdCard: { total: r.sd_total, ok: r.sd_total - r.sd_error, error: r.sd_error, camerasWithout: r.sd_missing },
     criticalArea: { total: r.critical_area, offline: r.critical_area_offline, withProblems: r.critical_area_problems },
     alerts: alerts.rows[0],
   };
