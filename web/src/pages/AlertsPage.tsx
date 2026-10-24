@@ -10,7 +10,16 @@ import { Button, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pag
 import { useToast } from "../components/toast";
 import { useAuth } from "../hooks/auth";
 import { useInvalidateCameras } from "../hooks/cameras";
-import { absoluteTime, ALERT_TYPE_LABELS, relativeTime } from "../lib/format";
+import { ALERT_TYPE_LABELS, formatDateTime, relativeTime } from "../lib/format";
+
+/** A colored edge per severity, so the list can be scanned at a glance. */
+const SEVERITY_EDGE: Record<string, string> = { critical: "border-l-bad", warning: "border-l-warn", info: "border-l-accent" };
+const STATUS_LABEL: Record<string, string> = { active: "Active", acknowledged: "Acknowledged", resolved: "Resolved" };
+const STATUS_STYLE: Record<string, string> = {
+  active: "bg-bad/15 text-ink",
+  acknowledged: "bg-warn/20 text-ink",
+  resolved: "bg-good/15 text-ink",
+};
 
 const TABS = [
   { key: "open", label: "Open" },
@@ -91,60 +100,76 @@ export function AlertsPage() {
         ) : (
           <div className={clsx("overflow-x-auto", alerts.isFetching && "opacity-80")}>
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-line text-xs text-ink-secondary">
+              <thead className="border-b border-line bg-raised/60 text-xs uppercase tracking-wide text-ink-secondary">
                 <tr>
-                  <th scope="col" className="px-3 py-2 font-medium">Severity</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Camera</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Type</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Description</th>
-                  <th scope="col" className="px-3 py-2 font-medium">First detected</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Last seen</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Status</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">Actions</th>
+                  <th scope="col" className="py-2.5 pl-4 pr-2 font-medium">Severity</th>
+                  <th scope="col" className="px-2 py-2.5 font-medium">Camera</th>
+                  <th scope="col" className="px-2 py-2.5 font-medium">Problem</th>
+                  <th scope="col" className="px-2 py-2.5 font-medium">Detected</th>
+                  <th scope="col" className="px-2 py-2.5 font-medium">Last seen</th>
+                  <th scope="col" className="px-2 py-2.5 font-medium">Status</th>
+                  {can("alerts:manage") && <th scope="col" className="py-2.5 pl-2 pr-4 text-right font-medium">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {alerts.data.items.map((a) => (
-                  <tr key={a.id} className="border-b border-line align-top last:border-0">
-                    <td className="px-3 py-2"><SeverityBadge severity={a.severity} /></td>
-                    <td className="px-3 py-2">
+                  <tr key={a.id} className="border-b border-line align-top last:border-0 hover:bg-page/50">
+                    <td className={clsx("border-l-4 py-2.5 pl-3 pr-2", SEVERITY_EDGE[a.severity] ?? "border-l-line")}>
+                      <SeverityBadge severity={a.severity} />
+                    </td>
+                    <td className="min-w-[170px] px-2 py-2.5">
                       {a.cameraRemoved ? (
                         <span>{a.cameraName} <span className="text-xs text-ink-muted">(removed)</span></span>
                       ) : (
-                        <Link to={`/cameras/${a.cameraId}`} className="font-medium hover:underline">{a.cameraName}</Link>
+                        <Link to={`/cameras/${a.cameraId}`} className="font-semibold hover:underline">{a.cameraName}</Link>
                       )}
                       <div className="tabular text-xs text-ink-muted">{a.cameraHost}</div>
                       {a.cameraPriority === "critical" && <div className="mt-1"><CriticalAreaBadge /></div>}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{ALERT_TYPE_LABELS[a.type] ?? a.type}</td>
-                    <td className="max-w-md px-3 py-2">
-                      <button className="text-left hover:underline" onClick={() => setDetailId(a.id)}>
-                        <span className="font-medium">{a.title}</span>
-                        <span className="block text-xs text-ink-secondary">{a.description}</span>
+                    <td className="min-w-[260px] max-w-lg px-2 py-2.5">
+                      <button className="group block text-left" onClick={() => setDetailId(a.id)}>
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">{ALERT_TYPE_LABELS[a.type] ?? a.type}</span>
+                        <span className="block font-semibold group-hover:underline">{a.title}</span>
+                        <span className="line-clamp-1 text-xs text-ink-secondary" title={a.description}>{a.description}</span>
                       </button>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-ink-secondary" title={absoluteTime(a.firstDetectedAt)}>{relativeTime(a.firstDetectedAt)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-ink-secondary" title={absoluteTime(a.lastSeenAt)}>
-                      {relativeTime(a.lastSeenAt)}
-                      {a.occurrenceCount > 1 && <div className="text-xs text-ink-muted">{a.occurrenceCount} occurrences</div>}
+                    <td className="whitespace-nowrap px-2 py-2.5">
+                      <div className="tabular">{formatDateTime(a.firstDetectedAt)}</div>
+                      <div className="text-xs text-ink-muted">{relativeTime(a.firstDetectedAt)}</div>
                     </td>
-                    <td className="px-3 py-2 capitalize">
-                      {a.status}
-                      {a.acknowledgedBy && a.status === "acknowledged" && <div className="text-xs normal-case text-ink-muted">by {a.acknowledgedBy}</div>}
-                      {a.status === "resolved" && <div className="text-xs normal-case text-ink-muted">{a.resolvedBy ? `by ${a.resolvedBy}` : "automatically"}</div>}
+                    <td className="whitespace-nowrap px-2 py-2.5">
+                      <div className="tabular">{formatDateTime(a.lastSeenAt)}</div>
+                      <div className="text-xs text-ink-muted">
+                        {relativeTime(a.lastSeenAt)}
+                        {a.occurrenceCount > 1 && ` · seen ${a.occurrenceCount}×`}
+                      </div>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right">
-                      {can("alerts:manage") && a.status === "active" && (
-                        <Button size="sm" variant="ghost" icon={<Check className="h-4 w-4" />} onClick={() => setAction({ alert: a, kind: "acknowledge" })}>
-                          Acknowledge
-                        </Button>
+                    <td className="whitespace-nowrap px-2 py-2.5">
+                      <span className={clsx("inline-flex rounded-full px-2 py-0.5 text-xs font-medium", STATUS_STYLE[a.status])}>{STATUS_LABEL[a.status] ?? a.status}</span>
+                      {a.acknowledgedBy && a.status === "acknowledged" && <div className="mt-0.5 text-xs text-ink-muted">by {a.acknowledgedBy}</div>}
+                      {a.status === "resolved" && (
+                        <div className="mt-0.5 text-xs text-ink-muted">
+                          {a.resolvedBy ? `by ${a.resolvedBy}` : "automatically"}
+                          {a.resolvedAt && <span className="tabular block">{formatDateTime(a.resolvedAt)}</span>}
+                        </div>
                       )}
-                      {can("alerts:manage") && a.status !== "resolved" && (
-                        <Button size="sm" variant="ghost" icon={<CheckCheck className="h-4 w-4" />} onClick={() => setAction({ alert: a, kind: "resolve" })}>
-                          Resolve
-                        </Button>
-                      )}
                     </td>
+                    {can("alerts:manage") && (
+                      <td className="whitespace-nowrap py-2.5 pl-2 pr-4 text-right">
+                        <div className="inline-flex gap-1">
+                          {a.status === "active" && (
+                            <Button size="sm" icon={<Check className="h-4 w-4" />} onClick={() => setAction({ alert: a, kind: "acknowledge" })} title="Seen and being handled: stays open until the problem clears">
+                              Acknowledge
+                            </Button>
+                          )}
+                          {a.status !== "resolved" && (
+                            <Button size="sm" variant="ghost" icon={<CheckCheck className="h-4 w-4" />} onClick={() => setAction({ alert: a, kind: "resolve" })} title="Close the alert now">
+                              Resolve
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -196,7 +221,7 @@ export function AlertsPage() {
             <ol className="space-y-1.5">
               {detail.data.events.map((e, i) => (
                 <li key={i} className="flex gap-3">
-                  <span className="tabular w-40 shrink-0 text-xs text-ink-muted">{absoluteTime(e.createdAt)}</span>
+                  <span className="tabular w-40 shrink-0 text-xs text-ink-muted">{formatDateTime(e.createdAt)}</span>
                   <span>
                     <span className="font-medium capitalize">{e.eventType.replace("_", " ")}</span>
                     {e.actor && <span className="text-ink-secondary"> by {e.actor}</span>}

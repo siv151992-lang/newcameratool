@@ -47,6 +47,12 @@ export function absoluteTime(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : "";
 }
 
+const dateTime = new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+/** "24 Oct 2026, 10:41" in the viewer's time zone. */
+export function formatDateTime(iso: string | null | undefined): string {
+  return iso ? dateTime.format(new Date(iso)) : "—";
+}
+
 export const ERROR_LABELS: Record<string, string> = {
   UNREACHABLE: "Unreachable",
   TIMEOUT: "Timed out",
