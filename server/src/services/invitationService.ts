@@ -81,7 +81,7 @@ export async function invite(orgId: string, input: z.infer<typeof inviteSchema>,
     "SELECT 1 FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.organization_id = $1 AND lower(u.email) = $2",
     [orgId, input.email],
   );
-  if (member.rowCount) throw new HttpError(409, "ALREADY_MEMBER", `${input.email} is already a member of this organization`);
+  if (member.rowCount) throw new HttpError(409, "ALREADY_MEMBER", `${input.email} is already a user in this organization`);
 
   const { token, hash } = newLinkToken();
   const expiryHours = (await getEmailSettings()).invitationExpiryHours;
@@ -133,7 +133,7 @@ export async function resend(orgId: string, id: string, actor: Actor, ip?: strin
 
 export async function revoke(orgId: string, id: string, actor: Actor, ip?: string | null) {
   const inv = await getOwn(orgId, id);
-  if (inv.status === "accepted") throw new HttpError(409, "INVITATION_ACCEPTED", "This invitation has already been accepted. Remove the member instead.");
+  if (inv.status === "accepted") throw new HttpError(409, "INVITATION_ACCEPTED", "This invitation has already been accepted. Remove the user instead.");
   if (inv.status === "revoked") return;
   await pool.query("UPDATE invitations SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL", [id, actor.id]);
   await audit({ actor, ip, action: "invitation.revoked", entityType: "invitation", entityId: id, details: { email: inv.email } });

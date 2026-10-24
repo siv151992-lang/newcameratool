@@ -38,7 +38,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "networks", label: "Camera networks", description: "The network ranges the monitor may contact cameras on.", icon: <Network className={icon} />, element: <NetworksTab /> },
     can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
-    can("users:manage") && { path: "users", label: "Members", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
+    can("users:manage") && { path: "users", label: "Users", description: `The people in ${user?.organizationName ?? "this organization"}: invite them, set their roles, and remove them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
     can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
     { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, and your password.", icon: <Palette className={icon} />, element: <AccountTab /> },
@@ -598,7 +598,7 @@ function UsersTab() {
   const update = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api(`/users/${id}`, { method: "PATCH", body }),
     onSuccess: () => {
-      toast("success", "Member updated");
+      toast("success", "User updated");
       setResetting(null);
       setNewPassword("");
       void refresh();
@@ -621,16 +621,16 @@ function UsersTab() {
   return (
     <div className="space-y-4">
       <QuickInvite />
-      <Card title={`Members of ${user?.organizationName ?? "this organization"}`}>
+      <Card title={`Users of ${user?.organizationName ?? "this organization"}`}>
         <div className="border-b border-line px-4 py-2 text-xs text-ink-secondary">
-          <strong>Org Admin</strong>: everything in this organization, including its members · <strong>Operator</strong>: run checks and manage alerts · <strong>Viewer</strong>: read-only
+          <strong>Org Admin</strong>: everything in this organization, including its users · <strong>Operator</strong>: run checks and manage alerts · <strong>Viewer</strong>: read-only
         </div>
         {users.isLoading ? <Spinner /> : users.error ? <ErrorMessage error={users.error} className="m-4" /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="text-xs text-ink-secondary">
                 <tr>
-                  <th scope="col" className="px-4 py-2 font-medium">Member</th>
+                  <th scope="col" className="px-4 py-2 font-medium">User</th>
                   <th scope="col" className="px-4 py-2 font-medium">Role</th>
                   <th scope="col" className="px-4 py-2 font-medium">Status</th>
                   <th scope="col" className="px-4 py-2 font-medium">Last sign-in</th>

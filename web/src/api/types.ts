@@ -46,7 +46,7 @@ export interface InvitationPreview {
   accountExists: boolean;
 }
 
-/** An invitation in Settings → Members. */
+/** An invitation in Settings → Users. */
 export interface Invitation {
   id: string;
   email: string;
@@ -328,7 +328,7 @@ export interface NotificationChannel {
   notifyOnRecovery: boolean;
 }
 
-/** A member of the current organization (Settings → Members). */
+/** A member of the current organization (Settings → Users). */
 export interface ManagedUser {
   id: string;
   username: string;

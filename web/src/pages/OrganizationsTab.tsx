@@ -65,7 +65,7 @@ export function OrganizationsTab() {
               <thead className="text-xs text-ink-secondary">
                 <tr>
                   <th scope="col" className="px-4 py-2 font-medium">Organization</th>
-                  <th scope="col" className="px-4 py-2 text-right font-medium">Members</th>
+                  <th scope="col" className="px-4 py-2 text-right font-medium">Users</th>
                   <th scope="col" className="px-4 py-2 text-right font-medium">Org Admins</th>
                   <th scope="col" className="px-4 py-2 text-right font-medium">Cameras</th>
                   <th scope="col" className="px-4 py-2 font-medium">Created</th>

@@ -86,7 +86,7 @@ export function useInvitations() {
       ) : (
         <div className="space-y-3">
           <p className="text-ink-secondary">
-            They get an email with a link to join. They become a member only when they accept, signed in with this address (or a new account for it). The link expires in {options.data?.invitationExpiryHours ?? 72} hours.
+            They get an email with a link to join. They become a user only when they accept, signed in with this address (or a new account for it). The link expires in {options.data?.invitationExpiryHours ?? 72} hours.
           </p>
           <Field label="Email address" required error={error ?? undefined}>
             {(id, d) => <Input id={id} aria-describedby={d} type="email" autoComplete="off" autoFocus value={inviting.email} invalid={!!error} onChange={(e) => setInviting({ ...inviting, email: e.target.value })} />}
@@ -96,7 +96,7 @@ export function useInvitations() {
               <Select id={id} value={inviting.role} onChange={(e) => setInviting({ ...inviting, role: e.target.value as Role })}>
                 <option value="viewer">{ROLE_LABELS.viewer}: read-only</option>
                 <option value="operator">{ROLE_LABELS.operator}: run checks and manage alerts</option>
-                <option value="admin">{ROLE_LABELS.admin}: everything, including members</option>
+                <option value="admin">{ROLE_LABELS.admin}: everything, including users</option>
               </Select>
             )}
           </Field>
@@ -164,7 +164,7 @@ export function InvitationsCard({ resend }: { resend: ReturnType<typeof useInvit
       {invitations.isLoading ? (
         <Spinner />
       ) : !invitations.data?.length ? (
-        <EmptyState icon={<Mail className="h-6 w-6" />} title="No invitations" description="Invite people by email; they appear under Members once they accept." />
+        <EmptyState icon={<Mail className="h-6 w-6" />} title="No invitations" description="Invite people by email; they appear under Users once they accept." />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
