@@ -116,7 +116,7 @@ describe("invitations", () => {
   it("adds someone only when they accept, with an account created for the invited address", async () => {
     const sent = await alice.post("/api/invitations", { email: "Ravi@Example.com", role: "operator" });
     expect(sent.status).toBe(201);
-    expect(sent.body).toMatchObject({ outcome: "created", emailSent: true, link: expect.stringMatching(/^\/invite\//) });
+    expect(sent.body).toMatchObject({ outcome: "created", emailSent: true, link: expect.stringMatching(/^\/invite\//), url: expect.stringMatching(/^http:\/\/dashboard\.test\/invite\//) });
     const token = inviteLink("ravi@example.com");
     expect(lastMailTo("ravi@example.com")!.text).toMatch(/Test organization as Operator[\s\S]*expires in 72 hours/);
 

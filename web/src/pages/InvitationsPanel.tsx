@@ -109,7 +109,9 @@ export function useInvitations() {
 
 function InvitationLink({ email, sent }: { email: string; sent: InvitationSent }) {
   const toast = useToast();
-  const url = `${window.location.origin}${sent.link}`;
+  // The saved dashboard address (as in the email), else the address this page is open at.
+  const url = sent.url ?? `${window.location.origin}${sent.link}`;
+  const host = new URL(url).hostname;
   return (
     <div className="space-y-3">
       {sent.emailSent ? (
@@ -124,9 +126,9 @@ function InvitationLink({ email, sent }: { email: string; sent: InvitationSent }
         </>
       )}
       <p className="text-ink-secondary">It works once, only for {email}, and is shown only now. Resending makes a new link.</p>
-      {/^(localhost|127\.|\[::1\])/.test(window.location.hostname) && (
+      {/^(localhost|127\.|\[::1\])/.test(host) && (
         <p className="text-warn">
-          This link starts with {window.location.hostname}, which opens only on this computer. Open the dashboard at its network address (such as http://10.0.0.5:8080) and invite again to get a link others can open.
+          This link starts with {host}, which opens only on the server itself. Set the dashboard address to the server's network address (such as http://10.0.0.5:8080) in Settings → Email &amp; sign-in, then resend the invitation.
         </p>
       )}
       <div className="flex gap-2">

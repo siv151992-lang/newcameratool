@@ -33,6 +33,8 @@ interface Sent {
   id: string;
   /** Path of the new link, for the Org Admin to copy (shown once). */
   link: string;
+  /** The full link on the saved dashboard address, when one is set. */
+  url?: string;
   emailSent: boolean;
   emailError?: string;
   /** "created", or "resent" when an open invitation to this address already existed. */
@@ -110,7 +112,8 @@ export async function invite(orgId: string, input: z.infer<typeof inviteSchema>,
     return { id, outcome };
   });
   const mail = await deliver(orgId, input.email, input.role, token, actor.username);
-  return { id, link: invitationPath(token), emailSent: mail.sent, emailError: mail.error, outcome };
+  const url = (await publicLink(invitationPath(token))) ?? undefined;
+  return { id, link: invitationPath(token), url, emailSent: mail.sent, emailError: mail.error, outcome };
 }
 
 async function getOwn(orgId: string, id: string, db: Queryable = pool) {

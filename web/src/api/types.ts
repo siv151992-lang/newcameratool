@@ -66,6 +66,8 @@ export interface Invitation {
 export interface InvitationSent {
   id: string;
   link: string;
+  /** The full link on the saved dashboard address, when one is set. */
+  url?: string;
   emailSent: boolean;
   emailError?: string;
   outcome: "created" | "resent";
