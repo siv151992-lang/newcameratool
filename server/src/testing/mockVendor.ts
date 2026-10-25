@@ -65,11 +65,11 @@ export class MockVendorCamera {
       const from = new Date(Date.now() - 21 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
       return res.end(env(`<tse:GetRecordingSummaryResponse><tse:Summary><tt:DataFrom>${from}</tt:DataFrom><tt:DataUntil>${new Date().toISOString().replace(/\.\d{3}Z$/, "Z")}</tt:DataUntil><tt:NumberRecordings>1</tt:NumberRecordings></tse:Summary></tse:GetRecordingSummaryResponse>`));
     }
-    // Search (one recording: the last 3 days) and its replay address.
+    // Search (one recording: the last 21 days, as in the summary) and its replay address.
     if (body.includes("FindRecordings")) return res.end(env(`<tse:FindRecordingsResponse><tse:SearchToken>Search_1</tse:SearchToken></tse:FindRecordingsResponse>`));
     if (body.includes("GetRecordingSearchResults")) {
       const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
-      return res.end(env(`<tse:GetRecordingSearchResultsResponse><tse:ResultList><tt:SearchState>Completed</tt:SearchState><tt:RecordingInformation><tt:RecordingToken>Recording_1</tt:RecordingToken><tt:EarliestRecording>${iso(Date.now() - 3 * 86_400_000)}</tt:EarliestRecording><tt:LatestRecording>${iso(Date.now())}</tt:LatestRecording></tt:RecordingInformation></tse:ResultList></tse:GetRecordingSearchResultsResponse>`));
+      return res.end(env(`<tse:GetRecordingSearchResultsResponse><tse:ResultList><tt:SearchState>Completed</tt:SearchState><tt:RecordingInformation><tt:RecordingToken>Recording_1</tt:RecordingToken><tt:EarliestRecording>${iso(Date.now() - 21 * 86_400_000)}</tt:EarliestRecording><tt:LatestRecording>${iso(Date.now())}</tt:LatestRecording></tt:RecordingInformation></tse:ResultList></tse:GetRecordingSearchResultsResponse>`));
     }
     if (body.includes("EndSearch")) return res.end(env(`<tse:EndSearchResponse/>`));
     if (body.includes("GetReplayUri")) return res.end(env(`<trp:GetReplayUriResponse><trp:Uri>rtsp://camera/onvif-media/record/Recording_1</trp:Uri></trp:GetReplayUriResponse>`));

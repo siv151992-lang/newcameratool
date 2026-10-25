@@ -137,6 +137,8 @@ describe("live video", () => {
     expect(day.date).toBe(today);
     expect(day.segments.length).toBeGreaterThan(0);
     expect(day.segments[0].start).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+    const { oldest } = (await request(app).get(`/api/cameras/${id}/recordings/oldest`).set("Cookie", admin.cookie).expect(200)).body;
+    expect(oldest < `${today}T00:00:00`).toBe(true);
 
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ start: `${today}T00:30:00` }).expect(200);
@@ -158,6 +160,10 @@ describe("live video", () => {
     const localToday = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
     const day = (await request(app).get(`/api/cameras/${id}/recordings?date=${localToday}`).set("Cookie", admin.cookie).expect(200)).body;
     expect(day.segments[0].start).toBe(`${localToday}T00:00:00`);
+    // From start: the oldest recording, found by listing (Hanwha reports no recording range).
+    const { oldest } = (await request(app).get(`/api/cameras/${id}/recordings/oldest`).set("Cookie", admin.cookie).expect(200)).body;
+    expect(oldest).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+    expect(oldest.slice(0, 10) <= localToday).toBe(true);
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ start: `${localToday}T05:30:00` }).expect(200);
     const src = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))![1];

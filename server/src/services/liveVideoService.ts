@@ -142,6 +142,24 @@ export async function listRecordings(orgId: string, cameraId: string, date: stri
 }
 
 /**
+ * When the recordings on the camera begin (camera local time, YYYY-MM-DDTHH:MM:SS), or null when it
+ * holds none: from the camera's recording range where it reports one, else from its recordings of
+ * the last 400 days.
+ */
+export async function oldestRecording(orgId: string, cameraId: string): Promise<string | null> {
+  const { adapter, own, config } = await playbackAdapter(orgId, cameraId);
+  const ranged = own.getRecordingRange ? own : adapter.getRecordingRange ? adapter : undefined;
+  if (ranged) {
+    const range = await ranged.getRecordingRange!(config).catch(() => undefined);
+    if (range !== undefined) return range?.oldest ?? null;
+  }
+  const now = Date.now();
+  const list = await adapter.listRecordings!(config, now - 400 * DAY_MS, now + DAY_MS);
+  const first = list.segments[0];
+  return first ? wall(first.start) : null;
+}
+
+/**
  * Points this session's playback stream at the recordings from `start` (camera local time).
  * Returns the time playback really starts (the recording's start, for brands that play by id).
  */

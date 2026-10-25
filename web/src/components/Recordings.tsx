@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Film, Maximize2, Play, Rewind, FastForward, SkipBack, SkipForward, Square } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
 import { Button, Dialog, EmptyState, ErrorMessage, Input, Spinner } from "./ui";
@@ -62,17 +62,49 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   const from = startedAt ?? start;
   const position = from ? text(ms(from) + played * 1000) : null;
   const jump = (seconds: number) => position && play(text(Math.max(dayStart, ms(position) + seconds * 1000)));
-  // The day's first recording from its start, or the most recent minute of the last one.
-  const segments = day.data?.segments ?? [];
-  const first = segments[0];
-  const last = segments.at(-1);
-  const playFirst = () => first && play(first.start);
-  const playLatest = () =>
-    last && play(day.data?.playsFromRecordingStart ? last.start : text(Math.max(ms(last.start), ms(last.end) - 60_000)));
-  const ends = segments.length > 0 && (
+  // From start: the oldest recording on the camera; Latest: the newest minute recorded. The day is
+  // listed first, so playback knows the recordings around the time.
+  const [pending, setPending] = useState<{ kind: "oldest"; at: string } | { kind: "latest"; date: string } | null>(null);
+  const [finding, setFinding] = useState(false);
+  const goTo = (p: NonNullable<typeof pending>) => {
+    setStart(null);
+    setPending(p);
+    setDate(p.kind === "oldest" ? p.at.slice(0, 10) : p.date);
+  };
+  const playOldest = async () => {
+    setError(null);
+    setFinding(true);
+    try {
+      const { oldest } = await api<{ oldest: string | null }>(`/cameras/${cameraId}/recordings/oldest`);
+      if (oldest) goTo({ kind: "oldest", at: oldest });
+      else setError("The camera has no recordings.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setFinding(false);
+    }
+  };
+  const playLatest = () => {
+    setError(null);
+    goTo({ kind: "latest", date: (day.data?.cameraNow ?? today()).slice(0, 10) });
+  };
+  useEffect(() => {
+    if (!pending || !day.data || day.data.date !== date || date !== (pending.kind === "oldest" ? pending.at.slice(0, 10) : pending.date)) return;
+    setPending(null);
+    const segs = day.data.segments;
+    if (pending.kind === "oldest") {
+      const seg = segs.find((s) => ms(s.end) > ms(pending.at));
+      if (seg) play(text(Math.max(ms(seg.start), ms(pending.at))));
+      return;
+    }
+    const last = segs.at(-1);
+    if (!last) setError("No recordings today: pick a day to see older recordings.");
+    else play(day.data.playsFromRecordingStart ? last.start : text(Math.max(ms(last.start), ms(last.end) - 60_000)));
+  }, [pending, day.data, date]);
+  const ends = (
     <>
-      <Button size="sm" icon={<SkipBack className="h-4 w-4" />} onClick={playFirst} title={`Play the day's first recording (${clock(first!.start)})`}>From start</Button>
-      <Button size="sm" icon={<SkipForward className="h-4 w-4" />} onClick={playLatest} title={`Play the latest recording (until ${clock(last!.end)})`}>Latest</Button>
+      <Button size="sm" icon={<SkipBack className="h-4 w-4" />} onClick={() => void playOldest()} loading={finding} title="Play from the oldest recording on the camera">From start</Button>
+      <Button size="sm" icon={<SkipForward className="h-4 w-4" />} onClick={playLatest} title="Play the newest recording on the camera">Latest</Button>
     </>
   );
   const shiftDay = (days: number) => {
@@ -158,6 +190,8 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
           {error && <ErrorMessage error={new Error(error)} />}
         </div>
       )}
+
+      {error && !start && <ErrorMessage error={new Error(error)} />}
 
       {day.isLoading ? (
         <Spinner label="Searching the camera's recordings" />
