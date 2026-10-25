@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Film, Maximize2, Play, Rewind, FastForward, Square } from "lucide-react";
+import { ChevronLeft, ChevronRight, Film, Maximize2, Play, Rewind, FastForward, SkipBack, SkipForward, Square } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
@@ -62,6 +62,19 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   const from = startedAt ?? start;
   const position = from ? text(ms(from) + played * 1000) : null;
   const jump = (seconds: number) => position && play(text(Math.max(dayStart, ms(position) + seconds * 1000)));
+  // The day's first recording from its start, or the most recent minute of the last one.
+  const segments = day.data?.segments ?? [];
+  const first = segments[0];
+  const last = segments.at(-1);
+  const playFirst = () => first && play(first.start);
+  const playLatest = () =>
+    last && play(day.data?.playsFromRecordingStart ? last.start : text(Math.max(ms(last.start), ms(last.end) - 60_000)));
+  const ends = segments.length > 0 && (
+    <>
+      <Button size="sm" icon={<SkipBack className="h-4 w-4" />} onClick={playFirst} title={`Play the day's first recording (${clock(first!.start)})`}>From start</Button>
+      <Button size="sm" icon={<SkipForward className="h-4 w-4" />} onClick={playLatest} title={`Play the latest recording (until ${clock(last!.end)})`}>Latest</Button>
+    </>
+  );
   const shiftDay = (days: number) => {
     setStart(null);
     setDate(text(dayStart + days * DAY).slice(0, 10));
@@ -87,6 +100,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
         <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => shiftDay(-1)} aria-label="Previous day" />
         <Input type="date" aria-label="Day" className="w-auto" value={date} max={today()} onChange={(e) => e.target.value && (setStart(null), setDate(e.target.value))} />
         <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => shiftDay(1)} disabled={date >= today()} aria-label="Next day" />
+        {!start && ends}
         <span className="text-xs text-ink-secondary">
           Times are the camera's clock{day.data ? ` (camera time now ${day.data.cameraNow.replace("T", " ")})` : ""}.
           {day.data?.playsFromRecordingStart && " This camera plays each recording from its beginning."}
@@ -130,6 +144,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
               <span className="text-ink-secondary"> · started at {clock(from!)}</span>
             </p>
             <div className="flex flex-wrap gap-2">
+              {ends}
               {!day.data?.playsFromRecordingStart && (
                 <>
                   <Button size="sm" icon={<Rewind className="h-4 w-4" />} onClick={() => jump(-60)}>1 min back</Button>
