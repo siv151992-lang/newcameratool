@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Film, Gauge, Maximize2, Play, Rewind, FastForward, SkipBack, SkipForward, Square } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, SkipBack, SkipForward } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
 import { RecordingCalendar } from "./RecordingCalendar";
-import { ScrollingTimeline } from "./ScrollingTimeline";
+import { MilestoneTimeline, SPANS } from "./MilestoneTimeline";
 import { Button, Dialog, EmptyState, ErrorMessage, Spinner } from "./ui";
 
 interface Segment {
@@ -73,7 +73,6 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
     if (position && Math.max(v, 1) !== Math.max(speed, 1)) play(position);
     setSpeed(v);
   };
-  const jump = (seconds: number) => position && play(text(ms(position) + seconds * 1000));
   // Playing past midnight (or back before it) moves the timeline to that day; playback goes on.
   const positionDay = position?.slice(0, 10);
   useEffect(() => {
@@ -118,176 +117,203 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
     if (!last) setError("No recordings today: pick a day to see older recordings.");
     else play(day.data.playsFromRecordingStart ? last.start : text(Math.max(ms(last.start), ms(last.end) - 60_000)));
   }, [pending, day.data, date]);
-  const ends = (
-    <>
-      <Button size="sm" icon={<SkipBack className="h-4 w-4" />} onClick={() => void playOldest()} loading={finding} title="Play from the oldest recording on the camera">From start</Button>
-      <Button size="sm" icon={<SkipForward className="h-4 w-4" />} onClick={playLatest} title="Play the newest recording on the camera">Latest</Button>
-    </>
-  );
   const shiftDay = (days: number) => {
     setStart(null);
+    setCursor(null);
     setDate(text(dayStart + days * DAY).slice(0, 10));
   };
-  // The timeline shows the recorded period (first recording to last) unless the whole day is asked for.
-  const [wholeDay, setWholeDay] = useState(false);
+  // Milestone-style player: the time under the playhead is where playback is, or (paused) where it
+  // will start; the recordings slide under it.
   const daySegs = day.data?.segments ?? [];
-  const fitted = !wholeDay && daySegs.length > 0;
-  const viewFrom = fitted ? ms(daySegs[0]!.start) : dayStart;
-  const viewTo = fitted ? Math.max(ms(daySegs.at(-1)!.end), viewFrom + 60_000) : dayStart + DAY;
-  // A click on the timeline plays from there, or from the next recording after it.
-  const pick = (at: number) => {
-    const segs = day.data?.segments ?? [];
-    const inside = segs.find((s) => ms(s.start) <= at && at < ms(s.end));
-    const next = segs.find((s) => ms(s.start) > at);
-    if (inside) play(text(at));
-    else if (next) play(next.start);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [scrub, setScrub] = useState<number | null>(null);
+  const [span, setSpan] = useState(SPANS[1]!.ms);
+  useEffect(() => {
+    // A new day starts paused at its first recording.
+    if (!start && day.data?.date === date && (!cursor || cursor.slice(0, 10) !== date)) setCursor(day.data.segments[0]?.start ?? `${date}T00:00:00`);
+  }, [day.data, date, start, cursor]);
+  const head = scrub ?? (position ? ms(position) : cursor ? ms(cursor) : dayStart);
+  const segs = daySegs.map((x) => ({ start: ms(x.start), end: ms(x.end), title: `${clock(x.start)} – ${clock(x.end)}` }));
+  // Playing from a time in a gap starts at the next recording.
+  const seek = (at: number) => {
+    const inside = segs.find((x) => x.start <= at && at < x.end);
+    const next = segs.find((x) => x.start > at);
+    const t = inside ? at : next?.start;
+    if (t === undefined) return setError("No recordings after this time on this day.");
+    play(text(t));
   };
+  const pause = () => {
+    if (position) setCursor(position);
+    setStart(null);
+  };
+  const previousRecording = () => {
+    const current = [...segs].reverse().find((x) => x.start <= head - 5000);
+    if (current) play(text(current.start));
+  };
+  const nextRecording = () => {
+    const next = segs.find((x) => x.start > head + 1000);
+    if (next) play(text(next.start));
+    else setError("This is the last recording of the day.");
+  };
+  const playing = Boolean(start);
+  const fromStartOnly = day.data?.playsFromRecordingStart;
+  const readout = text(head);
 
   if (video.data && !video.data.enabled) {
     return <ErrorMessage error={new Error("Playing recordings needs the live video service (go2rtc), which is not set up on this server.")} />;
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => shiftDay(-1)} aria-label="Previous day" />
-        <RecordingCalendar cameraId={cameraId} value={date} max={today()} onChange={(d) => (setStart(null), setDate(d))} />
+        <RecordingCalendar cameraId={cameraId} value={date} max={today()} onChange={(d) => (setStart(null), setCursor(null), setDate(d))} />
         <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => shiftDay(1)} disabled={date >= today()} aria-label="Next day" />
-        {!start && ends}
+        <Button size="sm" icon={<SkipBack className="h-4 w-4" />} onClick={() => void playOldest()} loading={finding} title="Play from the oldest recording on the camera">From start</Button>
+        <Button size="sm" icon={<SkipForward className="h-4 w-4" />} onClick={playLatest} title="Play the newest recording on the camera">Latest</Button>
         <span className="text-xs text-ink-secondary">
           Times are the camera's clock{day.data ? ` (camera time now ${day.data.cameraNow.replace("T", " ")})` : ""}.
-          {day.data?.playsFromRecordingStart && " This camera plays each recording from its beginning."}
+          {fromStartOnly && " This camera plays each recording from its beginning."}
         </span>
       </div>
 
-      {/* Timeline: recorded periods in color, the playing position as a line. */}
-      <div>
-        {daySegs.length > 0 && (
-          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-ink-secondary">
-            <span className="tabular">
-              {fitted ? (
-                <>Recorded <strong className="text-ink">{clock(daySegs[0]!.start)}</strong> to <strong className="text-ink">{daySegs.at(-1)!.end.slice(0, 10) > date ? "24:00:00" : clock(daySegs.at(-1)!.end)}</strong></>
-              ) : (
-                "Whole day"
-              )}
-            </span>
-            <div className="flex rounded-md border border-line p-0.5" role="group" aria-label="Timeline range">
-              {[
-                { label: "Recorded period", whole: false },
-                { label: "Whole day", whole: true },
-              ].map((o) => (
-                <button
-                  key={o.label}
-                  type="button"
-                  aria-pressed={wholeDay === o.whole}
-                  onClick={() => setWholeDay(o.whole)}
-                  className={clsx("rounded px-2 py-0.5", wholeDay === o.whole ? "bg-accent text-white" : "hover:bg-raised")}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <ScrollingTimeline
-          from={viewFrom}
-          to={viewTo}
-          dayStart={dayStart}
-          segments={daySegs.map((x) => ({ start: ms(x.start), end: ms(x.end), title: `${clock(x.start)} – ${clock(x.end)}` }))}
-          position={position ? ms(position) : null}
-          onPick={pick}
-        />
-      </div>
-
-      {start && (
-        <div className="space-y-2">
-          <div ref={frame} className="relative mx-auto flex aspect-video max-h-[42vh] items-center justify-center overflow-hidden rounded-md bg-black">
+      {/* The player: video, the time, the timeline and the controls, dark like a recorder's. */}
+      <div ref={frame} className="space-y-2 rounded-lg bg-neutral-900 p-2 text-neutral-100 [&:fullscreen]:flex [&:fullscreen]:flex-col [&:fullscreen]:justify-end">
+        <div className="relative mx-auto flex aspect-video max-h-[46vh] w-full items-center justify-center overflow-hidden rounded bg-black [:fullscreen_&]:max-h-none [:fullscreen_&]:flex-1">
+          {playing ? (
             <LiveVideo
               key={`${start}|${Math.max(speed, 1)}`}
               cameraId={cameraId}
               name={name}
-              playbackStart={start}
+              playbackStart={start!}
               speed={speed}
               onFailed={onFailed}
               onTime={setPlayed}
               onPrepared={setStartedAt}
               onArrival={setArrival}
             />
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="tabular text-sm">
-              Playing <strong>{position?.replace("T", " ")}</strong>
-              <span className="text-ink-secondary"> · started at {clock(from!)}</span>
-            </p>
-            <div className="flex items-center gap-2 text-xs text-ink-secondary">
-              <Gauge className="h-4 w-4" aria-hidden />
-              <div className="flex rounded-md border border-line p-0.5" role="group" aria-label="Playback speed">
-                {SPEEDS.map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    aria-pressed={speed === v}
-                    onClick={() => changeSpeed(v)}
-                    className={clsx("tabular rounded px-2 py-0.5", speed === v ? "bg-accent text-white" : "hover:bg-raised")}
-                  >
-                    {v < 1 ? `${v === 0.25 ? "¼" : "½"}×` : `${v}×`}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {ends}
-              {!day.data?.playsFromRecordingStart && (
-                <>
-                  <Button size="sm" icon={<Rewind className="h-4 w-4" />} onClick={() => jump(-60)}>1 min back</Button>
-                  <Button size="sm" icon={<FastForward className="h-4 w-4" />} onClick={() => jump(60)}>1 min ahead</Button>
-                </>
-              )}
-              <Button size="sm" icon={<Maximize2 className="h-4 w-4" />} onClick={() => void frame.current?.requestFullscreen?.()}>Full screen</Button>
-              <Button size="sm" icon={<Square className="h-4 w-4" />} onClick={() => setStart(null)}>Stop</Button>
-            </div>
-          </div>
-          {speed > 1 && arrival !== null && arrival < speed * 0.6 && played > 8 && (
-            <p className="text-xs text-warn">
-              The camera is sending the recording at about {arrival < 1.3 ? "normal speed" : `${Math.round(arrival * 10) / 10}×`}: it may not support {speed}× playback.
-            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => seek(head)}
+              disabled={!daySegs.length}
+              className="flex flex-col items-center gap-2 text-neutral-300 hover:text-white disabled:opacity-40"
+            >
+              <span className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-current">
+                <Play className="ml-1 h-8 w-8" aria-hidden />
+              </span>
+              <span className="text-sm">{daySegs.length ? `Play from ${clock(readout)}` : day.isLoading ? "Searching the camera's recordings…" : "No recordings on this day"}</span>
+            </button>
           )}
-          {error && <ErrorMessage error={new Error(error)} />}
         </div>
-      )}
 
-      {error && !start && <ErrorMessage error={new Error(error)} />}
+        <div className="flex items-baseline justify-center gap-3 tabular">
+          <span className="text-sm text-neutral-400">{readout.slice(0, 10).split("-").reverse().join("-")}</span>
+          <span className="text-2xl font-semibold tracking-wide">{clock(readout)}</span>
+          <span className={clsx("rounded px-1.5 py-0.5 text-xs font-medium", playing ? "bg-red-600 text-white" : "bg-neutral-700 text-neutral-300")}>
+            {scrub !== null ? "Moving" : playing ? `Playback${speed !== 1 ? ` ${speedLabel(speed)}` : ""}` : "Paused"}
+          </span>
+        </div>
+
+        <MilestoneTimeline
+          time={head}
+          span={span}
+          min={dayStart}
+          max={Math.min(dayStart + DAY, day.data ? ms(day.data.cameraNow) : dayStart + DAY)}
+          segments={segs}
+          onSeek={seek}
+          onScrub={setScrub}
+        />
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1" role="group" aria-label="Playback controls">
+            <PlayerButton label="Previous recording" onClick={previousRecording} disabled={!segs.length}><SkipBack className="h-4 w-4" /></PlayerButton>
+            {!fromStartOnly && <PlayerButton label="1 minute back" onClick={() => seek(head - 60_000)} disabled={!segs.length}><Rewind className="h-4 w-4" /></PlayerButton>}
+            <PlayerButton label={playing ? "Pause" : "Play"} onClick={() => (playing ? pause() : seek(head))} disabled={!segs.length} primary>
+              {playing ? <Pause className="h-5 w-5" /> : <Play className="ml-0.5 h-5 w-5" />}
+            </PlayerButton>
+            {!fromStartOnly && <PlayerButton label="1 minute ahead" onClick={() => seek(head + 60_000)} disabled={!segs.length}><FastForward className="h-4 w-4" /></PlayerButton>}
+            <PlayerButton label="Next recording" onClick={nextRecording} disabled={!segs.length}><SkipForward className="h-4 w-4" /></PlayerButton>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400">
+            <label className="flex items-center gap-1.5">
+              <Gauge className="h-4 w-4" aria-hidden /> Speed
+              <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))} className="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-neutral-100">
+                {SPEEDS.map((v) => <option key={v} value={v}>{speedLabel(v)}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <Clock className="h-4 w-4" aria-hidden /> Time span
+              <select value={span} onChange={(e) => setSpan(Number(e.target.value))} className="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-neutral-100">
+                {SPANS.map((o) => <option key={o.ms} value={o.ms}>{o.label}</option>)}
+              </select>
+            </label>
+            <PlayerButton label="Full screen" onClick={() => void frame.current?.requestFullscreen?.()}><Maximize2 className="h-4 w-4" /></PlayerButton>
+          </div>
+        </div>
+        {speed > 1 && arrival !== null && arrival < speed * 0.6 && played > 8 && (
+          <p className="text-xs text-amber-300">
+            The camera is sending the recording at about {arrival < 1.3 ? "normal speed" : `${Math.round(arrival * 10) / 10}×`}: it may not support {speed}× playback.
+          </p>
+        )}
+      </div>
+
+      {error && <ErrorMessage error={new Error(error)} />}
 
       {day.isLoading ? (
         <Spinner label="Searching the camera's recordings" />
       ) : day.error ? (
         <ErrorMessage error={day.error} />
-      ) : !day.data?.segments.length ? (
+      ) : !daySegs.length ? (
         <EmptyState icon={<Film className="h-6 w-6" />} title="No recordings on this day" description="The camera's storage holds nothing recorded on this date." />
       ) : (
-        <div className="max-h-56 overflow-y-auto rounded-md border border-line">
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-surface text-xs text-ink-secondary">
-              <tr>
-                <th scope="col" className="px-3 py-2 font-medium">Recorded</th>
-                <th scope="col" className="px-3 py-2 font-medium">Length</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium"><span className="sr-only">Play</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {day.data.segments.map((s) => (
-                <tr key={s.start} className={clsx("border-t border-line", start && ms(start) >= ms(s.start) && ms(start) < ms(s.end) && "bg-accent-soft/40")}>
-                  <td className="tabular px-3 py-1.5">{clock(s.start)} – {s.end.slice(0, 10) > date ? "24:00:00" : clock(s.end)}</td>
-                  <td className="px-3 py-1.5 text-ink-secondary">{duration(s.start, s.end)}</td>
-                  <td className="px-3 py-1.5 text-right">
-                    <Button size="sm" icon={<Play className="h-4 w-4" />} onClick={() => play(s.start)}>Play</Button>
-                  </td>
+        <details className="rounded-md border border-line">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">Recordings on this day ({daySegs.length})</summary>
+          <div className="max-h-56 overflow-y-auto border-t border-line">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-surface text-xs text-ink-secondary">
+                <tr>
+                  <th scope="col" className="px-3 py-2 font-medium">Recorded</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Length</th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium"><span className="sr-only">Play</span></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {daySegs.map((x) => (
+                  <tr key={x.start} className={clsx("border-t border-line", head >= ms(x.start) && head < ms(x.end) && "bg-accent-soft/40")}>
+                    <td className="tabular px-3 py-1.5">{clock(x.start)} – {x.end.slice(0, 10) > date ? "24:00:00" : clock(x.end)}</td>
+                    <td className="px-3 py-1.5 text-ink-secondary">{duration(x.start, x.end)}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      <Button size="sm" icon={<Play className="h-4 w-4" />} onClick={() => play(x.start)}>Play</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
       )}
     </div>
+  );
+}
+
+const speedLabel = (v: number) => (v === 0.25 ? "¼×" : v === 0.5 ? "½×" : `${v}×`);
+
+/** A round control on the dark player bar. */
+function PlayerButton({ label, onClick, disabled, primary, children }: { label: string; onClick: () => void; disabled?: boolean; primary?: boolean; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className={clsx(
+        "flex items-center justify-center rounded-full transition-colors disabled:opacity-40",
+        primary ? "h-10 w-10 bg-neutral-100 text-neutral-900 hover:bg-white" : "h-8 w-8 text-neutral-200 hover:bg-neutral-700",
+      )}
+    >
+      {children}
+    </button>
   );
 }
