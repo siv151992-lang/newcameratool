@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, Download, HardDrive, MemoryStick, Plus, ShieldAlert, WifiOff } from "lucide-react";
-import type { ReactNode } from "react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, Download, HardDrive, MemoryStick, Plus, RefreshCw, ShieldAlert, WifiOff } from "lucide-react";
+import clsx from "clsx";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { Alert, Page, Summary } from "../api/types";
@@ -40,6 +41,15 @@ export function DashboardPage() {
     queryFn: () => api<Page<Alert>>("/alerts?status=open&pageSize=5"),
     refetchInterval: 30_000,
   });
+  // Refresh: reloads the figures (from the latest checks) now, instead of waiting for the next 30 s.
+  const refreshing = summary.isFetching || alerts.isFetching;
+  const refresh = () => void Promise.all([summary.refetch(), alerts.refetch()]);
+  const updatedAt = Math.max(summary.dataUpdatedAt, alerts.dataUpdatedAt);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 15_000);
+    return () => clearInterval(t);
+  }, []);
   const s = summary.data;
   const usedPct = s && s.totalBytes > 0 ? (s.usedBytes / s.totalBytes) * 100 : null;
   const icon = "h-4 w-4";
@@ -51,9 +61,19 @@ export function DashboardPage() {
         title="Dashboard"
         description="Storage health across all registered cameras. Select a tile to see those cameras."
         actions={
-          <Button icon={<Download className="h-4 w-4" />} onClick={() => report.download()} loading={report.downloading}>
-            Download status report
-          </Button>
+          <>
+            {updatedAt > 0 && (
+              <span className="self-center text-xs text-ink-secondary" aria-live="polite">
+                Updated {Date.now() - updatedAt < 10_000 ? "just now" : relativeTime(new Date(updatedAt).toISOString())}
+              </span>
+            )}
+            <Button icon={<RefreshCw className={clsx("h-4 w-4", refreshing && "animate-spin")} />} onClick={refresh} disabled={refreshing} title="Reload the dashboard now (it also updates every 30 seconds)">
+              Refresh
+            </Button>
+            <Button icon={<Download className="h-4 w-4" />} onClick={() => report.download()} loading={report.downloading}>
+              Download status report
+            </Button>
+          </>
         }
       />
       <ErrorMessage error={summary.error} className="mb-4" />
