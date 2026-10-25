@@ -28,7 +28,7 @@ import {
 import { testCameraConfig, testSavedCamera } from "../services/connectionService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
-import { listRecordings, liveVideoEnabled, oldestRecording, preparePlayback, prepareStream } from "../services/liveVideoService.js";
+import { listRecordings, liveVideoEnabled, oldestRecording, preparePlayback, recordedDays, prepareStream } from "../services/liveVideoService.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
 export const camerasRouter = Router();
@@ -172,6 +172,10 @@ camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveV
 camerasRouter.get("/:id/recordings", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const { date } = parse(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD") }), req.query);
   res.json(await listRecordings(orgOf(req), param(req), date));
+});
+camerasRouter.get("/:id/recordings/days", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+  const { month } = parse(z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Use YYYY-MM") }), req.query);
+  res.json({ month, days: await recordedDays(orgOf(req), param(req), month) });
 });
 camerasRouter.get("/:id/recordings/oldest", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   res.json({ oldest: await oldestRecording(orgOf(req), param(req)) });

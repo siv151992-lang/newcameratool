@@ -4,7 +4,8 @@ import { ChevronLeft, ChevronRight, Film, Maximize2, Play, Rewind, FastForward, 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
-import { Button, Dialog, EmptyState, ErrorMessage, Input, Spinner } from "./ui";
+import { RecordingCalendar } from "./RecordingCalendar";
+import { Button, Dialog, EmptyState, ErrorMessage, Spinner } from "./ui";
 
 interface Segment {
   start: string;
@@ -130,7 +131,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => shiftDay(-1)} aria-label="Previous day" />
-        <Input type="date" aria-label="Day" className="w-auto" value={date} max={today()} onChange={(e) => e.target.value && (setStart(null), setDate(e.target.value))} />
+        <RecordingCalendar cameraId={cameraId} value={date} max={today()} onChange={(d) => (setStart(null), setDate(d))} />
         <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => shiftDay(1)} disabled={date >= today()} aria-label="Next day" />
         {!start && ends}
         <span className="text-xs text-ink-secondary">
@@ -212,7 +213,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
             <tbody>
               {day.data.segments.map((s) => (
                 <tr key={s.start} className={clsx("border-t border-line", start && ms(start) >= ms(s.start) && ms(start) < ms(s.end) && "bg-accent-soft/40")}>
-                  <td className="tabular px-3 py-1.5">{clock(s.start)} – {clock(s.end)}</td>
+                  <td className="tabular px-3 py-1.5">{clock(s.start)} – {s.end.slice(0, 10) > date ? "24:00:00" : clock(s.end)}</td>
                   <td className="px-3 py-1.5 text-ink-secondary">{duration(s.start, s.end)}</td>
                   <td className="px-3 py-1.5 text-right">
                     <Button size="sm" icon={<Play className="h-4 w-4" />} onClick={() => play(s.start)}>Play</Button>

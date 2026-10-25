@@ -141,6 +141,31 @@ export async function listRecordings(orgId: string, cameraId: string, date: stri
   return { date, cameraNow: wall(result.nowMs), segments, playsFromRecordingStart: result.playsFromRecordingStart ?? false };
 }
 
+/** Per camera and month: the days holding recordings, kept briefly so paging the calendar is quick. */
+const dayCache = new Map<string, { at: number; days: string[] }>();
+
+/** The days of `month` (YYYY-MM, camera local time) with recordings on the camera's storage. */
+export async function recordedDays(orgId: string, cameraId: string, month: string): Promise<string[]> {
+  const key = `${cameraId}:${month}`;
+  const cached = dayCache.get(key);
+  if (cached && Date.now() - cached.at < 120_000) return cached.days;
+  const { adapter, config } = await playbackAdapter(orgId, cameraId);
+  const from = Date.parse(`${month}-01T00:00:00Z`);
+  const next = new Date(from);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  const to = next.getTime();
+  const list = await adapter.listRecordings!(config, from, to);
+  const days = new Set<string>();
+  for (const s of list.segments) {
+    // Every day the recording touches, within the month.
+    for (let d = Math.max(Math.floor(s.start / DAY_MS) * DAY_MS, from); d < Math.min(s.end, to); d += DAY_MS) days.add(wall(d).slice(0, 10));
+  }
+  const result = [...days].sort();
+  if (dayCache.size > 2000) dayCache.clear();
+  dayCache.set(key, { at: Date.now(), days: result });
+  return result;
+}
+
 /**
  * When the recordings on the camera begin (camera local time, YYYY-MM-DDTHH:MM:SS), or null when it
  * holds none: from the camera's recording range where it reports one, else from its recordings of

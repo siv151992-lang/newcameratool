@@ -139,6 +139,11 @@ describe("live video", () => {
     expect(day.segments[0].start).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
     const { oldest } = (await request(app).get(`/api/cameras/${id}/recordings/oldest`).set("Cookie", admin.cookie).expect(200)).body;
     expect(oldest < `${today}T00:00:00`).toBe(true);
+    // The calendar: days of the month with recordings.
+    const { days } = (await request(app).get(`/api/cameras/${id}/recordings/days?month=${today.slice(0, 7)}`).set("Cookie", admin.cookie).expect(200)).body;
+    expect(days).toContain(today);
+    expect(days.every((d: string) => d.startsWith(today.slice(0, 7)))).toBe(true);
+    await request(app).get(`/api/cameras/${id}/recordings/days?month=2026-13`).set("Cookie", admin.cookie).expect(400);
 
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ start: `${today}T00:30:00` }).expect(200);
