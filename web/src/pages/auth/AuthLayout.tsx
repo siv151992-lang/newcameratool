@@ -1,4 +1,4 @@
-import { BellRing, Building2, Cctv, HardDrive, Moon, Sun, Video } from "lucide-react";
+import { BellRing, Building2, Cctv, HardDrive, Moon, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -6,6 +6,7 @@ import { api } from "../../api/client";
 import type { SignInOptions } from "../../api/types";
 import { Button } from "../../components/ui";
 import { ZOHO, ZohoBand } from "../../components/ZohoBand";
+import { Brand } from "../../components/Brand";
 import { useTheme } from "../../hooks/theme";
 
 const FEATURES = [
@@ -53,11 +54,8 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
         <div aria-hidden className="pointer-events-none absolute -bottom-36 -left-20 h-96 w-96 rounded-full blur-3xl" style={{ background: ZOHO.green, opacity: 0.16 }} />
         <div aria-hidden className="pointer-events-none absolute -bottom-24 right-0 h-72 w-72 rounded-full blur-3xl" style={{ background: ZOHO.red, opacity: 0.12 }} />
 
-        <div className="relative flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/20">
-            <Video className="h-5 w-5" aria-hidden />
-          </span>
-          <span className="text-lg font-semibold tracking-tight">Zoho IBMS CCTV Monitoring</span>
+        <div className="relative">
+          <Brand onDark size="lg" />
         </div>
 
         <div className="relative space-y-8">
@@ -93,9 +91,8 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
           <Button variant="ghost" size="sm" onClick={toggle} aria-label="Toggle theme" icon={theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />} />
         </div>
         <div className="relative w-full max-w-sm">
-          <div className="mb-6 flex items-center gap-2 lg:hidden">
-            <Video className="h-6 w-6 text-accent" aria-hidden />
-            <span className="font-semibold">Zoho IBMS CCTV Monitoring</span>
+          <div className="mb-6 lg:hidden">
+            <Brand size="lg" />
           </div>
           <div className="overflow-hidden rounded-xl border border-line bg-surface/95 shadow-lg shadow-black/5 backdrop-blur">
             <ZohoBand className="h-1" />

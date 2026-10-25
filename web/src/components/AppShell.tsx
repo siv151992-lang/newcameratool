@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bell, Building2, Camera, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, Video, X } from "lucide-react";
+import { Bell, Building2, Camera, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +11,7 @@ import { useTheme } from "../hooks/theme";
 import { useToast } from "./toast";
 import { Button, Select } from "./ui";
 import { ZohoBand } from "./ZohoBand";
+import { Brand } from "./Brand";
 import { useRedirectNotice } from "../pages/ConnectedAccounts";
 
 const SIDEBAR_KEY = "cctv-sidebar-collapsed";
@@ -141,9 +142,8 @@ export function AppShell() {
           collapsed ? "w-16 px-2" : "w-60 px-4",
         )}
       >
-        <div className={clsx("mb-6 flex items-center gap-2", collapsed ? "justify-center" : "px-2")} title={collapsed ? "Zoho IBMS CCTV Monitoring" : undefined}>
-          <Video className="h-5 w-5 shrink-0 text-accent" aria-hidden />
-          {!collapsed && <span className="font-semibold leading-tight">Zoho IBMS CCTV Monitoring</span>}
+        <div className={clsx("mb-6 flex items-center", collapsed ? "justify-center" : "px-2")}>
+          <Brand compact={collapsed} />
         </div>
         {nav(collapsed)}
       </aside>
@@ -154,7 +154,7 @@ export function AppShell() {
           <div className="absolute inset-0 bg-black/50" onClick={close} aria-hidden />
           <aside className="absolute inset-y-0 left-0 w-64 border-r border-line bg-surface p-4">
             <div className="mb-6 flex items-center justify-between px-2">
-              <span className="font-semibold">Zoho IBMS CCTV Monitoring</span>
+              <Brand />
               <Button variant="ghost" size="sm" onClick={close} aria-label="Close menu" icon={<X className="h-4 w-4" />} />
             </div>
             {nav()}
@@ -175,7 +175,7 @@ export function AppShell() {
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             icon={collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
           />
-          <span className="font-semibold lg:hidden">Zoho IBMS CCTV Monitoring</span>
+          <Brand size="sm" className="lg:hidden" />
           <div className="flex min-w-0 flex-1 justify-end sm:justify-start sm:pl-2">
             <OrganizationSwitcher />
           </div>

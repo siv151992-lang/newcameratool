@@ -1,4 +1,4 @@
-import { Building2, LogOut, Mail, Video } from "lucide-react";
+import { Building2, LogOut, Mail } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api/client";
 import type { PendingInvitation } from "../api/types";
@@ -7,6 +7,7 @@ import { useToast } from "../components/toast";
 import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { relativeTime } from "../lib/format";
 import { useRedirectNotice } from "./ConnectedAccounts";
+import { Brand } from "../components/Brand";
 import { OrganizationsTab } from "./OrganizationsTab";
 
 /**
@@ -55,8 +56,7 @@ export function NoOrganizationPage() {
   return (
     <div className="min-h-screen">
       <header className="flex h-14 items-center gap-2 border-b border-line bg-surface px-4">
-        <Video className="h-5 w-5 text-accent" aria-hidden />
-        <span className="font-semibold">Zoho IBMS CCTV Monitoring</span>
+        <Brand size="sm" />
         <div className="flex-1" />
         <span className="hidden text-sm text-ink-secondary sm:inline">{user?.displayName ?? user?.username}</span>
         <Button variant="ghost" size="sm" onClick={() => void logout()} icon={<LogOut className="h-4 w-4" />}>Sign out</Button>
