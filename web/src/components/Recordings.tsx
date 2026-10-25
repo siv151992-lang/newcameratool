@@ -33,6 +33,17 @@ function duration(a: string, b: string) {
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
 }
 
+/** Timeline labels: the two ends, and round times (every 1 min to 3 h) between them. */
+function timelineTicks(from: number, to: number): number[] {
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 180].map((m) => m * 60_000);
+  const step = steps.find((s) => (to - from) / s <= 8) ?? steps.at(-1)!;
+  // The two ends always; round times in between, leaving room next to the ends.
+  const out = [from];
+  for (let t = Math.ceil(from / step) * step; t <= to; t += step) if (t - from > step / 2 && to - t > step / 2) out.push(t);
+  out.push(to);
+  return out;
+}
+
 /** The recordings on a camera's own storage: pick a day, see what was recorded, play from any time. */
 export function RecordingsDialog({ camera, onClose }: { camera: { id: string; name: string } | null; onClose: () => void }) {
   return (
@@ -112,10 +123,19 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
     setStart(null);
     setDate(text(dayStart + days * DAY).slice(0, 10));
   };
+  // The timeline shows the recorded period (first recording to last) unless the whole day is asked for.
+  const [wholeDay, setWholeDay] = useState(false);
+  const daySegs = day.data?.segments ?? [];
+  const fitted = !wholeDay && daySegs.length > 0;
+  const viewFrom = fitted ? ms(daySegs[0]!.start) : dayStart;
+  const viewTo = fitted ? Math.max(ms(daySegs.at(-1)!.end), viewFrom + 60_000) : dayStart + DAY;
+  const span = viewTo - viewFrom;
+  const pct = (t: number) => ((t - viewFrom) / span) * 100;
+  const ticks = timelineTicks(viewFrom, viewTo);
   // A click on the timeline plays from there, or from the next recording after it.
   const onTimeline = (e: React.MouseEvent<HTMLDivElement>) => {
     const box = e.currentTarget.getBoundingClientRect();
-    const at = dayStart + Math.round(((e.clientX - box.left) / box.width) * DAY / 1000) * 1000;
+    const at = viewFrom + Math.round(((e.clientX - box.left) / box.width) * span / 1000) * 1000;
     const segs = day.data?.segments ?? [];
     const inside = segs.find((s) => ms(s.start) <= at && at < ms(s.end));
     const next = segs.find((s) => ms(s.start) > at);
@@ -140,8 +160,35 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
         </span>
       </div>
 
-      {/* 24-hour timeline: recorded periods in color, the playing position as a line. */}
+      {/* Timeline: recorded periods in color, the playing position as a line. */}
       <div>
+        {daySegs.length > 0 && (
+          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-ink-secondary">
+            <span className="tabular">
+              {fitted ? (
+                <>Recorded <strong className="text-ink">{clock(daySegs[0]!.start)}</strong> to <strong className="text-ink">{daySegs.at(-1)!.end.slice(0, 10) > date ? "24:00:00" : clock(daySegs.at(-1)!.end)}</strong></>
+              ) : (
+                "Whole day"
+              )}
+            </span>
+            <div className="flex rounded-md border border-line p-0.5" role="group" aria-label="Timeline range">
+              {[
+                { label: "Recorded period", whole: false },
+                { label: "Whole day", whole: true },
+              ].map((o) => (
+                <button
+                  key={o.label}
+                  type="button"
+                  aria-pressed={wholeDay === o.whole}
+                  onClick={() => setWholeDay(o.whole)}
+                  className={clsx("rounded px-2 py-0.5", wholeDay === o.whole ? "bg-accent text-white" : "hover:bg-raised")}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div
           role="button"
           tabIndex={0}
@@ -153,16 +200,23 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
             <div
               key={s.start}
               className="absolute inset-y-1 rounded-sm bg-accent/70 hover:bg-accent"
-              style={{ left: `${((ms(s.start) - dayStart) / DAY) * 100}%`, width: `${Math.max(0.2, ((ms(s.end) - ms(s.start)) / DAY) * 100)}%` }}
+              style={{ left: `${pct(ms(s.start))}%`, width: `${Math.max(0.2, ((ms(s.end) - ms(s.start)) / span) * 100)}%` }}
               title={`${clock(s.start)} – ${clock(s.end)}`}
             />
           ))}
-          {position && position.slice(0, 10) === date && (
-            <div className="absolute inset-y-0 w-0.5 bg-bad" style={{ left: `${((ms(position) - dayStart) / DAY) * 100}%` }} aria-hidden />
+          {position && ms(position) >= viewFrom && ms(position) <= viewTo && (
+            <div className="absolute inset-y-0 w-0.5 bg-bad" style={{ left: `${pct(ms(position))}%` }} aria-hidden />
           )}
         </div>
-        <div className="mt-1 flex justify-between text-[11px] text-ink-muted tabular" aria-hidden>
-          {[0, 3, 6, 9, 12, 15, 18, 21, 24].map((h) => <span key={h}>{String(h).padStart(2, "0")}:00</span>)}
+        <div className="relative mt-1 h-4 text-[11px] text-ink-muted tabular" aria-hidden>
+          {ticks.map((t) => {
+            const left = pct(t);
+            return (
+              <span key={t} className="absolute whitespace-nowrap" style={{ left: `${left}%`, transform: `translateX(${left < 3 ? 0 : left > 97 ? -100 : -50}%)` }}>
+                {t - dayStart >= DAY ? "24:00" : text(t).slice(11, 16)}
+              </span>
+            );
+          })}
         </div>
       </div>
 
