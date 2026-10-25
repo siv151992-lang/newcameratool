@@ -73,7 +73,12 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   };
   const from = startedAt ?? start;
   const position = from ? text(ms(from) + played * 1000) : null;
-  const jump = (seconds: number) => position && play(text(Math.max(dayStart, ms(position) + seconds * 1000)));
+  const jump = (seconds: number) => position && play(text(ms(position) + seconds * 1000));
+  // Playing past midnight (or back before it) moves the timeline to that day; playback goes on.
+  const positionDay = position?.slice(0, 10);
+  useEffect(() => {
+    if (positionDay && positionDay !== date && positionDay <= today()) setDate(positionDay);
+  }, [positionDay, date]);
   // From start: the oldest recording on the camera; Latest: the newest minute recorded. The day is
   // listed first, so playback knows the recordings around the time.
   const [pending, setPending] = useState<{ kind: "oldest"; at: string } | { kind: "latest"; date: string } | null>(null);
