@@ -165,6 +165,7 @@ describe("sign in with Google and Zoho", () => {
   it("connects and disconnects providers from Settings, keeping a way to sign in", async () => {
     const agent = request.agent(app);
     const login = await agent.post("/api/auth/login").send({ username: "boss", password: PASSWORD }).expect(200);
+    await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", login.body.csrfToken).send({ password: PASSWORD }).expect(200);
     const linked = await signInWith("google", { sub: "g-boss", email: "boss@gmail.example" }, { agent, query: "?link=1" });
     expect(linked.next).toBe("/settings/account?connected=google");
     const ids = (await agent.get("/api/auth/identities")).body;
@@ -196,6 +197,7 @@ describe("sign in with Google and Zoho", () => {
   it("keeps client secrets out of the settings answers, for the system administrator only", async () => {
     const agent = request.agent(app);
     const login = await agent.post("/api/auth/login").send({ username: "boss", password: PASSWORD }).expect(200);
+    await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", login.body.csrfToken).send({ password: PASSWORD }).expect(200);
     await agent.get("/api/settings/sign-in-providers").expect(403);
     await pool.query("UPDATE users SET is_system_admin = true WHERE username = 'boss'");
     const view = (await agent.get("/api/settings/sign-in-providers").expect(200)).body;

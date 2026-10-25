@@ -175,3 +175,43 @@ export async function changeOwnPassword(userId: string, sessionId: string, curre
   // Sign out other sessions after a password change.
   await pool.query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2", [userId, sessionId]);
 }
+
+/** How long a confirmed password keeps Settings open, after the last use. */
+export const PASSWORD_CONFIRMATION_MINUTES = 15;
+
+/** Checks the user's password again and unlocks Settings in this session for a while. */
+export async function confirmPassword(userId: string, sessionId: string, password: string): Promise<Date> {
+  const { rows } = await pool.query("SELECT password_hash FROM users WHERE id = $1", [userId]);
+  if (!rows[0]?.password_hash) {
+    throw new HttpError(400, "NO_PASSWORD", "Your account signs in with Google or Zoho and has no password. Set one under your profile first.");
+  }
+  if (!(await verifyPassword(password, rows[0].password_hash))) throw new HttpError(400, "INVALID_CREDENTIALS", "Incorrect password");
+  const { rows: s } = await pool.query<{ until: Date }>(
+    `UPDATE sessions SET password_confirmed_at = now() WHERE id = $1
+     RETURNING password_confirmed_at + make_interval(mins => $2) AS until`,
+    [sessionId, PASSWORD_CONFIRMATION_MINUTES],
+  );
+  return s[0]!.until;
+}
+
+/**
+ * Until when this session's password confirmation holds, or null when it has none in force.
+ * `extend`: it is being used, so it holds for the full time again from now.
+ */
+export async function passwordConfirmedUntil(sessionId: string, extend = false): Promise<Date | null> {
+  const { rows } = await pool.query<{ until: Date }>(
+    extend
+      ? `UPDATE sessions SET password_confirmed_at = now()
+         WHERE id = $1 AND password_confirmed_at > now() - make_interval(mins => $2)
+         RETURNING password_confirmed_at + make_interval(mins => $2) AS until`
+      : `SELECT password_confirmed_at + make_interval(mins => $2) AS until FROM sessions
+         WHERE id = $1 AND password_confirmed_at > now() - make_interval(mins => $2)`,
+    [sessionId, PASSWORD_CONFIRMATION_MINUTES],
+  );
+  return rows[0]?.until ?? null;
+}
+
+/** Locks Settings again in this session. */
+export async function clearPasswordConfirmation(sessionId: string) {
+  await pool.query("UPDATE sessions SET password_confirmed_at = NULL WHERE id = $1", [sessionId]);
+}

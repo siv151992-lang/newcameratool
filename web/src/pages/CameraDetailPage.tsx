@@ -492,7 +492,7 @@ export function CameraDetailPage() {
 
 /** Why the camera password falls short of the policy, and when it was last changed. */
 function PasswordDetail({ camera: c }: { camera: CameraDetail }) {
-  const policy = useQuery({ queryKey: ["camera-password-policy"], queryFn: () => api<CameraPasswordPolicyView>("/settings/camera-password-policy"), staleTime: 60_000 });
+  const policy = useQuery({ queryKey: ["camera-password-rules"], queryFn: () => api<Pick<CameraPasswordPolicyView, "policy">>("/settings/camera-password-rules"), staleTime: 60_000 });
   const p = policy.data?.policy;
   return (
     <>

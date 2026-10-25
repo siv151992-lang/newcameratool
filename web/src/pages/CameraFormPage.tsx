@@ -355,7 +355,7 @@ export function CameraFormPage() {
 
 /** The camera password against the organization's policy, as it is typed. */
 function PasswordChecklist({ password, username }: { password: string; username: string }) {
-  const policy = useQuery({ queryKey: ["camera-password-policy"], queryFn: () => api<CameraPasswordPolicyView>("/settings/camera-password-policy"), staleTime: 60_000 });
+  const policy = useQuery({ queryKey: ["camera-password-rules"], queryFn: () => api<Pick<CameraPasswordPolicyView, "policy">>("/settings/camera-password-rules"), staleTime: 60_000 });
   const p = policy.data?.policy;
   if (!p) return null;
   const checks = previewChecks(password, username, p);

@@ -13,6 +13,8 @@ const app = createApp();
 async function signIn(username: string) {
   const agent = request.agent(app);
   const res = await agent.post("/api/auth/login").send({ username, password: PASSWORD }).expect(200);
+  // Settings are locked until the password is entered again: open them, as a user would.
+  await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", res.body.csrfToken).send({ password: PASSWORD }).expect(200);
   const csrf = res.body.csrfToken as string;
   return {
     agent,

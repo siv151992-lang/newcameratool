@@ -29,7 +29,12 @@ function client() {
     post: (url: string, body: object = {}) => agent.post(url).set("X-CSRF-Token", csrf).send(body).then(remember),
     patch: (url: string, body: object) => agent.patch(url).set("X-CSRF-Token", csrf).send(body),
     csrf: () => csrf,
-    login: (username: string, password = PASSWORD) => agent.post("/api/auth/login").send({ username, password }).then(remember),
+    // After signing in, Settings are opened with the password, as a user would.
+    login: (username: string, password = PASSWORD) =>
+      agent.post("/api/auth/login").send({ username, password }).then(remember).then(async (r) => {
+        if (r.status === 200) await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", csrf).send({ password });
+        return r;
+      }),
   };
 }
 

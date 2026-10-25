@@ -1,6 +1,6 @@
 import { type Request, Router } from "express";
 import { z } from "zod";
-import { actorOf, orgOf, requirePermission } from "../auth/middleware.js";
+import { actorOf, orgOf, requirePasswordConfirmation, requirePasswordForChanges, requirePermission } from "../auth/middleware.js";
 import { SYSTEM_PERMISSION } from "../auth/sessions.js";
 import { HttpError } from "../lib/errors.js";
 import { pool } from "../db/pool.js";
@@ -60,6 +60,8 @@ brandsRouter.get("/", requirePermission("cameras:read"), async (req, res) => {
 });
 
 export const settingsRouter = Router();
+// Settings are locked: changes need the user's password confirmed recently (POST /auth/confirm-password).
+settingsRouter.use(requirePasswordForChanges);
 // Thresholds and detection are the organization's; worker capacity, timeouts and retention are server-wide.
 settingsRouter.get("/monitoring", requirePermission("settings:read"), async (req, res) => {
   res.setHeader("X-Organization-Settings", ORGANIZATION_SETTING_KEYS.join(","));
@@ -75,8 +77,13 @@ settingsRouter.patch("/monitoring", requirePermission("settings:write"), async (
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.monitoring_updated", entityType: "settings", entityId: "monitoring", details: patch });
   res.json(updated);
 });
+// The rules alone, for the checklist when a camera password is typed: not locked.
+settingsRouter.get("/camera-password-rules", requirePermission("cameras:read"), async (req, res) => {
+  res.json({ policy: await getCameraPasswordPolicy(orgOf(req)) });
+});
 // The standard for the cameras' own passwords, per organization; counts show how many cameras fall short.
-settingsRouter.get("/camera-password-policy", requirePermission("cameras:read"), async (req, res) => {
+// Also reading it is locked.
+settingsRouter.get("/camera-password-policy", requirePermission("cameras:read"), requirePasswordConfirmation, async (req, res) => {
   res.json({ policy: await getCameraPasswordPolicy(orgOf(req)), counts: await cameraPasswordCounts(orgOf(req)) });
 });
 settingsRouter.patch("/camera-password-policy", requirePermission("settings:write"), async (req, res) => {
@@ -166,6 +173,8 @@ settingsRouter.post("/notifications/:id/test", requirePermission("settings:write
 /** Members of the current organization, managed by its Org Admins. */
 export const usersRouter = Router();
 usersRouter.use(requirePermission("users:manage"));
+// Settings are locked: changes need the user's password confirmed recently (POST /auth/confirm-password).
+usersRouter.use(requirePasswordForChanges);
 usersRouter.get("/", async (req, res) => {
   res.json(await listMembers(orgOf(req)));
 });
@@ -185,6 +194,8 @@ usersRouter.delete("/:id", async (req, res) => {
 /** Invitations into the current organization: people join only when they accept. */
 export const invitationsRouter = Router();
 invitationsRouter.use(requirePermission("users:manage"));
+// Settings are locked: changes need the user's password confirmed recently (POST /auth/confirm-password).
+invitationsRouter.use(requirePasswordForChanges);
 invitationsRouter.get("/", async (req, res) => {
   res.json(await listInvitations(orgOf(req)));
 });
@@ -207,6 +218,8 @@ invitationsRouter.post("/:id/revoke", async (req, res) => {
 /** Organizations, managed by the system administrator. */
 export const organizationsRouter = Router();
 organizationsRouter.use(requirePermission(SYSTEM_PERMISSION));
+// Settings are locked: changes need the user's password confirmed recently (POST /auth/confirm-password).
+organizationsRouter.use(requirePasswordForChanges);
 organizationsRouter.get("/", async (_req, res) => {
   res.json(await listOrganizations());
 });

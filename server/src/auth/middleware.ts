@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { HttpError } from "../lib/errors.js";
 import type { Actor } from "../services/auditService.js";
-import { type AuthContext, getSession, SESSION_COOKIE, SYSTEM_PERMISSION } from "./sessions.js";
+import { type AuthContext, getSession, passwordConfirmedUntil, SESSION_COOKIE, SYSTEM_PERMISSION } from "./sessions.js";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -45,6 +45,26 @@ export function requirePermission(permission: string) {
     }
     next();
   };
+}
+
+/**
+ * Settings are locked: the user must have entered their password again in this session recently.
+ * Each use keeps it open (like sudo), so it locks after a while without settings work.
+ */
+export async function requirePasswordConfirmation(req: Request, _res: Response, next: NextFunction) {
+  if (!req.auth) return next(new HttpError(401, "UNAUTHENTICATED", "Please sign in"));
+  try {
+    if (await passwordConfirmedUntil(req.auth.sessionId, true)) return next();
+    next(new HttpError(403, "PASSWORD_CONFIRMATION_REQUIRED", "Settings are locked. Enter your password to open them."));
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Changes need the password confirmation; reading does not (other pages read some settings). */
+export function requirePasswordForChanges(req: Request, res: Response, next: NextFunction) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  void requirePasswordConfirmation(req, res, next);
 }
 
 /** The current user, recorded in audit entries under the organization the session works in. */

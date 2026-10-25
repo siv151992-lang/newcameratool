@@ -3,7 +3,7 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { requireAuth, requireCsrf } from "../auth/middleware.js";
 import type { Request, Response } from "express";
-import { changeOwnPassword, listMemberships, login, logout, SESSION_COOKIE, startSession, switchOrganization } from "../auth/sessions.js";
+import { changeOwnPassword, clearPasswordConfirmation, confirmPassword, listMemberships, passwordConfirmedUntil, login, logout, SESSION_COOKIE, startSession, switchOrganization } from "../auth/sessions.js";
 import { emailSchema } from "../services/userService.js";
 import {
   requestPasswordReset,
@@ -193,6 +193,30 @@ authRouter.post("/logout", requireAuth, requireCsrf, async (req, res) => {
   await logout(req.auth!.sessionId);
   res.clearCookie(SESSION_COOKIE, { path: "/" });
   res.status(204).end();
+});
+
+/** Whether Settings are open in this session, and until when. */
+authRouter.get("/confirm-password", requireAuth, async (req, res) => {
+  const until = await passwordConfirmedUntil(req.auth!.sessionId);
+  res.json({ until: until?.toISOString() ?? null });
+});
+/** Locks Settings again. */
+authRouter.delete("/confirm-password", requireAuth, requireCsrf, async (req, res) => {
+  await clearPasswordConfirmation(req.auth!.sessionId);
+  res.status(204).end();
+});
+/** Confirms the user's password again, opening Settings for a while. */
+authRouter.post("/confirm-password", requireAuth, requireCsrf, loginLimiter, async (req, res) => {
+  const { password } = parse(z.object({ password: z.string().min(1).max(200) }).strict(), req.body);
+  const actor = { id: req.auth!.user.id, username: req.auth!.user.username };
+  try {
+    const until = await confirmPassword(req.auth!.user.id, req.auth!.sessionId, password);
+    await audit({ actor, ip: req.ip, action: "auth.password_confirmed", entityType: "user", entityId: actor.id });
+    res.json({ until: until.toISOString() });
+  } catch (err) {
+    await audit({ actor, ip: req.ip, action: "auth.password_confirmation_failed", entityType: "user", entityId: actor.id });
+    throw err;
+  }
 });
 
 authRouter.post("/password", requireAuth, requireCsrf, loginLimiter, async (req, res) => {

@@ -24,6 +24,7 @@ export function CameraPasswordsTab() {
     mutationFn: (p: CameraPasswordPolicy) => api<CameraPasswordPolicyView>("/settings/camera-password-policy", { method: "PATCH", body: p }),
     onSuccess: (r) => {
       qc.setQueryData(["camera-password-policy"], r);
+      void qc.invalidateQueries({ queryKey: ["camera-password-rules"] });
       void qc.invalidateQueries({ queryKey: ["cameras"] });
       setDraft(r.policy);
       toast("success", "Camera password policy saved; all cameras were checked again");

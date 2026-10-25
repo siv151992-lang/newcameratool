@@ -14,6 +14,8 @@ async function signIn(role: "admin" | "operator" | "viewer") {
   const { username } = await createTestUser(role);
   const agent = request.agent(app);
   const res = await agent.post("/api/auth/login").send({ username, password: PASSWORD }).expect(200);
+  // Settings are locked until the password is entered again: open them, as a user would.
+  await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", res.body.csrfToken).send({ password: PASSWORD }).expect(200);
   return { agent, csrf: res.body.csrfToken as string };
 }
 

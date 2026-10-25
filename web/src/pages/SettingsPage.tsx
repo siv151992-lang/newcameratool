@@ -11,6 +11,7 @@ import { useAiStatus } from "../hooks/ai";
 import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { PALETTES, type ThemeMode, useTheme } from "../hooks/theme";
 import { ZohoBand } from "../components/ZohoBand";
+import { SettingsLock } from "../components/SettingsLock";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
 import { EmailSettingsTab } from "./EmailSettingsTab";
@@ -52,13 +53,15 @@ function useSections(): Section[] {
 export function SettingsPage() {
   const sections = useSections();
   return (
-    <Routes>
-      <Route index element={<SettingsOverview sections={sections} />} />
-      {sections.map((s) => (
-        <Route key={s.path} path={`${s.path}/*`} element={<SectionLayout sections={sections} current={s} />} />
-      ))}
-      <Route path="*" element={<Navigate to="/settings" replace />} />
-    </Routes>
+    <SettingsLock>
+      <Routes>
+        <Route index element={<SettingsOverview sections={sections} />} />
+        {sections.map((s) => (
+          <Route key={s.path} path={`${s.path}/*`} element={<SectionLayout sections={sections} current={s} />} />
+        ))}
+        <Route path="*" element={<Navigate to="/settings" replace />} />
+      </Routes>
+    </SettingsLock>
   );
 }
 

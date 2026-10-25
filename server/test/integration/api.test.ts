@@ -14,7 +14,9 @@ async function signIn(role: "admin" | "operator" | "viewer", opts: { systemAdmin
   const { username } = await createTestUser(role, undefined, undefined, opts);
   const agent = request.agent(app);
   const res = await agent.post("/api/auth/login").send({ username, password: PASSWORD }).expect(200);
-  return { agent, csrf: res.body.csrfToken as string };
+  // Settings are locked until the password is entered again: open them, as a user would.
+  await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", res.body.csrfToken).send({ password: PASSWORD }).expect(200);
+  return { agent, csrf: res.body.csrfToken as string, username };
 }
 
 const cameraBody = () => ({
@@ -261,13 +263,37 @@ describe("camera priority", () => {
 
 describe("camera password policy", () => {
   it("flags weak and old camera passwords, filters them, and blocks them when the policy says so", async () => {
-    const { agent, csrf } = await signIn("admin");
+    const { agent, csrf, username } = await signIn("admin");
     const weak = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), password: "lobbycam77" }).expect(201)).body.id;
     const strong = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Gate", host: "127.0.0.2", password: "Gate#Cam2026x" }).expect(201)).body.id;
     expect((await agent.get(`/api/cameras/${weak}`).expect(200)).body.password).toMatchObject({ status: "weak", issues: ["few_char_types"] });
     expect((await agent.get(`/api/cameras/${strong}`).expect(200)).body.password.status).toBe("ok");
     expect((await agent.get("/api/cameras?password=weak").expect(200)).body.items.map((c: { id: string }) => c.id)).toEqual([weak]);
+    await agent.delete("/api/auth/confirm-password").set("X-CSRF-Token", csrf).expect(204);
+    expect((await agent.get("/api/auth/confirm-password").expect(200)).body.until).toBeNull();
+    // Locked Settings: every change is refused, reading other settings still works.
+    expect((await agent.patch("/api/settings/monitoring").set("X-CSRF-Token", csrf).send({ warningThreshold: 70 }).expect(403)).body.error.code).toBe("PASSWORD_CONFIRMATION_REQUIRED");
+    await agent.post("/api/users").set("X-CSRF-Token", csrf).send({}).expect(403);
+    await agent.patch("/api/ai/settings").set("X-CSRF-Token", csrf).send({ enabled: true }).expect(403);
+    await agent.get("/api/settings/monitoring").expect(200);
+    // The rules for typing a camera password stay readable; the page itself is locked until the
+    // user enters their password again.
+    expect((await agent.get("/api/settings/camera-password-rules").expect(200)).body.policy.minLength).toBe(8);
+    expect((await agent.get("/api/settings/camera-password-policy").expect(403)).body.error.code).toBe("PASSWORD_CONFIRMATION_REQUIRED");
+    await agent.patch("/api/settings/camera-password-policy").set("X-CSRF-Token", csrf).send({ minLength: 10 }).expect(403);
+    await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", csrf).send({ password: "wrong" }).expect(400);
+    await agent.get("/api/settings/camera-password-policy").expect(403);
+    const { until } = (await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", csrf).send({ password: PASSWORD }).expect(200)).body;
+    expect(Date.parse(until) - Date.now()).toBeGreaterThan(14 * 60_000);
+    expect((await agent.get("/api/auth/confirm-password").expect(200)).body.until).toBe(until);
     expect((await agent.get("/api/settings/camera-password-policy").expect(200)).body.counts).toEqual({ ok: 1, weak: 1, expired: 0 });
+    // Only for this session, and only for a while.
+    const other = request.agent(app);
+    await other.post("/api/auth/login").send({ username, password: PASSWORD }).expect(200);
+    await other.get("/api/settings/camera-password-policy").expect(403);
+    await pool.query("UPDATE sessions SET password_confirmed_at = now() - interval '16 minutes' WHERE password_confirmed_at IS NOT NULL");
+    await agent.get("/api/settings/camera-password-policy").expect(403);
+    await agent.post("/api/auth/confirm-password").set("X-CSRF-Token", csrf).send({ password: PASSWORD }).expect(200);
 
     // Older than the maximum age: due a change.
     await pool.query("UPDATE camera_credentials SET password_changed_at = now() - interval '100 days' WHERE camera_id = $1", [strong]);
