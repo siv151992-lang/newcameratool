@@ -16,6 +16,8 @@ export function LiveVideo({
   playbackStart,
   onTime,
   onPrepared,
+  speed = 1,
+  onArrival,
 }: {
   cameraId: string;
   name: string;
@@ -26,11 +28,21 @@ export function LiveVideo({
   onTime?: (seconds: number) => void;
   /** The time playback really starts at (cameras that play a recording from its start). */
   onPrepared?: (start: string) => void;
+  /**
+   * Playback speed. Slower than normal is done here; faster is asked of the camera when the stream
+   * is opened, and played at the pace the camera really sends.
+   */
+  speed?: number;
+  /** How fast (× normal) the camera is sending the recording, measured while playing faster. */
+  onArrival?: (rate: number) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   // Read at call time, so a new callback does not restart the stream.
   const prepared = useRef(onPrepared);
   prepared.current = onPrepared;
+  const rate = useRef({ speed, onArrival });
+  rate.current = { speed, onArrival };
+  const fast = speed > 1 ? speed : 1;
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,8 +64,10 @@ export function LiveVideo({
       const ranges = buffer.buffered;
       if (ranges.length > 0) {
         const end = ranges.end(ranges.length - 1);
-        if (end - el.currentTime > 3) el.currentTime = end - 0.5; // fell behind: jump to live
-        if (end - ranges.start(0) > 30) return buffer.remove(ranges.start(0), end - 15);
+        if (!playbackStart && end - el.currentTime > 3) el.currentTime = end - 0.5; // fell behind: jump to live
+        // Drop what has been played (recordings may be played slowly, so not what is still ahead).
+        const keepFrom = playbackStart ? el.currentTime - 10 : end - 15;
+        if (keepFrom - ranges.start(0) > 15) return buffer.remove(ranges.start(0), keepFrom);
       }
       const next = queue.shift();
       if (next) buffer.appendBuffer(next);
@@ -69,7 +83,7 @@ export function LiveVideo({
     void (async () => {
       try {
         if (playbackStart) {
-          const r = await api<{ start?: string }>(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart } });
+          const r = await api<{ start?: string }>(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart, ...(fast > 1 ? { speed: fast } : {}) } });
           if (r.start) prepared.current?.(r.start);
         }
         else await api(`/cameras/${cameraId}/live/prepare`, { method: "POST" });
@@ -112,13 +126,37 @@ export function LiveVideo({
         );
     })();
 
+    // Playback speed: slower is the browser's; faster plays at the pace the camera sends, which is
+    // measured from how quickly video arrives, keeping a few seconds in hand.
+    let last: { at: number; end: number } | null = null;
+    let arrival = 1;
+    const pace = setInterval(() => {
+      if (!playbackStart || !buffer || buffer.buffered.length === 0) return;
+      const end = buffer.buffered.end(buffer.buffered.length - 1);
+      const { speed: wanted, onArrival: report } = rate.current;
+      if (wanted <= 1 || fast <= 1) {
+        el.playbackRate = Math.min(wanted, 1);
+        return;
+      }
+      const now = performance.now();
+      if (last && now - last.at > 900) {
+        arrival = arrival * 0.6 + ((end - last.end) / ((now - last.at) / 1000)) * 0.4;
+        report?.(arrival);
+      }
+      if (!last || now - last.at > 900) last = { at: now, end };
+      const ahead = end - el.currentTime;
+      const target = arrival * (ahead > 4 ? 1.15 : ahead < 1 ? 0.8 : 1);
+      el.playbackRate = Math.min(16, Math.max(0.5, target));
+    }, 1000);
+
     return () => {
+      clearInterval(pace);
       stopped = true;
       ws?.close();
       el.removeAttribute("src");
       el.load();
     };
-  }, [cameraId, onFailed, playbackStart]);
+  }, [cameraId, onFailed, playbackStart, fast]);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center">

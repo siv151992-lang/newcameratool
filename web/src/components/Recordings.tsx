@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Film, Maximize2, Play, Rewind, FastForward, SkipBack, SkipForward, Square } from "lucide-react";
+import { ChevronLeft, ChevronRight, Film, Gauge, Maximize2, Play, Rewind, FastForward, SkipBack, SkipForward, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
@@ -25,6 +25,8 @@ const ms = (t: string) => Date.parse(`${t}Z`);
 const text = (m: number) => new Date(m).toISOString().slice(0, 19);
 const clock = (t: string) => t.slice(11, 19);
 const DAY = 86_400_000;
+/** Playback speeds: slower is the browser's, faster is asked of the camera. */
+const SPEEDS = [0.25, 0.5, 1, 2, 4, 8, 16];
 const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -46,6 +48,8 @@ export function RecordingsDialog({ camera, onClose }: { camera: { id: string; na
 function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) {
   const [date, setDate] = useState(today);
   const [start, setStart] = useState<string | null>(null);
+  const [speed, setSpeed] = useState(1);
+  const [arrival, setArrival] = useState<number | null>(null);
   const [played, setPlayed] = useState(0);
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +67,12 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   };
   const from = startedAt ?? start;
   const position = from ? text(ms(from) + played * 1000) : null;
+  // Slower than normal changes at once; faster (asked of the camera) restarts from where it is.
+  const changeSpeed = (v: number) => {
+    setArrival(null);
+    if (position && Math.max(v, 1) !== Math.max(speed, 1)) play(position);
+    setSpeed(v);
+  };
   const jump = (seconds: number) => position && play(text(ms(position) + seconds * 1000));
   // Playing past midnight (or back before it) moves the timeline to that day; playback goes on.
   const positionDay = position?.slice(0, 10);
@@ -192,13 +202,39 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
       {start && (
         <div className="space-y-2">
           <div ref={frame} className="relative mx-auto flex aspect-video max-h-[42vh] items-center justify-center overflow-hidden rounded-md bg-black">
-            <LiveVideo key={start} cameraId={cameraId} name={name} playbackStart={start} onFailed={onFailed} onTime={setPlayed} onPrepared={setStartedAt} />
+            <LiveVideo
+              key={`${start}|${Math.max(speed, 1)}`}
+              cameraId={cameraId}
+              name={name}
+              playbackStart={start}
+              speed={speed}
+              onFailed={onFailed}
+              onTime={setPlayed}
+              onPrepared={setStartedAt}
+              onArrival={setArrival}
+            />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="tabular text-sm">
               Playing <strong>{position?.replace("T", " ")}</strong>
               <span className="text-ink-secondary"> · started at {clock(from!)}</span>
             </p>
+            <div className="flex items-center gap-2 text-xs text-ink-secondary">
+              <Gauge className="h-4 w-4" aria-hidden />
+              <div className="flex rounded-md border border-line p-0.5" role="group" aria-label="Playback speed">
+                {SPEEDS.map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={speed === v}
+                    onClick={() => changeSpeed(v)}
+                    className={clsx("tabular rounded px-2 py-0.5", speed === v ? "bg-accent text-white" : "hover:bg-raised")}
+                  >
+                    {v < 1 ? `${v === 0.25 ? "¼" : "½"}×` : `${v}×`}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               {ends}
               {!day.data?.playsFromRecordingStart && (
@@ -211,6 +247,11 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
               <Button size="sm" icon={<Square className="h-4 w-4" />} onClick={() => setStart(null)}>Stop</Button>
             </div>
           </div>
+          {speed > 1 && arrival !== null && arrival < speed * 0.6 && played > 8 && (
+            <p className="text-xs text-warn">
+              The camera is sending the recording at about {arrival < 1.3 ? "normal speed" : `${Math.round(arrival * 10) / 10}×`}: it may not support {speed}× playback.
+            </p>
+          )}
           {error && <ErrorMessage error={new Error(error)} />}
         </div>
       )}

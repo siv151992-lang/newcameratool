@@ -188,7 +188,7 @@ export async function oldestRecording(orgId: string, cameraId: string): Promise<
  * Points this session's playback stream at the recordings from `start` (camera local time).
  * Returns the time playback really starts (the recording's start, for brands that play by id).
  */
-export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string): Promise<string> {
+export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string, speed = 1): Promise<string> {
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Playing recordings needs the live video service (go2rtc), which is not set up on this server");
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
   const local = Date.parse(`${start}Z`);
@@ -199,7 +199,12 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
   const utcSegment = segment && { ...segment, start: segment.start - shift, end: segment.end - shift };
   const name = playbackStreamName(cameraId, sessionId);
   if (adapter.playbackRtspPath) {
-    await putStream(name, rtspUrl(config, adapter.playbackRtspPath(local - shift, utcSegment)));
+    const path = adapter.playbackRtspPath(local - shift, utcSegment);
+    // Faster than normal: through the relay, which asks the camera for it (RTSP Scale).
+    const src = speed > 1
+      ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password, onvif: false, scale: speed })
+      : rtspUrl(config, path);
+    await putStream(name, src);
     return fromStart ? wall(segment.start) : start;
   }
   // ONVIF replay: go2rtc plays through the relay, which adds the start time the camera needs.
@@ -218,7 +223,9 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
     path: `${uri.pathname}${uri.search}`,
     username: config.username,
     password: config.password,
+    onvif: true,
     startUtcMs: startUtc,
+    scale: speed > 1 ? speed : undefined,
   });
   await putStream(name, relayed);
   return wall(startUtc + shift);

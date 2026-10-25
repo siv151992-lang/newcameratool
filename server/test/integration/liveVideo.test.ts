@@ -154,6 +154,15 @@ describe("live video", () => {
     expect(go2rtc.wsPaths).toEqual([`/api/ws?src=${name}`]);
     expect((await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.playback'")).rows).toEqual([{ details: { start: `${today}T00:30:00` } }]);
 
+    // Faster than normal goes through the relay, which asks the camera for it.
+    await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ start: `${today}T00:30:00`, speed: 4 }).expect(200);
+    const fast = [...go2rtc.streams].find(([n]) => n === name)![1];
+    expect(fast).toMatch(/^rtsp:\/\/127\.0\.0\.1:8554\/r\/[A-Za-z0-9_-]{24}\/Streaming\/tracks\/101\?starttime=/);
+    expect(fast).not.toContain("Cam");
+    await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ start: `${today}T00:30:00`, speed: 3 }).expect(400);
+
     const viewer = await sessionCookie("viewer");
     await request(app).get(`/api/cameras/${id}/recordings?date=${today}`).set("Cookie", viewer.cookie).expect(403);
   });

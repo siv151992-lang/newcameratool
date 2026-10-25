@@ -10,6 +10,10 @@ import { hostGuard } from "../security/hostGuardInstance.js";
  * this relay passes the RTSP connection on to the camera, adding them. It also answers the
  * camera's login with the stored credentials, so go2rtc never sees them.
  *
+ * It also plays recordings faster (2× to 16×) for any brand: go2rtc cannot ask for that either, so
+ * fast playback goes through here and the relay adds Scale to PLAY; a camera that refuses it plays
+ * at normal speed.
+ *
  * Each playback gets its own address, rtsp://<relay>/r/<random token>/<camera path>: the token
  * picks the camera, start time and credentials, and the relay only ever connects to that camera.
  */
@@ -18,12 +22,16 @@ export interface ReplayTarget {
   /** The camera's own address (the host in the camera's reply is never used). */
   host: string;
   port: number;
-  /** Path and query of the replay address the camera gave (GetReplayUri). */
+  /** Path and query of the playback address (for ONVIF, the one the camera gave in GetReplayUri). */
   path: string;
   username: string;
   password: string;
-  /** Where playback starts, in UTC epoch ms. */
-  startUtcMs: number;
+  /** ONVIF replay: adds Require: onvif-replay, and Range from startUtcMs. */
+  onvif: boolean;
+  /** Where ONVIF playback starts, in UTC epoch ms. */
+  startUtcMs?: number;
+  /** Playback speed asked of the camera (RTSP Scale), above 1. */
+  scale?: number;
 }
 
 const TOKEN_TTL_MS = 12 * 3_600_000;
@@ -114,7 +122,7 @@ function relayConnection(client: net.Socket) {
   let challenge: { scheme: "digest" | "basic"; params: Record<string, string> } | undefined;
   let nc = 0;
   /** Requests waiting for the camera to answer, by CSeq, to resend once after a login challenge. */
-  const pending = new Map<string, { message: RtspMessage; retried: boolean }>();
+  const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean }>();
   /** Messages for the camera before its connection is up. */
   let queue: Buffer[] | undefined = [];
   let fromClient: Buffer = Buffer.alloc(0);
@@ -147,16 +155,21 @@ function relayConnection(client: net.Socket) {
     }
   };
 
-  /** Sends a request on to the camera: its address, the login and, for replay, the two headers. */
-  const sendRequest = (m: RtspMessage) => {
+  /** Sends a request on to the camera: its address, the login, the replay headers and the speed. */
+  const sendRequest = (m: RtspMessage, unscaled = false) => {
     const [method = "", uri = "", version = "RTSP/1.0"] = m.first.split(" ");
     const cameraUri = uri === "*" ? uri : cameraOrigin + (uri.slice(relayPrefix.length) || "/");
     const out: RtspMessage = { first: `${method} ${cameraUri} ${version}`, headers: m.headers.filter(([k]) => k.toLowerCase() !== "authorization"), body: m.body };
-    if (["DESCRIBE", "SETUP", "PLAY", "PAUSE"].includes(method.toUpperCase())) setHeader(out, "Require", "onvif-replay");
-    if (method.toUpperCase() === "PLAY") setHeader(out, "Range", `clock=${clockTime(target!.startUtcMs)}-`);
+    const play = method.toUpperCase() === "PLAY";
+    if (target!.onvif) {
+      if (["DESCRIBE", "SETUP", "PLAY", "PAUSE"].includes(method.toUpperCase())) setHeader(out, "Require", "onvif-replay");
+      if (play && target!.startUtcMs !== undefined) setHeader(out, "Range", `clock=${clockTime(target!.startUtcMs)}-`);
+    }
+    const scaled = play && !unscaled && (target!.scale ?? 1) > 1;
+    if (scaled) setHeader(out, "Scale", target!.scale!.toFixed(1));
     authorize(out, method, cameraUri);
     const cseq = header(m, "CSeq");
-    if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false });
+    if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled });
     toCamera(serialize(out));
   };
 
@@ -174,9 +187,16 @@ function relayConnection(client: net.Socket) {
       if (digest || basic) {
         challenge = digest ? { scheme: "digest", params: parseChallenge(digest) } : { scheme: "basic", params: {} };
         pending.set(cseq!, { message: request.message, retried: true });
-        sendRequest(request.message);
+        sendRequest(request.message, request.unscaled);
         return;
       }
+    }
+    // The camera refused to play faster: play at normal speed instead.
+    if (request?.scaled && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
+      logger.info({ status: m.first, host: target?.host }, "Recording playback: the camera refused fast playback; playing at normal speed");
+      pending.set(cseq!, { ...request, scaled: false, unscaled: true });
+      sendRequest(request.message, true);
+      return;
     }
     for (const name of ["Content-Base", "Content-Location", "RTP-Info"]) {
       const v = header(m, name);

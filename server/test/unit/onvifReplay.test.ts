@@ -56,6 +56,7 @@ describe("ONVIF recordings (Profile G)", () => {
 
 /** A replay server that insists on digest login, Require: onvif-replay and a clock Range. */
 function fakeReplayCamera() {
+  const options = { refuseScale: false };
   const requests: { first: string; headers: Record<string, string> }[] = [];
   const md5 = (s: string) => createHash("md5").update(s).digest("hex");
   const server = net.createServer((socket) => {
@@ -72,15 +73,17 @@ function fakeReplayCamera() {
         const expected = md5(`${md5("admin:cam:secret")}:n0nce:${md5(`${method}:${digestUri}`)}`);
         if (method !== "OPTIONS" && (auth !== expected || digestUri !== uri)) return send("401 Unauthorized", ['WWW-Authenticate: Digest realm="cam", nonce="n0nce"']);
         if (method === "OPTIONS") return send("200 OK", ["Public: DESCRIBE, SETUP, PLAY, TEARDOWN"]);
-        if (headers.require !== "onvif-replay") return send("551 Option not supported");
+        const onvif = uri!.includes("/onvif-media");
+        if (onvif && headers.require !== "onvif-replay") return send("551 Option not supported");
         if (method === "DESCRIBE") {
           const sdp = "v=0\r\ns=replay\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:rtsp://192.168.1.99/onvif-media/record/Rec1/track1\r\n";
           return send("200 OK", ["Content-Type: application/sdp", "Content-Base: rtsp://192.168.1.99/onvif-media/record/Rec1/"], sdp);
         }
         if (method === "SETUP") return send("200 OK", ["Session: 1234", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
         if (method === "PLAY") {
-          if (!/^clock=\d{8}T\d{6}Z-$/.test(headers.range ?? "")) return send("457 Invalid Range");
-          send("200 OK", ["Session: 1234"]);
+          if (onvif && !/^clock=\d{8}T\d{6}Z-$/.test(headers.range ?? "")) return send("457 Invalid Range");
+          if (headers.scale && options.refuseScale) return send("551 Option not supported");
+          send("200 OK", ["Session: 1234", ...(headers.scale ? [`Scale: ${headers.scale}`] : [])]);
           socket.write(Buffer.from([0x24, 0, 0, 3, 1, 2, 3]));
           return;
         }
@@ -88,7 +91,37 @@ function fakeReplayCamera() {
       }, () => undefined);
     });
   });
-  return { server, requests };
+  return { server, requests, options };
+}
+
+/** A minimal RTSP client, like go2rtc: sends requests one at a time and collects replies and data. */
+function rtspClient(port: number) {
+  const socket = net.connect(port, "127.0.0.1");
+  let buf: Buffer = Buffer.alloc(0);
+  const replies: { first: string; headers: Record<string, string> }[] = [];
+  const frames: Buffer[] = [];
+  let wake = () => {};
+  socket.on("data", (c) => {
+    buf = readRtsp(Buffer.concat([buf, c]), (m) => replies.push({ first: m.first, headers: Object.fromEntries(m.headers.map(([k, v]) => [k.toLowerCase(), v])) }), (f) => frames.push(Buffer.from(f)));
+    wake();
+  });
+  const until = (ok: () => boolean) => new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timed out")), 3000);
+    wake = () => void (ok() && (clearTimeout(t), resolve()));
+    wake();
+  });
+  let cseq = 0;
+  return {
+    frames,
+    until,
+    close: () => socket.destroy(),
+    request: async (method: string, uri: string, extra: string[] = []) => {
+      const n = replies.length;
+      socket.write([`${method} ${uri} RTSP/1.0`, `CSeq: ${++cseq}`, ...extra, "", ""].join("\r\n"));
+      await until(() => replies.length > n);
+      return replies.at(-1)!;
+    },
+  };
 }
 
 describe("Replay relay", () => {
@@ -112,7 +145,7 @@ describe("Replay relay", () => {
 
   it("plays a recording from the chosen time, logging in and adding the replay headers", async () => {
     const start = Date.parse("2026-10-24T10:15:00Z");
-    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "playback_x", { host: "127.0.0.1", port: camPort, path: "/onvif-media/record/Rec1", username: "admin", password: "secret", startUtcMs: start });
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "playback_x", { host: "127.0.0.1", port: camPort, path: "/onvif-media/record/Rec1", username: "admin", password: "secret", onvif: true, startUtcMs: start });
     expect(url).toMatch(new RegExp(`^rtsp://127.0.0.1:${relayPort}/r/[A-Za-z0-9_-]{24}/onvif-media/record/Rec1$`));
     const prefix = url.slice(0, url.indexOf("/onvif-media"));
 
@@ -156,6 +189,26 @@ describe("Replay relay", () => {
     expect(play.headers.require).toBe("onvif-replay");
     expect(cam.requests.find((r) => r.first.startsWith("SETUP") && r.headers.authorization)!.first).toBe(`SETUP rtsp://127.0.0.1:${camPort}/onvif-media/record/Rec1/track1 RTSP/1.0`);
     socket.destroy();
+  });
+
+  it("plays faster for any brand by asking the camera (Scale), and at normal speed when it refuses", async () => {
+    for (const refuse of [false, true]) {
+      cam.options.refuseScale = refuse;
+      cam.requests.length = 0;
+      const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, `fast_${refuse}`, { host: "127.0.0.1", port: camPort, path: "/plain/track?start=1", username: "admin", password: "secret", onvif: false, scale: 4 });
+      const c = rtspClient(relayPort);
+      expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
+      expect((await c.request("SETUP", `${url}/track1`)).first).toBe("RTSP/1.0 200 OK");
+      const play = await c.request("PLAY", url, ["Session: 1234"]);
+      expect(play.first).toBe("RTSP/1.0 200 OK");
+      expect(play.headers.scale).toBe(refuse ? undefined : "4.0");
+      await c.until(() => c.frames.length > 0);
+      const plays = cam.requests.filter((r) => r.first.startsWith("PLAY") && r.headers.authorization);
+      expect(plays.map((r) => r.headers.scale)).toEqual(refuse ? ["4.0", undefined] : ["4.0"]);
+      // Not ONVIF: no replay headers.
+      expect(plays.every((r) => !r.headers.require && !r.headers.range)).toBe(true);
+      c.close();
+    }
   });
 
   it("refuses unknown playback addresses", async () => {

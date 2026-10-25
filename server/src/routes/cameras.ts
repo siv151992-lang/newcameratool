@@ -181,9 +181,16 @@ camerasRouter.get("/:id/recordings/oldest", requirePermission("cameras:live"), l
   res.json({ oldest: await oldestRecording(orgOf(req), param(req)) });
 });
 camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
-  const { start } = parse(z.object({ start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS") }).strict(), req.body);
-  const from = await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start);
-  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from } });
+  const { start, speed } = parse(
+    z.object({
+      start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS"),
+      // Faster than normal is asked of the camera; slower is done by the browser.
+      speed: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8), z.literal(16)]).optional(),
+    }).strict(),
+    req.body,
+  );
+  const from = await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start, speed);
+  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from, ...(speed && speed > 1 ? { speed } : {}) } });
   res.json({ ok: true, start: from });
 });
 
