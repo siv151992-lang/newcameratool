@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
 import { RecordingCalendar } from "./RecordingCalendar";
+import { ScrollingTimeline } from "./ScrollingTimeline";
 import { Button, Dialog, EmptyState, ErrorMessage, Spinner } from "./ui";
 
 interface Segment {
@@ -31,17 +32,6 @@ const today = () => {
 function duration(a: string, b: string) {
   const min = Math.round((ms(b) - ms(a)) / 60_000);
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
-}
-
-/** Timeline labels: the two ends, and round times (every 1 min to 3 h) between them. */
-function timelineTicks(from: number, to: number): number[] {
-  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 180].map((m) => m * 60_000);
-  const step = steps.find((s) => (to - from) / s <= 8) ?? steps.at(-1)!;
-  // The two ends always; round times in between, leaving room next to the ends.
-  const out = [from];
-  for (let t = Math.ceil(from / step) * step; t <= to; t += step) if (t - from > step / 2 && to - t > step / 2) out.push(t);
-  out.push(to);
-  return out;
 }
 
 /** The recordings on a camera's own storage: pick a day, see what was recorded, play from any time. */
@@ -134,13 +124,8 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   const fitted = !wholeDay && daySegs.length > 0;
   const viewFrom = fitted ? ms(daySegs[0]!.start) : dayStart;
   const viewTo = fitted ? Math.max(ms(daySegs.at(-1)!.end), viewFrom + 60_000) : dayStart + DAY;
-  const span = viewTo - viewFrom;
-  const pct = (t: number) => ((t - viewFrom) / span) * 100;
-  const ticks = timelineTicks(viewFrom, viewTo);
   // A click on the timeline plays from there, or from the next recording after it.
-  const onTimeline = (e: React.MouseEvent<HTMLDivElement>) => {
-    const box = e.currentTarget.getBoundingClientRect();
-    const at = viewFrom + Math.round(((e.clientX - box.left) / box.width) * span / 1000) * 1000;
+  const pick = (at: number) => {
     const segs = day.data?.segments ?? [];
     const inside = segs.find((s) => ms(s.start) <= at && at < ms(s.end));
     const next = segs.find((s) => ms(s.start) > at);
@@ -194,35 +179,14 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
             </div>
           </div>
         )}
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="Timeline of the day: click to play from that time"
-          onClick={onTimeline}
-          className="relative h-9 cursor-pointer overflow-hidden rounded-md border border-line bg-raised"
-        >
-          {day.data?.segments.map((s) => (
-            <div
-              key={s.start}
-              className="absolute inset-y-1 rounded-sm bg-accent/70 hover:bg-accent"
-              style={{ left: `${pct(ms(s.start))}%`, width: `${Math.max(0.2, ((ms(s.end) - ms(s.start)) / span) * 100)}%` }}
-              title={`${clock(s.start)} – ${clock(s.end)}`}
-            />
-          ))}
-          {position && ms(position) >= viewFrom && ms(position) <= viewTo && (
-            <div className="absolute inset-y-0 w-0.5 bg-bad" style={{ left: `${pct(ms(position))}%` }} aria-hidden />
-          )}
-        </div>
-        <div className="relative mt-1 h-4 text-[11px] text-ink-muted tabular" aria-hidden>
-          {ticks.map((t) => {
-            const left = pct(t);
-            return (
-              <span key={t} className="absolute whitespace-nowrap" style={{ left: `${left}%`, transform: `translateX(${left < 3 ? 0 : left > 97 ? -100 : -50}%)` }}>
-                {t - dayStart >= DAY ? "24:00" : text(t).slice(11, 16)}
-              </span>
-            );
-          })}
-        </div>
+        <ScrollingTimeline
+          from={viewFrom}
+          to={viewTo}
+          dayStart={dayStart}
+          segments={daySegs.map((x) => ({ start: ms(x.start), end: ms(x.end), title: `${clock(x.start)} – ${clock(x.end)}` }))}
+          position={position ? ms(position) : null}
+          onPick={pick}
+        />
       </div>
 
       {start && (
