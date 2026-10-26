@@ -115,11 +115,18 @@ describe("parseStorageXml", () => {
   });
 });
 
+describe("an empty SD slot", () => {
+  it("is no storage device, not a failed one", () => {
+    const xml = `<storage version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><hddList><hdd><id>1</id><hddName>hdd1</hddName><status>notexist</status><capacity>0</capacity><freeSpace>0</freeSpace><property>RW</property></hdd></hddList></storage>`;
+    expect(parseStorageXml(xml).devices).toEqual([]);
+  });
+});
+
 describe("mapHikvisionStatus", () => {
   it.each([
     ["ok", "healthy"], ["OK", "healthy"], ["idle", "healthy"],
     ["formating", "degraded"], ["reparing", "degraded"],
-    ["error", "unhealthy"], ["unformatted", "unhealthy"], ["smartFailed", "unhealthy"], ["notexist", "unhealthy"],
+    ["error", "unhealthy"], ["unformatted", "unhealthy"], ["smartFailed", "unhealthy"],
     ["somethingNew", "unknown"], [undefined, "unknown"],
   ])("%s → %s", (raw, expected) => {
     expect(mapHikvisionStatus(raw)).toBe(expected);

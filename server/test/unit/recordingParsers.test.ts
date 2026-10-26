@@ -3,8 +3,8 @@ import { parseAxisRecording } from "../../src/integrations/axis/parser.js";
 import { parseDahuaRecording } from "../../src/integrations/dahua/parser.js";
 import { parseRecordingStatusXml } from "../../src/integrations/hikvision/parser.js";
 import { parseOnvifRecording } from "../../src/integrations/onvif/parser.js";
-import { combineRecording, flagToRecordingState } from "../../src/integrations/recording.js";
-import { CameraApiError } from "../../src/integrations/types.js";
+import { combineRecording, flagToRecordingState, reconcileRecording } from "../../src/integrations/recording.js";
+import { CameraApiError, type StorageDeviceStatus } from "../../src/integrations/types.js";
 import { parseUniviewRecording } from "../../src/integrations/uniview/parser.js";
 
 const errorCode = (fn: () => unknown) => {
@@ -150,5 +150,26 @@ describe("ONVIF recording jobs", () => {
     const fault = `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><s:Fault><s:Code><s:Value>s:Receiver</s:Value>
       <s:Subcode><s:Value>ter:ActionNotSupported</s:Value></s:Subcode></s:Code></s:Fault></s:Body></s:Envelope>`;
     expect(errorCode(() => parseOnvifRecording(fault))).toBe("API_UNAVAILABLE");
+  });
+});
+
+describe("recording status against the storage read in the same check", () => {
+  const on = { state: "recording" as const, channels: [], detail: "status: recording" };
+  const card = (d: Partial<StorageDeviceStatus>): StorageDeviceStatus => ({ id: "sd1", healthStatus: "healthy", ...d });
+
+  it("is a recording error when no card is installed, the card failed or it is read-only", () => {
+    expect(reconcileRecording(on, { devices: [] })).toMatchObject({ state: "error", detail: "recording is on, but no SD card or disk is installed, so nothing is being recorded (status: recording)" });
+    expect(reconcileRecording(on, { devices: [card({ healthStatus: "unhealthy", rawStatus: "error" })] }).state).toBe("error");
+    expect(reconcileRecording(on, { devices: [card({ writable: false })] })).toMatchObject({ state: "error", detail: expect.stringContaining("read-only") });
+  });
+
+  it("stays recording while one storage device can be written", () => {
+    expect(reconcileRecording(on, { devices: [card({ healthStatus: "unhealthy" }), card({ id: "sd2" })] })).toBe(on);
+    expect(reconcileRecording(on, { devices: [card({ healthStatus: "degraded" })] })).toBe(on);
+  });
+
+  it("leaves other states as they are", () => {
+    const idle = { state: "idle" as const, channels: [] };
+    expect(reconcileRecording(idle, { devices: [] })).toBe(idle);
   });
 });

@@ -1,7 +1,7 @@
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { combineRecording, recordingMapper } from "../recording.js";
 import { aggregate } from "../storageMath.js";
-import { parseBoolean } from "../parsing.js";
+import { isAbsentStatus, parseBoolean } from "../parsing.js";
 import {
   CameraApiError,
   type DeviceHealth,
@@ -36,7 +36,7 @@ const parser = new XMLParser({
 const HEALTHY = new Set(["ok", "idle", "normal", "inuse", "sleep", "sleeping"]);
 const DEGRADED = new Set(["formating", "formatting", "reparing", "repairing", "initializing"]);
 const UNHEALTHY = new Set([
-  "error", "unformatted", "uninitialized", "mismatch", "offline", "smartfailed", "notexist",
+  "error", "unformatted", "uninitialized", "mismatch", "offline", "smartfailed",
   "abnormal", "exception", "unrecordhostformatted", "nospace", "readonly", "damaged", "fault",
 ]);
 
@@ -138,7 +138,9 @@ export function parseStorageXml(xml: string): StorageReading {
     ...list(root, "hddList", "hdd").map((n, i) => parseDevice(n, "hdd", i)),
     ...list(root, "nasList", "nas").map((n, i) => parseDevice(n, "nas", i)),
   ];
-  return aggregate(devices);
+  // An empty slot (no SD card inserted: status "notexist") is no storage device, as for every brand,
+  // not a failed one.
+  return aggregate(devices.filter((d) => !isAbsentStatus(d.rawStatus)));
 }
 
 /** Parses GET /ISAPI/System/deviceInfo. */

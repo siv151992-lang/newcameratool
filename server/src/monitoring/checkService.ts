@@ -13,6 +13,7 @@ import {
   type RecordingReading,
   type StorageReading,
 } from "../integrations/types.js";
+import { reconcileRecording } from "../integrations/recording.js";
 import { sleep } from "../lib/concurrency.js";
 import { logger } from "../lib/logger.js";
 import type { Notifier } from "../notifications/notifier.js";
@@ -154,7 +155,7 @@ export async function runCheck(
       attempts = n;
       result = { ok: true, reading: value };
       recording = local
-        ? await readRecording(adapter, cfg)
+        ? reconcileRecording(await readRecording(adapter, cfg), value)
         : { state: "unknown", channels: [], detail: "No local storage: this camera records elsewhere (e.g. an NVR)" };
       if (row.device_type === "nvr") channels = await readChannels(adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);

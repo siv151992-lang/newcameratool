@@ -1,4 +1,4 @@
-import type { RecordingChannelStatus, RecordingReading, RecordingState } from "./types.js";
+import type { RecordingChannelStatus, RecordingReading, RecordingState, StorageReading } from "./types.js";
 
 /**
  * Combines per-channel recording states into one camera state: recording if any channel
@@ -48,5 +48,27 @@ export function recordingMapper(table: { recording: string[]; idle: string[]; er
     if (sets.idle.has(s)) return "idle";
     if (sets.error.has(s)) return "error";
     return "unknown";
+  };
+}
+
+/**
+ * Checks a "recording" status against the storage read in the same check. Many cameras report
+ * recording as switched on (schedule active) whatever the card's state, so a camera whose SD card
+ * is missing, failed or read-only would show as recording while nothing can be written: that is a
+ * recording error. Other states are returned as they are.
+ */
+export function reconcileRecording(recording: RecordingReading, storage: StorageReading): RecordingReading {
+  if (recording.state !== "recording") return recording;
+  const devices = storage.devices;
+  const why =
+    devices.length === 0 ? "no SD card or disk is installed"
+    : devices.every((d) => d.healthStatus === "unhealthy") ? "its storage reports an error"
+    : devices.every((d) => d.writable === false || d.healthStatus === "unhealthy") ? "its storage is read-only"
+    : undefined;
+  if (!why) return recording;
+  return {
+    ...recording,
+    state: "error",
+    detail: `recording is on, but ${why}, so nothing is being recorded${recording.detail ? ` (${recording.detail})` : ""}`.slice(0, 500),
   };
 }

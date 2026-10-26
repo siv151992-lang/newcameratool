@@ -232,7 +232,11 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   if (rec && rec.state !== "unknown") {
     evaluated.push("not_recording");
     const reported = rec.detail ? ` Camera reports ${rec.detail}.` : "";
-    if (settings.recordingAlertsEnabled && rec.state === "error") {
+    // A missing, failed or read-only card already has its own alert, which says why nothing is recorded.
+    const explained = active.some((a) => a.type === "no_storage_device" || a.type === "disk_unhealthy" || a.type === "disk_readonly");
+    if (settings.recordingAlertsEnabled && rec.state === "error" && explained) {
+      // one alert for one problem
+    } else if (settings.recordingAlertsEnabled && rec.state === "error") {
       active.push({ type: "not_recording", severity: "critical", title: "Recording error", description: `The camera reports a recording error.${reported}`, context: { state: rec.state } });
     } else if (settings.recordingAlertsEnabled && rec.state === "idle") {
       active.push({ type: "not_recording", severity: "warning", title: "Camera not recording", description: `The camera is not recording right now.${reported}`, context: { state: rec.state } });

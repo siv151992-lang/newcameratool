@@ -113,6 +113,9 @@ describe("storage checks", () => {
     const id = await addCamera();
     await runCheck(id, "manual", deps);
     expect((await status(id)).storage_health).toBe("critical");
+    // The camera says it records, but its only card failed: a recording error, explained by the one disk alert.
+    expect((await status(id)).recording_state).toBe("error");
+    expect((await status(id)).recording_detail).toMatch(/^recording is on, but its storage reports an error/);
     expect(await alerts(id)).toEqual([{ type: "disk_unhealthy", severity: "critical", status: "active", occurrence_count: 1 }]);
   });
 

@@ -23,7 +23,8 @@ const count = Math.min(Number(values.count), 20);
 const scenarios: { label: string; recording?: string; disks: MockDisk[] }[] = [
   { label: "healthy (46% used)", disks: [{ id: 1, name: "hdde", status: "ok", capacityMb: 121942, freeMb: 65580, property: "RW", formatType: "EXT4" }] },
   { label: "nearly full (95% used)", disks: [{ id: 1, name: "hdde", status: "ok", capacityMb: 121942, freeMb: 5632, property: "RW", formatType: "EXT4" }] },
-  { label: "disk error, recording error", recording: "error", disks: [{ id: 1, name: "hdde", status: "error", capacityMb: 60906, freeMb: 0, property: "RW" }] },
+  // Like many cameras: recording stays "on" although the card failed (the app reports a recording error).
+  { label: "disk error, still says recording", recording: "recording", disks: [{ id: 1, name: "hdde", status: "error", capacityMb: 60906, freeMb: 0, property: "RW" }] },
   {
     label: "two disks, not recording",
     recording: "idle",
