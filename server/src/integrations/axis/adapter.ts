@@ -27,6 +27,8 @@ export class AxisAdapter implements CameraBrandAdapter {
 
   /** Live video: the second (sub) stream, which is H.264 on most models. */
   readonly rtspPath = "/axis-media/media.amp?videocodec=h264";
+  /** The default codec when H.264 is not offered. */
+  readonly rtspFallbacks = ["/axis-media/media.amp"];
 
   /** The current picture for the live view (VAPIX JPEG image). */
   getSnapshot(camera: CameraConfig) {

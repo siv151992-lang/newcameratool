@@ -31,6 +31,8 @@ export class HanwhaAdapter implements CameraBrandAdapter {
 
   /** Live video: the second (sub) stream, which is H.264 on most models. */
   readonly rtspPath = "/profile2/media.smp";
+  /** The first profile, or the channel-prefixed path of multi-channel models. */
+  readonly rtspFallbacks = ["/profile1/media.smp", "/0/profile2/media.smp"];
 
   /** The current picture for the live view (SUNAPI snapshot). */
   getSnapshot(camera: CameraConfig) {

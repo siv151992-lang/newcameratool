@@ -75,6 +75,8 @@ export class HikvisionAdapter implements CameraBrandAdapter {
 
   /** Live video: the second (sub) stream, which is H.264 on most models. */
   readonly rtspPath = "/Streaming/Channels/102";
+  /** The main stream when the sub stream is off. */
+  readonly rtspFallbacks = ["/Streaming/Channels/101", "/ISAPI/Streaming/channels/102"];
 
   /** The current picture for the live view (Main stream of channel 1). */
   getSnapshot(camera: CameraConfig) {

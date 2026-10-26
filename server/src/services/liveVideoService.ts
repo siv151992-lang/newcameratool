@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "../config.js";
 import { registry } from "../integrations/registry.js";
-import type { CameraConfig, RecordingList } from "../integrations/types.js";
+import type { CameraBrandAdapter, CameraConfig, RecordingList } from "../integrations/types.js";
 import { HttpError } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
 import { getCameraConfig, getCameraRow } from "./cameraService.js";
 import { onvifAdapter } from "./liveViewService.js";
 import { getMonitoringSettings } from "./settingsService.js";
 import { registerReplay } from "./rtspReplayRelay.js";
+import { probeReason, probeRtsp } from "./rtspProbe.js";
 
 /**
  * Smooth live video through go2rtc (LIVE_VIDEO_URL): the server registers the camera's RTSP stream
@@ -58,7 +59,7 @@ export async function prepareStream(orgId: string, cameraId: string): Promise<st
   const { requestTimeoutMs } = await getMonitoringSettings();
   const config = await getCameraConfig(cameraId, requestTimeoutMs);
   let src: string;
-  if (adapter.rtspPath) src = rtspUrl(config, adapter.rtspPath);
+  if (adapter.rtspPath) src = await chooseLiveSource(cameraId, adapter, config);
   else {
     // Asked from the camera (ONVIF), for ONVIF cameras and brands without a stream path of their own.
     const via = adapter.liveRtspUrl ? adapter : onvifAdapter();
@@ -79,6 +80,57 @@ export async function prepareStream(orgId: string, cameraId: string): Promise<st
   await putStream(name, src);
   registered.set(name, hash);
   return name;
+}
+
+/** Per camera: the live address that answered, for a while, so opening the view stays quick. */
+const liveSources = new Map<string, { key: string; src: string; at: number }>();
+const LIVE_SOURCE_TTL_MS = 10 * 60_000;
+
+/**
+ * The live address to give go2rtc: the brand's stream path, or the first of its other paths (and
+ * then the address the camera gives over ONVIF) that the camera really serves. Each is checked with
+ * an RTSP DESCRIBE, so a camera whose usual stream is off or named differently still plays, and
+ * one that refuses them all is explained (login refused, or no such stream).
+ */
+async function chooseLiveSource(cameraId: string, adapter: CameraBrandAdapter, config: CameraConfig): Promise<string> {
+  const paths = [adapter.rtspPath!, ...(adapter.rtspFallbacks ?? [])];
+  const key = createHash("sha256").update(JSON.stringify([config.host, config.username, config.password, paths])).digest("hex");
+  const cached = liveSources.get(cameraId);
+  if (cached && cached.key === key && Date.now() - cached.at < LIVE_SOURCE_TTL_MS) return cached.src;
+  const remember = (src: string) => {
+    if (liveSources.size > 5000) liveSources.clear();
+    liveSources.set(cameraId, { key, src, at: Date.now() });
+    return src;
+  };
+  const tried: { path: string; status: number }[] = [];
+  for (const path of paths) {
+    const status = await probeRtsp({ host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password }).catch(() => 0);
+    tried.push({ path, status });
+    if (status === 200) return remember(rtspUrl(config, path));
+    // No answer at all: the RTSP port is not reachable from here; let the video service try as before.
+    if (status === 0) return rtspUrl(config, adapter.rtspPath!);
+  }
+  // Last, the address the camera itself gives over ONVIF.
+  const onvif = onvifAdapter();
+  if (onvif?.liveRtspUrl) {
+    try {
+      const uri = new URL(await onvif.liveRtspUrl(config));
+      const path = `${uri.pathname}${uri.search}`;
+      const status = await probeRtsp({ host: config.host, port: uri.port ? Number(uri.port) : RTSP_PORT, path, username: config.username, password: config.password }).catch(() => 0);
+      tried.push({ path: `${path} (ONVIF)`, status });
+      if (status === 200) return remember(withCredentials(uri.toString(), config));
+    } catch {
+      // ONVIF is optional
+    }
+  }
+  logger.warn({ cameraId, tried }, "Live video: the camera served none of its stream addresses");
+  const refused = tried.find((t) => t.status === 401 || t.status === 403);
+  throw new HttpError(
+    422,
+    "LIVE_VIDEO_UNAVAILABLE",
+    `The camera's video could not be opened: ${probeReason(refused?.status ?? tried[0]!.status)}. Tried ${tried.map((t) => `${t.path} (${t.status || "no answer"})`).join(", ")}.` +
+      (refused ? "" : " Turn on a stream in H.264 in the camera's video settings, or turn on ONVIF."),
+  );
 }
 
 /** Adds (or replaces) a go2rtc stream. */

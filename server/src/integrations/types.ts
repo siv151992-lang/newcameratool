@@ -222,6 +222,8 @@ export interface CameraBrandAdapter {
   liveRtspUrl?(camera: CameraConfig): Promise<string>;
   /** Optional: the RTSP path of a stream browsers can play (H.264, usually the second stream), for live video. */
   readonly rtspPath?: string;
+  /** Optional: other RTSP paths to try for live video when rtspPath does not answer (other streams, models or firmware). */
+  readonly rtspFallbacks?: readonly string[];
   /** Optional: the current picture, for the live view. */
   getSnapshot?(camera: CameraConfig): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
 }

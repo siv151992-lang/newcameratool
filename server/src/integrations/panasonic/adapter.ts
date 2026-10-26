@@ -29,6 +29,8 @@ export class PanasonicAdapter implements CameraBrandAdapter {
 
   /** Live video: the second (sub) stream, which is H.264 on most models. */
   readonly rtspPath = "/MediaInput/h264/stream_2";
+  /** Newer models and firmware name streams without the codec, or use stream 1 when stream 2 is off. */
+  readonly rtspFallbacks = ["/MediaInput/h264/stream_1", "/MediaInput/stream_2", "/MediaInput/stream_1", "/MediaInput/h265/stream_2"];
 
   /** The current picture for the live view (JPEG at 1280 wide). */
   getSnapshot(camera: CameraConfig) {

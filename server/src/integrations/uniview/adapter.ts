@@ -38,6 +38,8 @@ export class UniviewAdapter implements CameraBrandAdapter {
 
   /** Live video: the second (sub) stream, which is H.264 on most models. */
   readonly rtspPath = "/media/video2";
+  /** The main stream, or the path of other firmware. */
+  readonly rtspFallbacks = ["/media/video1", "/unicast/c1/s1/live"];
 
   /** The current picture for the live view (LAPI, channel 0 main stream). */
   getSnapshot(camera: CameraConfig) {
