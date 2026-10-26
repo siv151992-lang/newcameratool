@@ -111,7 +111,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
     return this.either(
       camera,
       async () => parseDahuaStorage(await this.getText(camera, DAHUA_STORAGE_PATH)),
-      (base) => this.rpc.withSession(camera, base, async (s) => parseRpcStorage(await this.rpc.call(camera, base, s, "storage.getDeviceAllInfo"))),
+      (base) => this.rpc.withSession(camera, base, async (s) => parseRpcStorage(await this.rpc.storage(camera, base, s))),
     );
   }
 

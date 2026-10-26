@@ -9,7 +9,7 @@ const md5 = (s: string) => createHash("md5").update(s).digest("hex").toUpperCase
 const camera: CameraConfig = { host: "10.251.130.50", port: 443, protocol: "https", username: "admin", password: "Cp-Pass-123", timeoutMs: 5000 };
 
 /** Like a CP Plus CP-UNC-TC81ZL6C-VMD-LQ: /cgi-bin is 404, the web page's RPC API is /cpapi2. */
-function cpPlus() {
+function cpPlus(needsObject = false) {
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   const http = {
     request: async (_cfg: CameraConfig, req: CameraRequest) => {
@@ -24,7 +24,10 @@ function cpPlus() {
       }
       if (req.path === "/cpapi2") {
         if (body.session !== "S1") return json({ result: false, error: { code: 287637505, message: "Invalid session" } });
+        if (body.method === "storage.factory.instance") return json({ result: 7 });
+        if (body.method === "storage.destroy") return json({ result: true });
         if (body.method === "storage.getDeviceAllInfo") {
+          if (needsObject && body.object !== 7) return json({ result: false, error: { code: 268959743, message: "" } });
           return json({ result: true, params: { info: [{ Name: "/dev/mmc0", State: "Success", Detail: [{ Path: "/mnt/sd", Type: "ReadWrite", TotalBytes: 255_870_000_000, UsedBytes: 0, IsError: false }] }] } });
         }
         if (body.method === "magicBox.getSystemInfo") return json({ result: true, params: { deviceType: "CP-UNC-TC81ZL6C-VMD-LQ", serialNumber: "CP0001" } });
@@ -55,6 +58,15 @@ describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
     expect(calls.filter((c) => c.body.method === "global.logout")).toHaveLength(2);
     // CGI is tried once; the camera is then known to use /cpapi2.
     expect(calls.filter((c) => c.path.startsWith("/cgi-bin/"))).toHaveLength(1);
+  });
+
+  it("reads the disks through a storage object when the camera wants one", async () => {
+    const { http, calls } = cpPlus(true);
+    const storage = await new DahuaAdapter(http).getStorageStatus(camera);
+    expect(storage.devices).toHaveLength(1);
+    expect(calls.map((c) => c.body.method).filter((m) => String(m).startsWith("storage."))).toEqual([
+      "storage.getDeviceAllInfo", "storage.factory.instance", "storage.getDeviceAllInfo", "storage.destroy",
+    ]);
   });
 
   it("reports a refused login", async () => {

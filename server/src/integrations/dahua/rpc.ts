@@ -77,15 +77,38 @@ export class DahuaRpc {
     return String(reply.session ?? session);
   }
 
-  /** Calls a method in a session; throws on an error reply. */
-  async call(camera: CameraConfig, base: RpcBase, session: string, method: string, params: unknown = null): Promise<Record<string, unknown>> {
-    const reply = await this.post(camera, base, { method, params, session });
+  private async send(camera: CameraConfig, base: RpcBase, session: string, method: string, params: unknown, object?: unknown): Promise<RpcReply> {
+    const reply = await this.post(camera, base, { method, params, session, ...(object !== undefined ? { object } : {}) });
     if (reply.result === false || reply.error) {
-      const msg = reply.error?.message ?? "the call was refused";
+      const msg = reply.error?.message || "the call was refused";
       const code = reply.error?.code === 287637505 || /no.?session|invalid session/i.test(msg) ? "AUTH_FAILED" : "API_ERROR";
       throw new CameraApiError(code, `The camera refused ${method}: ${msg}`);
     }
-    return reply.params ?? {};
+    return reply;
+  }
+
+  /** Calls a method in a session (on an object made by a factory, if given); throws on an error reply. */
+  async call(camera: CameraConfig, base: RpcBase, session: string, method: string, params: unknown = null, object?: unknown): Promise<Record<string, unknown>> {
+    return (await this.send(camera, base, session, method, params, object)).params ?? {};
+  }
+
+  /**
+   * The disks (storage.getDeviceAllInfo). Some firmware answers it directly; others, like the CP Plus
+   * web page, first make a storage object (storage.factory.instance) and call it on that object.
+   */
+  async storage(camera: CameraConfig, base: RpcBase, session: string): Promise<Record<string, unknown>> {
+    try {
+      return await this.call(camera, base, session, "storage.getDeviceAllInfo");
+    } catch (err) {
+      if (err instanceof CameraApiError && err.code === "AUTH_FAILED") throw err;
+      const object = (await this.send(camera, base, session, "storage.factory.instance", null)).result;
+      if (object === undefined || object === true || object === null) throw err;
+      try {
+        return await this.call(camera, base, session, "storage.getDeviceAllInfo", null, object);
+      } finally {
+        await this.send(camera, base, session, "storage.destroy", null, object).catch(() => undefined);
+      }
+    }
   }
 
   logout(camera: CameraConfig, base: RpcBase, session: string) {
