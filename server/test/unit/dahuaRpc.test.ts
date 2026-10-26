@@ -10,11 +10,16 @@ const camera: CameraConfig = { host: "10.251.130.50", port: 443, protocol: "http
 
 /** Like a CP Plus CP-UNC-TC81ZL6C-VMD-LQ: /cgi-bin is 404, the web page's RPC API is /cpapi2. */
 function cpPlus(needsObject = false, web5 = false) {
+  let pages = 0;
   const calls: { path: string; body: Record<string, unknown>; contentType?: string }[] = [];
   const http = {
     request: async (_cfg: CameraConfig, req: CameraRequest) => {
       const body = req.body ? (JSON.parse(req.body) as Record<string, unknown>) : {};
-      calls.push({ path: req.path, body, contentType: req.contentType });
+      if (req.path === "/") pages++;
+      else calls.push({ path: req.path, body, contentType: req.contentType });
+      // The web page hands out a cookie; Web5.0 firmware refuses a login without it.
+      if (req.path === "/") return { status: 200, headers: { "set-cookie": ["WebClientHttpsSessionID=PAGE1; path=/; HttpOnly"] }, body: "<html></html>" };
+      if (web5 && req.path === "/cpapi2_Login" && !String(req.cookie).includes("WebClientHttpsSessionID=PAGE1")) return { status: 400, headers: {}, body: "" };
       // Web5.0 firmware: only user.signin logs in; global.login is a bad request.
       if (web5 && req.path === "/cpapi2_Login" && body.method !== "user.signin") return { status: 400, headers: {}, body: "" };
       const json = (o: object) => ({ status: 200, headers: {}, body: JSON.stringify({ id: body.id, ...o }) });
@@ -39,7 +44,7 @@ function cpPlus(needsObject = false, web5 = false) {
       return { status: 404, headers: {}, body: "" };
     },
   } as unknown as CameraHttpClient;
-  return { http, calls };
+  return { http, calls, pages: () => pages };
 }
 
 describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
@@ -72,7 +77,7 @@ describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
   });
 
   it("logs in with user.signin (Web5.0) when the camera refuses global.login (HTTP 400)", async () => {
-    const { http, calls } = cpPlus(false, true);
+    const { http, calls, pages } = cpPlus(false, true);
     const adapter = new DahuaAdapter(http);
     expect((await adapter.getStorageStatus(camera)).devices).toHaveLength(1);
     await adapter.getDeviceInfo(camera);
@@ -82,6 +87,8 @@ describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
       ["global.login", "Web3.0"], ["user.signin", "Web5.0"], ["user.signin", "Web5.0"],
       ["user.signin", "Web5.0"], ["user.signin", "Web5.0"],
     ]);
+    // The page is opened before each login for its cookie (also before /RPC2, which this camera lacks).
+    expect(pages()).toBe(3);
   });
 
   it("reports a refused login", async () => {

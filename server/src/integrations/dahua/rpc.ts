@@ -35,6 +35,8 @@ export function rpcPasswordHash(encryption: string, user: string, password: stri
  * firmware (user.signin), which answers global.login with HTTP 400. The challenge, the password hash
  * and the calls after login are the same.
  */
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
 const DIALECTS = [
   { method: "global.login", params: { clientType: "Web3.0", loginType: "Direct" } },
   { method: "user.signin", params: { clientType: "Web5.0" } },
@@ -44,6 +46,43 @@ export class DahuaRpc {
   private id = 0;
   /** The dialect each camera logs in with, by host and port. */
   private readonly dialects = new Map<string, number>();
+  /** Cookies the camera set (opening its page, logging in), by host and port, sent back as a browser does. */
+  private readonly cookies = new Map<string, Map<string, string>>();
+
+  private keep(camera: CameraConfig, headers: Record<string, unknown>) {
+    const set = headers["set-cookie"];
+    const list = Array.isArray(set) ? set : typeof set === "string" ? [set] : [];
+    if (list.length === 0) return;
+    const key = `${camera.host}:${camera.port}`;
+    const jar = this.cookies.get(key) ?? new Map<string, string>();
+    for (const c of list) {
+      const m = /^\s*([^=;\s]+)=([^;]*)/.exec(String(c));
+      if (m && !/[\r\n]/.test(m[2]!)) jar.set(m[1]!, m[2]!);
+    }
+    this.cookies.set(key, jar);
+  }
+
+  private cookieHeader(camera: CameraConfig, session?: string): string {
+    const jar = new Map<string, string>([["username", encodeURIComponent(camera.username)], ["curLanguage", "English"]]);
+    for (const [k, v] of this.cookies.get(`${camera.host}:${camera.port}`) ?? []) jar.set(k, v);
+    if (session) {
+      jar.set("WebClientHttpsSessionID", session);
+      jar.set("WebClientSessionID", session);
+    }
+    return [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+
+  /** Opens the camera's web page, as a browser does before logging in; some firmware hands out a cookie it then expects. */
+  private async openPage(camera: CameraConfig) {
+    const res = await this.http.request(camera, {
+      path: "/",
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      headers: { "User-Agent": USER_AGENT, "Accept-Encoding": "identity", "Accept-Language": "en-US,en;q=0.9" },
+      keepAlive: true,
+      auth: "none",
+    }).catch(() => undefined);
+    if (res) this.keep(camera, res.headers);
+  }
 
   constructor(private readonly http: CameraHttpClient) {}
 
@@ -57,16 +96,20 @@ export class DahuaRpc {
       accept: "application/json, text/plain, */*",
       // As the camera's web page sends them.
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "User-Agent": USER_AGENT,
         "Accept-Encoding": "identity",
         "Accept-Language": "en-US,en;q=0.9",
         Origin: origin,
         Referer: `${origin}/`,
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "empty",
       },
-      cookie: `username=${encodeURIComponent(camera.username)}; curLanguage=English${session ? `; WebClientHttpsSessionID=${session}; WebClientSessionID=${session}` : ""}`,
+      cookie: this.cookieHeader(camera, session),
       keepAlive: true,
       auth: "none",
     });
+    this.keep(camera, res.headers);
     if (res.status === 404) throw new CameraApiError("API_UNAVAILABLE", `The camera does not provide ${path} (HTTP 404)`, { httpStatus: 404 });
     if (res.status < 200 || res.status >= 300) {
       const said = res.body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
@@ -85,6 +128,7 @@ export class DahuaRpc {
     const key = `${camera.host}:${camera.port}`;
     const known = this.dialects.get(key);
     const order = known === undefined ? [0, 1] : [known];
+    await this.openPage(camera);
     let challenge: RpcReply | undefined;
     let dialect: (typeof DIALECTS)[number] = DIALECTS[0];
     for (const [i, d] of order.entries()) {
