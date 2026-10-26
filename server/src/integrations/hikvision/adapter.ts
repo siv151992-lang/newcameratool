@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { runDiagnostics } from "../diagnostics.js";
+import { redirectError } from "../http/responses.js";
 import {
   CameraApiError,
   type BrandMeta,
@@ -107,6 +108,7 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     if (notFound) {
       throw new CameraApiError("API_UNAVAILABLE", `The camera does not provide ${path} (HTTP ${res.status})`, { httpStatus: res.status });
     }
+    if (res.status >= 300 && res.status < 400) throw redirectError(res, path);
     throw new CameraApiError("API_ERROR", `Camera returned HTTP ${res.status} for ${path}`, {
       httpStatus: res.status,
       transient: res.status >= 500,

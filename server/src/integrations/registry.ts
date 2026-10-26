@@ -6,6 +6,7 @@ import { HikvisionAdapter } from "./hikvision/adapter.js";
 import { CameraHttpClient } from "./http/cameraHttpClient.js";
 import { OnvifAdapter } from "./onvif/adapter.js";
 import { PanasonicAdapter } from "./panasonic/adapter.js";
+import { PramaAdapter } from "./prama/adapter.js";
 import { UniviewAdapter } from "./uniview/adapter.js";
 import { pool, type Queryable } from "../db/pool.js";
 import { ConfigurableAdapter, type ConfigurableMeta } from "./configurable/adapter.js";
@@ -155,9 +156,10 @@ export class BrandRegistry {
     const aliases: Record<string, string> = {
       hik: "hikvision",
       hikvision: "hikvision",
-      // Prama Hikvision (India) cameras run Hikvision firmware.
-      prama: "hikvision",
-      pramahikvision: "hikvision",
+      // Prama Hikvision (India): Hikvision firmware, listed as its own brand.
+      prama: "prama",
+      pramahikvision: "prama",
+      pramahikvisionindia: "prama",
       cpplus: "dahua",
       amcrest: "dahua",
       axiscommunications: "axis",
@@ -194,6 +196,7 @@ function withDefaults(meta: BrandMeta): BrandMeta {
 export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandRegistry {
   const registry = new BrandRegistry(http);
   registry.register(new HikvisionAdapter(http));
+  registry.register(new PramaAdapter(http));
   registry.register(new DahuaAdapter(http));
   registry.register(new AxisAdapter(http));
   registry.register(new UniviewAdapter(http));
