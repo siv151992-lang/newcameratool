@@ -4,6 +4,8 @@ import { runDiagnostics } from "../diagnostics.js";
 import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
 import { dahuaTime, dahuaTimeMs, parseDahuaChannels, parseDahuaDeviceInfo, parseDahuaError, parseDahuaFiles, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
+import { OnvifAdapter } from "../onvif/adapter.js";
+import { DahuaRpc, parseRpcDeviceInfo, parseRpcStorage, RPC_BASES, type RpcBase } from "./rpc.js";
 
 export const DAHUA_STORAGE_PATH = "/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo";
 export const DAHUA_DEVICE_INFO_PATH = "/cgi-bin/magicBox.cgi?action=getSystemInfo";
@@ -24,7 +26,54 @@ export class DahuaAdapter implements CameraBrandAdapter {
       "Empty drive bays are ignored. Not yet tested on real hardware; confirm with Test Connection.",
   };
 
-  constructor(private readonly http: CameraHttpClient) {}
+  private readonly rpc: DahuaRpc;
+  private readonly onvif: OnvifAdapter;
+  /** Per camera: whether it answers the HTTP API (CGI) or only the RPC API (RPC2 / CP Plus cpapi2). */
+  private readonly apis = new Map<string, { api: "cgi" | RpcBase; until: number }>();
+
+  constructor(private readonly http: CameraHttpClient) {
+    this.rpc = new DahuaRpc(http);
+    this.onvif = new OnvifAdapter(http);
+  }
+
+  private apiOf(camera: CameraConfig) {
+    const a = this.apis.get(`${camera.protocol}://${camera.host}:${camera.port}`);
+    return a && a.until > Date.now() ? a.api : undefined;
+  }
+
+  private setApi(camera: CameraConfig, api: "cgi" | RpcBase) {
+    if (this.apis.size > 10_000) this.apis.clear();
+    this.apis.set(`${camera.protocol}://${camera.host}:${camera.port}`, { api, until: Date.now() + 6 * 3_600_000 });
+  }
+
+  /**
+   * The HTTP API (CGI), or, where it is off or missing (newer Dahua and CP Plus firmware), the RPC
+   * API the camera's web page uses: /RPC2, or /cpapi2 on CP Plus. The one that answers is remembered.
+   */
+  private async either<T>(camera: CameraConfig, cgi: () => Promise<T>, rpc: (base: RpcBase) => Promise<T>): Promise<T> {
+    const known = this.apiOf(camera);
+    if (known === "cgi") return cgi();
+    if (known) return rpc(known);
+    let cgiError: unknown;
+    try {
+      const value = await cgi();
+      this.setApi(camera, "cgi");
+      return value;
+    } catch (err) {
+      if (!(err instanceof CameraApiError) || err.code !== "API_UNAVAILABLE") throw err;
+      cgiError = err;
+    }
+    for (const base of RPC_BASES) {
+      try {
+        const value = await rpc(base);
+        this.setApi(camera, base);
+        return value;
+      } catch (err) {
+        if (!(err instanceof CameraApiError) || err.code !== "API_UNAVAILABLE") throw err;
+      }
+    }
+    throw cgiError;
+  }
 
   /** Live video: the second (sub) stream, which is H.264 on most models. */
   readonly rtspPath = "/cam/realmonitor?channel=1&subtype=1";
@@ -59,11 +108,23 @@ export class DahuaAdapter implements CameraBrandAdapter {
   }
 
   async getStorageStatus(camera: CameraConfig): Promise<StorageReading> {
-    return parseDahuaStorage(await this.getText(camera, DAHUA_STORAGE_PATH));
+    return this.either(
+      camera,
+      async () => parseDahuaStorage(await this.getText(camera, DAHUA_STORAGE_PATH)),
+      (base) => this.rpc.withSession(camera, base, async (s) => parseRpcStorage(await this.rpc.call(camera, base, s, "storage.getDeviceAllInfo"))),
+    );
   }
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
-    return parseDahuaDeviceInfo(await this.getText(camera, DAHUA_DEVICE_INFO_PATH));
+    return this.either(
+      camera,
+      async () => parseDahuaDeviceInfo(await this.getText(camera, DAHUA_DEVICE_INFO_PATH)),
+      (base) => this.rpc.withSession(camera, base, async (s) => {
+        const system = await this.rpc.call(camera, base, s, "magicBox.getSystemInfo");
+        const software = await this.rpc.call(camera, base, s, "magicBox.getSoftwareVersion").catch(() => undefined);
+        return parseRpcDeviceInfo(system, software);
+      }),
+    );
   }
 
   /** NVR channels: names, whether each camera is connected, and whether each channel is recording. */
@@ -74,8 +135,20 @@ export class DahuaAdapter implements CameraBrandAdapter {
     return parseDahuaChannels(titles, states, recording);
   }
 
+  /** Recording status (CGI); over ONVIF on cameras with only the RPC API. */
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
-    return parseDahuaRecording(await this.getText(camera, DAHUA_RECORDING_PATH));
+    if (this.apiOf(camera) && this.apiOf(camera) !== "cgi") return this.onvif.getRecordingStatus(camera);
+    try {
+      return parseDahuaRecording(await this.getText(camera, DAHUA_RECORDING_PATH));
+    } catch (err) {
+      if (!(err instanceof CameraApiError) || err.code !== "API_UNAVAILABLE") throw err;
+      return this.onvif.getRecordingStatus(camera);
+    }
+  }
+
+  /** ONVIF replay, for recordings listed over ONVIF (cameras with only the RPC API). */
+  replayRtspUrl(camera: CameraConfig, segment?: RecordedSegment): Promise<string> {
+    return this.onvif.replayRtspUrl(camera, segment);
   }
 
   /**
@@ -83,6 +156,11 @@ export class DahuaAdapter implements CameraBrandAdapter {
    * findNextFile until the files run out; closed and destroyed afterwards). Dahua uses local time throughout.
    */
   async listRecordings(camera: CameraConfig, fromMs: number, toMs: number, channel = 1): Promise<RecordingList> {
+    if (this.apiOf(camera) && this.apiOf(camera) !== "cgi") return { ...(await this.onvif.listRecordings(camera)), viaOnvif: true };
+    return this.listRecordingsCgi(camera, fromMs, toMs, channel);
+  }
+
+  private async listRecordingsCgi(camera: CameraConfig, fromMs: number, toMs: number, channel: number): Promise<RecordingList> {
     const finder = "/cgi-bin/mediaFileFind.cgi";
     const now = await this.getText(camera, "/cgi-bin/global.cgi?action=getCurrentTime").then((t) => dahuaTimeMs(t), () => undefined);
     const id = /result=(\d+)/.exec(await this.getText(camera, `${finder}?action=factory.create`))?.[1];
