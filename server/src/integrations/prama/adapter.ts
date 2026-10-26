@@ -13,13 +13,18 @@ import {
   type StorageReading,
 } from "../types.js";
 
-/** ISAPI is missing (404): the model does not run Hikvision firmware. */
-const noIsapi = (err: unknown) => err instanceof CameraApiError && err.code === "API_UNAVAILABLE";
+/** The API is missing at this address (404). */
+const missing = (err: unknown) => err instanceof CameraApiError && err.code === "API_UNAVAILABLE";
+
+/** How a Prama camera is read: Hikvision's API, the same API renamed /pramaAPI, or ONVIF. */
+type Api = "isapi" | "prama" | "onvif";
+const REMEMBER_MS = 6 * 3_600_000;
 
 /**
- * Prama India cameras and NVRs. Older models run Hikvision firmware (ISAPI); newer ones have Prama's
- * own firmware without ISAPI, and are read over ONVIF instead. Each camera is tried with ISAPI
- * first; when it answers 404, ONVIF is used (and remembered for that camera for a while).
+ * Prama India cameras and NVRs. They run Hikvision-based firmware: older models answer Hikvision's
+ * API at /ISAPI, newer ones the same API renamed /pramaAPI (confirmed on PT-NC361P3-WNAM(D2),
+ * firmware V5.7.19: /pramaAPI/ContentMgmt/Storage). Models with neither are read over ONVIF. Each
+ * camera is tried in that order, and the API that answers is remembered for it.
  */
 export class PramaAdapter extends HikvisionAdapter {
   override readonly meta: BrandMeta = {
@@ -29,35 +34,59 @@ export class PramaAdapter extends HikvisionAdapter {
     authMethods: ["digest", "basic (HTTPS only)", "ws-security (ONVIF)"],
     defaultPorts: { http: 80, https: 443 },
     capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices", "nas"],
-    storageEndpoint: `GET ${HIKVISION_STORAGE_PATH}, or ONVIF GetStorageDevices`,
+    storageEndpoint: `GET ${HIKVISION_STORAGE_PATH} or /pramaAPI/ContentMgmt/Storage, or ONVIF GetStorageDevices`,
     defaultTimeoutMs: 10000,
     notes:
-      "Models with Hikvision firmware use ISAPI with HTTP Digest authentication, like Hikvision. Newer Prama models " +
-      "without ISAPI are read over ONVIF: turn on ONVIF in the camera (Network → Advanced → Integration Protocol) " +
-      "and add an ONVIF user with the same username and password as entered here.",
-    compatibility: "Prama Hikvision India models with Hikvision firmware (ISAPI); other Prama models over ONVIF.",
+      "Prama firmware is Hikvision-based: the Hikvision API at /ISAPI on older models, renamed /pramaAPI on newer ones " +
+      "(HTTP Digest authentication). Storage, recording, live video, recordings and NVR channels work as for Hikvision. " +
+      "Models with neither are read over ONVIF (turn on ONVIF and add an ONVIF user).",
+    compatibility: "Confirmed on PT-NC361P3-WNAM(D2) firmware V5.7.19 (/pramaAPI). Older Prama models with /ISAPI.",
   };
 
   private readonly onvif: OnvifAdapter;
-  /** host:port of cameras without ISAPI, until when to use ONVIF without asking ISAPI first. */
-  private readonly onvifOnly = new Map<string, number>();
+  /** Per camera (protocol://host:port): the API that answered, and until when to keep using it. */
+  private readonly apis = new Map<string, { api: Api; until: number }>();
 
   constructor(http: CameraHttpClient) {
     super(http);
     this.onvif = new OnvifAdapter(http);
   }
 
-  /** ISAPI, or ONVIF on models without it (with a message saying what ONVIF needs when that fails too). */
-  private async either<T>(camera: CameraConfig, isapi: () => Promise<T>, onvif: () => Promise<T>): Promise<T> {
-    const key = `${camera.protocol}://${camera.host}:${camera.port}`;
-    if ((this.onvifOnly.get(key) ?? 0) < Date.now()) {
-      try {
-        return await isapi();
-      } catch (err) {
-        if (!noIsapi(err)) throw err;
-        if (this.onvifOnly.size > 10_000) this.onvifOnly.clear();
-        this.onvifOnly.set(key, Date.now() + 6 * 3_600_000);
+  private key(camera: CameraConfig) {
+    return `${camera.protocol}://${camera.host}:${camera.port}`;
+  }
+
+  private known(camera: CameraConfig): Api | undefined {
+    const k = this.apis.get(this.key(camera));
+    return k && k.until > Date.now() ? k.api : undefined;
+  }
+
+  private remember(camera: CameraConfig, api: Api) {
+    if (this.apis.size > 10_000) this.apis.clear();
+    this.apis.set(this.key(camera), { api, until: Date.now() + REMEMBER_MS });
+  }
+
+  protected override apiPath(camera: CameraConfig, path: string): string {
+    return this.known(camera) === "prama" ? path.replace(/^\/ISAPI\//, "/pramaAPI/") : path;
+  }
+
+  /**
+   * Runs a request on the camera's API: the one known for it, or /ISAPI, then /pramaAPI, then ONVIF.
+   * (The Hikvision code builds /ISAPI paths; apiPath turns them into /pramaAPI ones.)
+   */
+  private async either<T>(camera: CameraConfig, hikvision: () => Promise<T>, onvif: () => Promise<T>): Promise<T> {
+    const known = this.known(camera);
+    if (known === "isapi" || known === "prama") return hikvision();
+    if (!known) {
+      for (const api of ["isapi", "prama"] as const) {
+        this.remember(camera, api);
+        try {
+          return await hikvision();
+        } catch (err) {
+          if (!missing(err)) throw err;
+        }
       }
+      this.remember(camera, "onvif");
     }
     try {
       return await onvif();
@@ -65,11 +94,15 @@ export class PramaAdapter extends HikvisionAdapter {
       if (!(err instanceof CameraApiError)) throw err;
       throw new CameraApiError(
         err.code,
-        `This Prama model has no Hikvision API (ISAPI), so it is read over ONVIF, which failed: ${err.message}. ` +
+        `This Prama model answers neither /ISAPI nor /pramaAPI, so it is read over ONVIF, which failed: ${err.message}. ` +
           "Turn on ONVIF in the camera (Network → Advanced → Integration Protocol) and add an ONVIF user with the same username and password.",
         err.options,
       );
     }
+  }
+
+  override getChannels(camera: CameraConfig) {
+    return this.either(camera, () => super.getChannels(camera), () => Promise.reject(new CameraApiError("API_UNAVAILABLE", "NVR channels are read through the Prama / Hikvision API")));
   }
 
   override getStorageStatus(camera: CameraConfig): Promise<StorageReading> {

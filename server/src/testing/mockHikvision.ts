@@ -77,6 +77,8 @@ export class MockHikvisionCamera {
    * visible through the recording search (System/time, ContentMgmt/search, record/tracks/101).
    */
   recordingStatusApi = true;
+  /** Where the API is served: "/ISAPI" (Hikvision), or "/pramaAPI" (newer Prama firmware; /ISAPI is then 404). */
+  apiRoot = "/ISAPI";
   /** Set to simulate an NVR: its channels (cameras), with video or not, recording or not. */
   nvrChannels?: { name: string; online: boolean; recording: boolean }[];
   /** Search mode: the camera's UTC offset, and whether search replies are in UTC (as some firmware does). */
@@ -153,10 +155,15 @@ export class MockHikvisionCamera {
   }
 
   private respond(req: http.IncomingMessage, res: http.ServerResponse, body = "") {
-    const path = req.url ?? "/";
+    let path = req.url ?? "/";
+    if (this.apiRoot !== "/ISAPI") {
+      // Prama firmware: the same API under another name; /ISAPI does not exist.
+      if (path.startsWith("/ISAPI/")) path = "/missing";
+      else if (path.startsWith(`${this.apiRoot}/`)) path = `/ISAPI/${path.slice(this.apiRoot.length + 1)}`;
+    }
     if (this.mode === "hang") return; // never respond: exercises timeouts
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
-    this.requests.push({ path, authorized });
+    this.requests.push({ path: req.url ?? "/", authorized });
     if (!authorized) return this.challenge(res);
     if (/^\/ISAPI\/Streaming\/channels\/\d+01\/picture$/.test(path) && this.mode === "ok") {
       res.setHeader("Content-Type", "image/jpeg");

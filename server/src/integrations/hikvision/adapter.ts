@@ -83,7 +83,7 @@ export class HikvisionAdapter implements CameraBrandAdapter {
 
   /** The current picture for the live view (Main stream of channel 1). */
   getSnapshot(camera: CameraConfig, channel = 1) {
-    return fetchSnapshot(this.http, camera, `/ISAPI/Streaming/channels/${channel}01/picture`);
+    return fetchSnapshot(this.http, camera, this.apiPath(camera, `/ISAPI/Streaming/channels/${channel}01/picture`));
   }
 
   /** NVR channel N: stream N02 (sub), then N01 (main). */
@@ -91,7 +91,13 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     return [`/Streaming/Channels/${channel}02`, `/Streaming/Channels/${channel}01`];
   }
 
-  private async getXml(camera: CameraConfig, path: string, body?: string): Promise<string> {
+  /** The address of an ISAPI path on this camera (Prama firmware names the API /pramaAPI). */
+  protected apiPath(_camera: CameraConfig, path: string): string {
+    return path;
+  }
+
+  private async getXml(camera: CameraConfig, isapiPath: string, body?: string): Promise<string> {
+    const path = this.apiPath(camera, isapiPath);
     const res = body === undefined
       ? await this.http.get(camera, path)
       : await this.http.request(camera, { method: "POST", path, body, contentType: "application/xml" });
