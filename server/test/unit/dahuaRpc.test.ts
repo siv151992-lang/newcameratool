@@ -20,6 +20,8 @@ function cpPlus(needsObject = false, web5 = false) {
       // The web page hands out a cookie; Web5.0 firmware refuses a login without it.
       if (req.path === "/") return { status: 200, headers: { "set-cookie": ["WebClientHttpsSessionID=PAGE1; path=/; HttpOnly"] }, body: "<html></html>" };
       if (web5 && req.path === "/cpapi2_Login" && !String(req.cookie).includes("WebClientHttpsSessionID=PAGE1")) return { status: 400, headers: {}, body: "" };
+      // Web5.0 firmware: every request carries the SHA-256 of its body as ETag.
+      if (web5 && req.path.startsWith("/cpapi2") && req.headers?.ETag !== createHash("sha256").update(req.body!).digest("hex")) return { status: 400, headers: {}, body: "" };
       // Web5.0 firmware: only user.signin logs in; global.login is a bad request.
       if (web5 && req.path === "/cpapi2_Login" && body.method !== "user.signin") return { status: 400, headers: {}, body: "" };
       const json = (o: object) => ({ status: 200, headers: {}, body: JSON.stringify({ id: body.id, ...o }) });
@@ -87,6 +89,8 @@ describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
       ["global.login", "Web3.0"], ["user.signin", "Web5.0"], ["user.signin", "Web5.0"],
       ["user.signin", "Web5.0"], ["user.signin", "Web5.0"],
     ]);
+    // The second step sends the challenge back, as the CP Plus page does.
+    expect(calls.find((c) => c.body.method === "user.signin" && c.body.session)?.body.params).toMatchObject({ clientType: "Web5.0", realm: "Login to CP", random: "R123", passwordType: "Default", authorityType: "Default" });
     // The page is opened before each login for its cookie (also before /RPC2, which this camera lacks).
     expect(pages()).toBe(3);
   });

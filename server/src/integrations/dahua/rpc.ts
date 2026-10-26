@@ -88,10 +88,13 @@ export class DahuaRpc {
 
   private async post(camera: CameraConfig, path: string, body: object, session?: string): Promise<RpcReply> {
     const origin = `${camera.protocol}://${camera.host}${(camera.protocol === "https" ? camera.port === 443 : camera.port === 80) ? "" : `:${camera.port}`}`;
+    // In the page's order: method, params, id, then session and object.
+    const { method, params, ...rest } = body as { method: string; params: unknown };
+    const json = JSON.stringify({ method, params, id: ++this.id, ...rest });
     const res = await this.http.request(camera, {
       method: "POST",
       path,
-      body: JSON.stringify({ ...body, id: ++this.id }),
+      body: json,
       contentType: "application/json",
       accept: "application/json, text/plain, */*",
       // As the camera's web page sends them.
@@ -104,6 +107,8 @@ export class DahuaRpc {
         "Sec-Fetch-Site": "same-origin",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Dest": "empty",
+        // Web5.0 firmware refuses a request (HTTP 400) without the SHA-256 of its body here.
+        ETag: createHash("sha256").update(json, "utf8").digest("hex"),
       },
       cookie: this.cookieHeader(camera, session),
       keepAlive: true,
@@ -159,7 +164,10 @@ export class DahuaRpc {
     const hash = rpcPasswordHash(encryption, camera.username, camera.password, p.realm, p.random);
     const reply = await this.post(camera, path, {
       method: dialect.method,
-      params: { userName: camera.username, password: hash, ...dialect.params, authorityType: encryption, passwordType: encryption },
+      // Web5.0 sends the challenge's realm and random back, in the page's order.
+      params: dialect.method === "user.signin"
+        ? { userName: camera.username, password: hash, ...dialect.params, realm: p.realm, random: p.random, passwordType: encryption, authorityType: encryption }
+        : { userName: camera.username, password: hash, ...dialect.params, authorityType: encryption, passwordType: encryption },
       session,
     }).catch((err: unknown) => {
       if (err instanceof CameraApiError && err.code === "API_ERROR") throw new CameraApiError("API_ERROR", `${err.message} (on the second login step, with the password)`, err.options);
