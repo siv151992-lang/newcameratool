@@ -30,22 +30,46 @@ export function rpcPasswordHash(encryption: string, user: string, password: stri
   throw new CameraApiError("AUTH_FAILED", `The camera asks for a login method this app does not support yet (${encryption || "unknown"})`);
 }
 
+/**
+ * How the body is labelled. Dahua answers JSON; some CP Plus firmware refuses it (HTTP 400) and
+ * only takes what its web page sends (jQuery's default form type, with the JSON as the body).
+ */
+const CONTENT_TYPES = ["application/json", "application/x-www-form-urlencoded; charset=UTF-8"] as const;
+
 export class DahuaRpc {
   private id = 0;
+  /** The content type each camera took, by host and port. */
+  private readonly types = new Map<string, number>();
 
   constructor(private readonly http: CameraHttpClient) {}
 
   private async post(camera: CameraConfig, path: string, body: object): Promise<RpcReply> {
-    const res = await this.http.request(camera, {
-      method: "POST",
-      path,
-      body: JSON.stringify({ ...body, id: ++this.id }),
-      contentType: "application/json",
-      accept: "application/json, */*",
-      auth: "none",
-    });
+    const key = `${camera.host}:${camera.port}`;
+    const known = this.types.get(key);
+    const order = known === undefined ? [0, 1] : [known];
+    const origin = `${camera.protocol}://${camera.host}${(camera.protocol === "https" ? camera.port === 443 : camera.port === 80) ? "" : `:${camera.port}`}`;
+    let res!: Awaited<ReturnType<CameraHttpClient["request"]>>;
+    for (const t of order) {
+      res = await this.http.request(camera, {
+        method: "POST",
+        path,
+        body: JSON.stringify({ ...body, id: ++this.id }),
+        contentType: CONTENT_TYPES[t],
+        accept: "application/json, text/javascript, */*; q=0.01",
+        // As the camera's web page sends them; some firmware refuses requests without.
+        headers: { "X-Requested-With": "XMLHttpRequest", Origin: origin, Referer: `${origin}/` },
+        auth: "none",
+      });
+      if (res.status !== 400) {
+        if (res.status >= 200 && res.status < 300) this.types.set(key, t);
+        break;
+      }
+    }
     if (res.status === 404) throw new CameraApiError("API_UNAVAILABLE", `The camera does not provide ${path} (HTTP 404)`, { httpStatus: 404 });
-    if (res.status < 200 || res.status >= 300) throw new CameraApiError("API_ERROR", `Camera returned HTTP ${res.status} for ${path}`, { httpStatus: res.status });
+    if (res.status < 200 || res.status >= 300) {
+      const said = res.body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+      throw new CameraApiError("API_ERROR", `Camera returned HTTP ${res.status} for ${path}${said ? ` ("${said}")` : ""}`, { httpStatus: res.status });
+    }
     try {
       return JSON.parse(res.body) as RpcReply;
     } catch {

@@ -9,12 +9,13 @@ const md5 = (s: string) => createHash("md5").update(s).digest("hex").toUpperCase
 const camera: CameraConfig = { host: "10.251.130.50", port: 443, protocol: "https", username: "admin", password: "Cp-Pass-123", timeoutMs: 5000 };
 
 /** Like a CP Plus CP-UNC-TC81ZL6C-VMD-LQ: /cgi-bin is 404, the web page's RPC API is /cpapi2. */
-function cpPlus(needsObject = false) {
-  const calls: { path: string; body: Record<string, unknown> }[] = [];
+function cpPlus(needsObject = false, formOnly = false) {
+  const calls: { path: string; body: Record<string, unknown>; contentType?: string }[] = [];
   const http = {
     request: async (_cfg: CameraConfig, req: CameraRequest) => {
       const body = req.body ? (JSON.parse(req.body) as Record<string, unknown>) : {};
-      calls.push({ path: req.path, body });
+      calls.push({ path: req.path, body, contentType: req.contentType });
+      if (formOnly && req.path.startsWith("/cpapi2") && req.contentType === "application/json") return { status: 400, headers: {}, body: "<html><body>400 Bad Request</body></html>" };
       const json = (o: object) => ({ status: 200, headers: {}, body: JSON.stringify({ id: body.id, ...o }) });
       if (req.path === "/cpapi2_Login") {
         const p = body.params as Record<string, string>;
@@ -67,6 +68,17 @@ describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
     expect(calls.map((c) => c.body.method).filter((m) => String(m).startsWith("storage."))).toEqual([
       "storage.getDeviceAllInfo", "storage.factory.instance", "storage.getDeviceAllInfo", "storage.destroy",
     ]);
+  });
+
+  it("sends the web page's form content type when the camera refuses JSON (HTTP 400)", async () => {
+    const { http, calls } = cpPlus(false, true);
+    const adapter = new DahuaAdapter(http);
+    expect((await adapter.getStorageStatus(camera)).devices).toHaveLength(1);
+    await adapter.getDeviceInfo(camera);
+    // JSON is tried once; the form type is then used for every call.
+    const rpc = calls.filter((c) => c.path.startsWith("/cpapi2"));
+    expect(rpc.filter((c) => c.contentType === "application/json")).toHaveLength(1);
+    expect(rpc.slice(1).every((c) => c.contentType?.startsWith("application/x-www-form-urlencoded"))).toBe(true);
   });
 
   it("reports a refused login", async () => {
