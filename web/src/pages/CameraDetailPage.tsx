@@ -566,7 +566,16 @@ function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
                   <td className="px-4 py-2">{x.recording ? <RecordingBadge state={x.recording} /> : <span className="text-ink-muted">Not reported</span>}</td>
                   {can("cameras:live") && (
                     <td className="whitespace-nowrap px-4 py-1.5 text-right">
-                      <Button size="sm" variant="ghost" icon={<Video className="h-4 w-4" />} onClick={() => setLive({ id: c.id, name: label(x), channel: x.channel })} aria-label={`Live view of channel ${x.channel}`}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Video className="h-4 w-4" />}
+                        onClick={() => setLive({ id: c.id, name: label(x), channel: x.channel })}
+                        // The NVR has no video from this camera: there is nothing to watch live (its recordings may still play).
+                        disabled={x.online === false}
+                        title={x.online === false ? "The NVR has no video from this camera right now" : undefined}
+                        aria-label={`Live view of channel ${x.channel}`}
+                      >
                         Live
                       </Button>
                       <Button size="sm" variant="ghost" icon={<Film className="h-4 w-4" />} onClick={() => setRecordings({ id: c.id, name: label(x), channel: x.channel })} aria-label={`Recordings of channel ${x.channel}`}>

@@ -41,9 +41,9 @@ export class UniviewAdapter implements CameraBrandAdapter {
   /** The main stream, or the path of other firmware. */
   readonly rtspFallbacks = ["/media/video1", "/unicast/c1/s1/live"];
 
-  /** The current picture for the live view (LAPI, channel 0 main stream). */
-  getSnapshot(camera: CameraConfig, channel = 1) {
-    return fetchSnapshot(this.http, camera, `/LAPI/V1.0/Channels/${channel > 1 ? channel : 0}/Media/Video/Streams/0/Snapshot`);
+  /** The current picture for the live view: the camera's own channel 0, or an NVR's channel N (numbered from 1). */
+  getSnapshot(camera: CameraConfig, channel?: number) {
+    return fetchSnapshot(this.http, camera, `/LAPI/V1.0/Channels/${channel ?? 0}/Media/Video/Streams/0/Snapshot`);
   }
 
   /** NVR channel N: sub stream, then main stream. */

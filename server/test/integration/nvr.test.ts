@@ -74,6 +74,18 @@ describe("NVRs", () => {
     expect((await pool.query("SELECT count(*)::int AS n FROM nvr_channels")).rows[0].n).toBe(2);
   });
 
+  it("shows a channel's own picture, and logs which channel was watched", async () => {
+    const { agent, csrf } = await signIn();
+    const id = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf)
+      .send({ name: "NVR 2", host: "127.0.0.1", port, protocol: "http", brand: "Hikvision", username: "admin", password: "Nvr-Pass-123", deviceType: "nvr" })
+      .expect(201)).body.id as string;
+    const before = nvr.requests.length;
+    await agent.get(`/api/cameras/${id}/snapshot?start=1&channel=3`).buffer(true).expect(200);
+    expect(nvr.requests.slice(before).map((r) => r.path)).toContain("/ISAPI/Streaming/channels/301/picture");
+    const logged = (await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.live_view' AND entity_id = $1", [id])).rows;
+    expect(logged).toEqual([{ details: { channel: 3 } }]);
+  });
+
   it("does not read channels for a camera", async () => {
     const { agent, csrf } = await signIn();
     const id = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf)

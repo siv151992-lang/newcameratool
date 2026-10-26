@@ -173,8 +173,9 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
 const channelOf = (raw: unknown) => parse(z.object({ channel: z.coerce.number().int().min(1).max(256).optional() }), { channel: raw ?? undefined }).channel;
 
 camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
-  await prepareStream(orgOf(req), param(req), channelOf(req.query.channel));
-  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req), details: { video: true } });
+  const channel = channelOf(req.query.channel);
+  await prepareStream(orgOf(req), param(req), channel);
+  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req), details: { video: true, ...(channel ? { channel } : {}) } });
   res.json({ ok: true });
 });
 
@@ -208,8 +209,9 @@ camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), l
 // Live view: the current picture. `start=1` on the first picture of a viewing records it in the audit log.
 camerasRouter.get("/:id/snapshot", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const { start } = parse(z.object({ start: z.literal("1").optional() }), req.query);
-  const snapshot = await getSnapshot(orgOf(req), param(req), channelOf(req.query.channel));
-  if (start) await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req) });
+  const channel = channelOf(req.query.channel);
+  const snapshot = await getSnapshot(orgOf(req), param(req), channel);
+  if (start) await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req), details: channel ? { channel } : {} });
   res.set({ "Content-Type": snapshot.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" }).send(snapshot.data);
 });
 
