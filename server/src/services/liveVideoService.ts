@@ -244,39 +244,121 @@ export async function oldestRecording(orgId: string, cameraId: string, channel?:
   return first ? wall(first.start) : null;
 }
 
+/** The day listing that covers `local` (camera local time): the last one listed, else that day's, read now. */
+async function listingFor(adapter: CameraBrandAdapter, config: CameraConfig, cameraId: string, local: number, channel?: number): Promise<RecordingList | undefined> {
+  const key = listingKey(cameraId, channel);
+  const known = lastListing.get(key);
+  const day = Math.floor(local / DAY_MS) * DAY_MS;
+  if (known && known.segments.some((s) => s.start <= local && local < s.end)) return known;
+  // After a restart, or a time on another day than the one last listed: list that day.
+  try {
+    const list = await adapter.listRecordings!(config, day, day + DAY_MS, channel);
+    lastListing.set(key, list);
+    return list;
+  } catch {
+    return known;
+  }
+}
+
+/** Per camera (or NVR channel): which of the brand's playback paths the camera served, for a while. */
+const playbackVariants = new Map<string, { variant: number; at: number }>();
+const PLAYBACK_VARIANT_TTL_MS = 10 * 60_000;
+
+export type PlaybackPick = { path: string; checked: boolean } | { refused: { path: string; status: number }[] };
+
+/**
+ * The first of `paths` the camera serves (RTSP DESCRIBE answered 200), trying the one that worked
+ * last time first. When the camera's RTSP port does not answer from here at all, the first path is
+ * used unchecked (the video service may still reach it). A refused login stops the search: every
+ * path uses the same login.
+ */
+export async function pickPlaybackPath(paths: string[], probe: (path: string) => Promise<number>, preferred = 0): Promise<PlaybackPick & { variant?: number }> {
+  const order = [...new Set([Math.min(preferred, paths.length - 1), ...paths.keys()])];
+  const refused: { path: string; status: number }[] = [];
+  for (const i of order) {
+    const status = await probe(paths[i]!).catch(() => 0);
+    if (status === 200) return { path: paths[i]!, checked: true, variant: i };
+    if (status === 0 && refused.length === 0) return { path: paths[i]!, checked: false, variant: i };
+    refused.push({ path: paths[i]!, status });
+    if (status === 401 || status === 403) break;
+  }
+  return { refused };
+}
+
 /**
  * Points this session's playback stream at the recordings from `start` (camera local time).
- * Returns the time playback really starts (the recording's start, for brands that play by id).
+ * Returns the time playback really starts: the next recording's start for a time in a gap, and
+ * the recording's start for brands that play by id.
+ *
+ * The brand's playback address is checked with the camera first (as live video is), then its other
+ * addresses (the sub stream, other firmware), then ONVIF replay, so a camera that refuses one way
+ * still plays, and one that refuses all is explained instead of failing in the player.
  */
 export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string, speed = 1, channel?: number): Promise<string> {
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Playing recordings needs the live video service (go2rtc), which is not set up on this server");
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
   const local = Date.parse(`${start}Z`);
-  const listing = lastListing.get(listingKey(cameraId, channel));
+  const listing = await listingFor(adapter, config, cameraId, local, channel);
   const shift = listing?.shiftMs ?? 0;
   const segment = listing?.segments.find((s) => s.start <= local && local < s.end) ?? listing?.segments.find((s) => s.start > local);
   const fromStart = listing?.playsFromRecordingStart && segment;
+  // A time in a gap (or before the first recording of the day) plays from the next recording.
+  const playFrom = segment && segment.start > local ? segment.start : local;
   const utcSegment = segment && { ...segment, start: segment.start - shift, end: segment.end - shift };
   const name = playbackStreamName(cameraId, sessionId);
+  const startedAt = () => wall(fromStart ? segment.start : playFrom);
+
+  let refused: { path: string; status: number }[] = [];
   if (adapter.playbackRtspPath && !(listing?.viaOnvif && adapter.replayRtspUrl)) {
-    const path = adapter.playbackRtspPath(local - shift, utcSegment, channel);
-    // Faster than normal: through the relay, which asks the camera for it (RTSP Scale).
-    const src = speed > 1
-      ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password, onvif: false, scale: speed })
-      : rtspUrl(config, path);
-    await putStream(name, src);
-    return fromStart ? wall(segment.start) : start;
+    let paths: string[];
+    try {
+      paths = [adapter.playbackRtspPath(playFrom - shift, utcSegment, channel), ...(adapter.playbackRtspFallbacks?.(playFrom - shift, utcSegment, channel) ?? [])];
+    } catch (err) {
+      throw new HttpError(422, "PLAYBACK_UNAVAILABLE", (err as Error).message);
+    }
+    const key = listingKey(cameraId, channel);
+    const known = playbackVariants.get(key);
+    const preferred = known && Date.now() - known.at < PLAYBACK_VARIANT_TTL_MS ? known.variant : 0;
+    const pick = await pickPlaybackPath(
+      paths,
+      (path) => probeRtsp({ host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password }),
+      preferred,
+    );
+    if ("path" in pick) {
+      if (pick.checked) {
+        if (playbackVariants.size > 5000) playbackVariants.clear();
+        playbackVariants.set(key, { variant: pick.variant ?? 0, at: Date.now() });
+      }
+      // Faster than normal: through the relay, which asks the camera for it (RTSP Scale).
+      const src = speed > 1
+        ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path: pick.path, username: config.username, password: config.password, onvif: false, scale: speed })
+        : rtspUrl(config, pick.path);
+      await putStream(name, src);
+      return startedAt();
+    }
+    refused = pick.refused;
+    logger.warn({ cameraId, refused }, "Playback: the camera served none of its playback addresses");
+    if (refused.some((r) => r.status === 401 || r.status === 403)) {
+      throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `The camera's recordings could not be opened: ${probeReason(401)}. Recordings may need the camera user's playback permission.`);
+    }
   }
-  // ONVIF replay: go2rtc plays through the relay, which adds the start time the camera needs.
+
+  // ONVIF replay (Profile G): the brand's own, or the camera's standard one when its own was refused.
+  const via = adapter.replayRtspUrl ? adapter : onvifAdapter();
+  const triedText = refused.length ? ` The camera refused ${refused.map((r) => `${r.path.split("?")[0]} (${r.status})`).join(", ")}.` : "";
+  if (!via?.replayRtspUrl) {
+    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `The camera's recordings could not be opened.${triedText} Turn on ONVIF in the camera, or set its recording to H.264.`);
+  }
   let uri: URL;
   try {
-    uri = new URL(await adapter.replayRtspUrl!(config, utcSegment));
+    // A brand's own recording id means nothing to ONVIF: let the camera pick its recording.
+    uri = new URL(await via.replayRtspUrl(config, via === adapter ? utcSegment : undefined));
   } catch (err) {
-    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `The camera's recording address could not be read over ONVIF: ${(err as Error).message}`);
+    throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `The camera's recording address could not be read over ONVIF: ${(err as Error).message}.${triedText}`);
   }
   if (uri.protocol !== "rtsp:") throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `The camera gave a recording address that cannot be played (${uri.protocol})`);
-  // A time in a gap plays from the next recording.
-  const startUtc = Math.max(local - shift, utcSegment?.start ?? -Infinity);
+  // The relay adds the start time the camera needs.
+  const startUtc = playFrom - shift;
   const relayed = registerReplay(relayBase(), name, {
     host: config.host,
     port: uri.port ? Number(uri.port) : RTSP_PORT,

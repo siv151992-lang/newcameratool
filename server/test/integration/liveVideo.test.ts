@@ -146,13 +146,20 @@ describe("live video", () => {
     await request(app).get(`/api/cameras/${id}/recordings/days?month=2026-13`).set("Cookie", admin.cookie).expect(400);
 
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
-      .send({ start: `${today}T00:30:00` }).expect(200);
+      .send({ start: `${today}T00:15:00` }).expect(200);
     const [name, src] = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))!;
-    expect(src).toBe(`rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/Streaming/tracks/101?starttime=${today.replace(/-/g, "")}T003000Z`);
+    expect(src).toBe(`rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/Streaming/tracks/101?starttime=${today.replace(/-/g, "")}T001500Z`);
     const reply = await upgrade(`/api/cameras/${id}/playback/ws`, { Cookie: admin.cookie, Origin: `http://127.0.0.1:${port}` });
     expect(reply).toMatch(/^HTTP\/1\.1 101 /);
     expect(go2rtc.wsPaths).toEqual([`/api/ws?src=${name}`]);
-    expect((await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.playback'")).rows).toEqual([{ details: { start: `${today}T00:30:00` } }]);
+    expect((await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.playback'")).rows).toEqual([{ details: { start: `${today}T00:15:00` } }]);
+
+    // A time in a gap plays from the next recording (the simulated camera has none from 00:30 until the last hour).
+    const gap = (await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ start: `${today}T00:45:00` }).expect(200)).body;
+    const next = day.segments[day.segments.length - 1].start as string;
+    expect(gap.start).toBe(next);
+    expect([...go2rtc.streams].find(([n]) => n === name)![1]).toContain(`starttime=${next.replace(/[-:]/g, "")}Z`);
 
     // Faster than normal goes through the relay, which asks the camera for it.
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)

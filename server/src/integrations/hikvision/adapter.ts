@@ -257,6 +257,12 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     return `/Streaming/tracks/${channel}01?starttime=${wallClockText(startMs).replace(/[-:]/g, "")}Z`;
   }
 
+  /** The sub stream's recordings (H.264 on most models, when the main stream is H.265), and the ISAPI-prefixed path of some firmware. */
+  playbackRtspFallbacks(startMs: number, _segment?: RecordedSegment, channel = 1): string[] {
+    const t = `starttime=${wallClockText(startMs).replace(/[-:]/g, "")}Z`;
+    return [`/Streaming/tracks/${channel}02?${t}`, `/ISAPI/Streaming/tracks/${channel}01?${t}`];
+  }
+
   /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */
   private async step<T>(what: string, run: () => Promise<T>): Promise<T> {
     try {

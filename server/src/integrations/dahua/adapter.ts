@@ -187,8 +187,13 @@ export class DahuaAdapter implements CameraBrandAdapter {
   }
 
   /** Channel 1 main stream from a local time (to 12 hours later; it stops at the end of the recordings). */
-  playbackRtspPath(startMs: number, _segment?: RecordedSegment, channel = 1): string {
-    return `/cam/playback?channel=${channel}&subtype=0&starttime=${dahuaTime(startMs, "_")}&endtime=${dahuaTime(startMs + 12 * 3_600_000, "_")}`;
+  playbackRtspPath(startMs: number, _segment?: RecordedSegment, channel = 1, subtype = 0): string {
+    return `/cam/playback?channel=${channel}&subtype=${subtype}&starttime=${dahuaTime(startMs, "_")}&endtime=${dahuaTime(startMs + 12 * 3_600_000, "_")}`;
+  }
+
+  /** The sub stream's recordings (H.264 on most models, when the main stream is H.265). */
+  playbackRtspFallbacks(startMs: number, segment?: RecordedSegment, channel = 1): string[] {
+    return [this.playbackRtspPath(startMs, segment, channel, 1)];
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

@@ -57,7 +57,22 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const frame = useRef<HTMLDivElement>(null);
   const video = useQuery({ queryKey: ["live-video"], queryFn: () => api<{ enabled: boolean }>("/cameras/live-video"), staleTime: 5 * 60_000 });
   const day = useQuery({ queryKey: ["recordings", cameraId, channel, date], queryFn: () => api<Day>(`/cameras/${cameraId}/recordings?date=${date}${ch}`) });
-  const onFailed = useCallback((m: string) => setError(m), []);
+  // A stream that drops while playing (the camera closed it, the network blinked, or the stretch of
+  // recording it was asked for ended) goes on by itself from where it was, at the next recording if
+  // that one ended; only a stream that will not play is reported.
+  const resume = useRef<{ position: string | null; played: number; seek: (at: number) => void; tries: number }>({ position: null, played: 0, seek: () => undefined, tries: 0 });
+  const onFailed = useCallback((m: string) => {
+    const r = resume.current;
+    if (r.position && r.played > 2 && r.tries < 3) {
+      r.tries += 1;
+      return r.seek(ms(r.position) + 1000);
+    }
+    setError(m);
+  }, []);
+  const onTime = useCallback((t: number) => {
+    setPlayed(t);
+    if (t > 20) resume.current.tries = 0;
+  }, []);
 
   const dayStart = ms(`${date}T00:00:00`);
   const play = (t: string) => {
@@ -156,6 +171,9 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
     if (next) play(text(next.start));
     else setError("This is the last recording of the day.");
   };
+  resume.current.position = position;
+  resume.current.played = played;
+  resume.current.seek = seek;
   const playing = Boolean(start);
   const fromStartOnly = day.data?.playsFromRecordingStart;
   const readout = text(head);
@@ -190,7 +208,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
               playbackStart={start!}
               speed={speed}
               onFailed={onFailed}
-              onTime={setPlayed}
+              onTime={onTime}
               onPrepared={setStartedAt}
               onArrival={setArrival}
             />

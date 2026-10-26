@@ -229,6 +229,11 @@ export interface CameraBrandAdapter {
    */
   playbackRtspPath?(startMs: number, segment?: RecordedSegment, channel?: number): string;
   /**
+   * Optional: other RTSP paths for the same recordings, tried in order when the camera refuses
+   * playbackRtspPath (the sub stream, which is H.264 on most cameras, or other firmware's path).
+   */
+  playbackRtspFallbacks?(startMs: number, segment?: RecordedSegment, channel?: number): string[];
+  /**
    * Optional: the replay address (without credentials) of the recording holding `segment`, asked from
    * the camera (ONVIF Profile G GetReplayUri). It plays through the replay relay, which adds the
    * start time; used by brands without playbackRtspPath.
