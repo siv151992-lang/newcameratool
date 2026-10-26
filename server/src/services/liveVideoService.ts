@@ -258,7 +258,7 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
   const fromStart = listing?.playsFromRecordingStart && segment;
   const utcSegment = segment && { ...segment, start: segment.start - shift, end: segment.end - shift };
   const name = playbackStreamName(cameraId, sessionId);
-  if (adapter.playbackRtspPath) {
+  if (adapter.playbackRtspPath && !(listing?.viaOnvif && adapter.replayRtspUrl)) {
     const path = adapter.playbackRtspPath(local - shift, utcSegment, channel);
     // Faster than normal: through the relay, which asks the camera for it (RTSP Scale).
     const src = speed > 1

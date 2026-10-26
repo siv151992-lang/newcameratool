@@ -143,6 +143,8 @@ export interface RecordingList {
   shiftMs: number;
   /** Playback starts at the beginning of the chosen recording, not at any time inside it. */
   playsFromRecordingStart?: boolean;
+  /** Listed over ONVIF (Profile G) by a brand that also has its own playback: play with replayRtspUrl. */
+  viaOnvif?: boolean;
 }
 
 /** Merges touching or overlapping segments (2 s tolerance) and sorts them. */

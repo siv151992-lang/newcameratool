@@ -58,6 +58,14 @@ export class MockVendorCamera {
       const at = (x: Date) => `<tt:Date><tt:Year>${x.getUTCFullYear()}</tt:Year><tt:Month>${x.getUTCMonth() + 1}</tt:Month><tt:Day>${x.getUTCDate()}</tt:Day></tt:Date><tt:Time><tt:Hour>${x.getUTCHours()}</tt:Hour><tt:Minute>${x.getUTCMinutes()}</tt:Minute><tt:Second>${x.getUTCSeconds()}</tt:Second></tt:Time>`;
       return res.end(env(`<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:UTCDateTime>${at(d)}</tt:UTCDateTime><tt:LocalDateTime>${at(new Date(d.getTime() + 330 * 60_000))}</tt:LocalDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>`));
     }
+    if (body.includes("GetDeviceInformation")) {
+      return res.end(env(`<tds:GetDeviceInformationResponse><tds:Manufacturer>Simulated</tds:Manufacturer><tds:Model>ONVIF-CAM</tds:Model><tds:FirmwareVersion>1.0</tds:FirmwareVersion><tds:SerialNumber>ONV0001</tds:SerialNumber><tds:HardwareId>1</tds:HardwareId></tds:GetDeviceInformationResponse>`));
+    }
+    if (body.includes("GetStorageDevices")) {
+      const d = this.disks[0]!;
+      const mb = (n: number) => String(n * 1024 * 1024);
+      return res.end(env(`<tst:GetStorageDevicesResponse xmlns:tst="http://www.onvif.org/ver10/storage/wsdl"><tst:StorageDevice><tt:Token>SD_1</tt:Token><tt:Configuration><tt:Name>SD card</tt:Name><tt:Type>SD</tt:Type><tt:Enabled>true</tt:Enabled></tt:Configuration><tt:Status><tt:State>Normal</tt:State><tt:StorageInfo><tt:TotalSpace>${mb(Number(d.sizeMiB))}</tt:TotalSpace><tt:FreeSpace>${mb(Number(d.freeMiB))}</tt:FreeSpace></tt:StorageInfo></tt:Status></tst:StorageDevice></tst:GetStorageDevicesResponse>`));
+    }
     if (body.includes("GetRecordingJobs")) {
       return res.end(env(`<trc:GetRecordingJobsResponse><trc:JobItem><trc:JobToken>RecordJob_1</trc:JobToken><trc:JobConfiguration><tt:RecordingToken>Recording_1</tt:RecordingToken><tt:Mode>Active</tt:Mode></trc:JobConfiguration></trc:JobItem></trc:GetRecordingJobsResponse>`));
     }
