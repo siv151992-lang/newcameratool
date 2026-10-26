@@ -157,9 +157,10 @@ describe("live video", () => {
     // A time in a gap plays from the next recording (the simulated camera has none from 00:30 until the last hour).
     const gap = (await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ start: `${today}T00:45:00` }).expect(200)).body;
+    // The simulated camera's newest recording moves with the clock, so allow the second or two between listings.
     const next = day.segments[day.segments.length - 1].start as string;
-    expect(gap.start).toBe(next);
-    expect([...go2rtc.streams].find(([n]) => n === name)![1]).toContain(`starttime=${next.replace(/[-:]/g, "")}Z`);
+    expect(Math.abs(Date.parse(`${gap.start}Z`) - Date.parse(`${next}Z`))).toBeLessThanOrEqual(5000);
+    expect([...go2rtc.streams].find(([n]) => n === name)![1]).toContain(`starttime=${(gap.start as string).replace(/[-:]/g, "")}Z`);
 
     // Faster than normal goes through the relay, which asks the camera for it.
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
