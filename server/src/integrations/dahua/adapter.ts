@@ -42,7 +42,20 @@ export class DahuaAdapter implements CameraBrandAdapter {
   }
 
   private async getText(camera: CameraConfig, path: string): Promise<string> {
-    return requireOk(await this.http.request(camera, { path, accept: "text/plain, */*" }), path, parseDahuaError);
+    try {
+      return requireOk(await this.http.request(camera, { path, accept: "text/plain, */*" }), path, parseDahuaError);
+    } catch (err) {
+      // Newer Dahua and CP Plus firmware ships with its HTTP API (CGI) turned off: every /cgi-bin path is 404.
+      if (err instanceof CameraApiError && err.code === "API_UNAVAILABLE" && err.options.httpStatus === 404 && path.startsWith("/cgi-bin/")) {
+        throw new CameraApiError(
+          "API_UNAVAILABLE",
+          `${err.message}. The camera's HTTP API (CGI) may be turned off: on newer Dahua and CP Plus firmware, turn it on in the camera ` +
+            "under Settings → Network → Access Platform (or Integration Protocol) → CGI.",
+          err.options,
+        );
+      }
+      throw err;
+    }
   }
 
   async getStorageStatus(camera: CameraConfig): Promise<StorageReading> {

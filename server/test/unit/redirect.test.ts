@@ -17,3 +17,12 @@ describe("camera redirects", () => {
     expect(() => requireOk(res("http://10.0.0.9:8080/x"), "/a")).toThrow("The camera redirected /a to http://10.0.0.9:8080/x (HTTP 302) instead of answering it.");
   });
 });
+
+describe("Dahua / CP Plus with CGI turned off", () => {
+  it("says to turn on CGI when every /cgi-bin path is 404", async () => {
+    const { DahuaAdapter } = await import("../../src/integrations/dahua/adapter.js");
+    const http = { request: async () => ({ status: 404, headers: {}, body: "" }) } as never;
+    const camera = { host: "10.0.0.5", port: 443, protocol: "https" as const, username: "admin", password: "x", timeoutMs: 1000 };
+    await expect(new DahuaAdapter(http).getDeviceInfo(camera)).rejects.toThrow(/HTTP API \(CGI\) may be turned off.*Access Platform/);
+  });
+});
