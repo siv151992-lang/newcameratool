@@ -29,6 +29,8 @@ import {
   parseOnvifSearchToken,
 } from "./parser.js";
 import { escapeXml, NS, soapEnvelope } from "./soap.js";
+import { COMMON_ONVIF_ENDPOINTS, probeOnvifEndpoint, type OnvifEndpoint } from "./discovery.js";
+import { hostGuard } from "../../security/hostGuardInstance.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 export const ONVIF_DEVICE_SERVICE_PATH = "/onvif/device_service";
@@ -78,14 +80,70 @@ export class OnvifAdapter implements CameraBrandAdapter {
   private readonly servicePaths = new Map<string, Map<string, string>>();
   /** Camera clock minus our clock, per camera, learned after a rejected token. */
   private readonly clockOffsets = new Map<string, number>();
+  /**
+   * Where each camera's ONVIF service really is, when not at its configured protocol, port and
+   * /onvif/device_service (found by discovery or by trying the usual ports), and when to look again.
+   */
+  private readonly endpoints = new Map<string, OnvifEndpoint>();
+  private readonly searchedAt = new Map<string, number>();
+
+  /** The camera as ONVIF must be contacted: its own address, at the ONVIF service's protocol and port. */
+  private target(camera: CameraConfig): { camera: CameraConfig; devicePath: string } {
+    const ep = this.endpoints.get(cameraKey(camera));
+    return ep ? { camera: { ...camera, protocol: ep.protocol, port: ep.port }, devicePath: ep.path } : { camera, devicePath: ONVIF_DEVICE_SERVICE_PATH };
+  }
+
+  /**
+   * Finds the camera's ONVIF service when it is not at the configured address: asks the camera
+   * (WS-Discovery), then tries the usual ONVIF ports with GetSystemDateAndTime, which every ONVIF
+   * device answers without a login. At most once an hour per camera.
+   */
+  private async findEndpoint(camera: CameraConfig): Promise<boolean> {
+    const key = cameraKey(camera);
+    if (Date.now() - (this.searchedAt.get(key) ?? 0) < 3_600_000) return false;
+    if (this.searchedAt.size > MAX_CACHED_OFFSETS) this.searchedAt.clear();
+    this.searchedAt.set(key, Date.now());
+    const answers = async (ep: OnvifEndpoint) => {
+      try {
+        const res = await this.http.request({ ...camera, protocol: ep.protocol, port: ep.port, timeoutMs: Math.min(camera.timeoutMs, 4000) }, {
+          method: "POST",
+          path: ep.path,
+          body: soapEnvelope(ACTIONS.systemTime.body),
+          contentType: `application/soap+xml; charset=utf-8; action="${ACTIONS.systemTime.action}"`,
+          accept: "application/soap+xml, text/xml, */*",
+          auth: "none",
+        });
+        // A SOAP answer, or a login challenge (some cameras ask for one even here).
+        return /SystemDateAndTime|Envelope/i.test(res.body) && res.status < 500 ? ep : undefined;
+      } catch (err) {
+        return err instanceof CameraApiError && err.code === "AUTH_FAILED" ? ep : undefined;
+      }
+    };
+    let found: OnvifEndpoint | undefined;
+    try {
+      // The address the camera announces itself is used as it is.
+      found = await probeOnvifEndpoint((await hostGuard.resolve(camera.host)).address);
+    } catch {
+      // discovery is optional
+    }
+    if (!found) {
+      const others = COMMON_ONVIF_ENDPOINTS.filter((ep) => !(ep.protocol === camera.protocol && ep.port === camera.port));
+      found = (await Promise.all(others.map(answers))).find(Boolean);
+    }
+    if (!found) return false;
+    this.endpoints.set(key, found);
+    this.servicePaths.delete(key);
+    return true;
+  }
 
   constructor(private readonly http: CameraHttpClient) {}
 
   private async call(camera: CameraConfig, op: SoapAction, now = Date.now() + this.offsetFor(camera)): Promise<string> {
     const body = soapEnvelope(op.body, op.auth ? { username: camera.username, password: camera.password, now } : undefined);
-    const res = await this.http.request(camera, {
+    const t = this.target(camera);
+    const res = await this.http.request(t.camera, {
       method: "POST",
-      path: op.path,
+      path: op.path === ONVIF_DEVICE_SERVICE_PATH ? t.devicePath : op.path,
       body,
       contentType: `application/soap+xml; charset=utf-8; action="${op.action}"`,
       accept: "application/soap+xml, text/xml, */*",
@@ -93,8 +151,33 @@ export class OnvifAdapter implements CameraBrandAdapter {
     return requireOk(res, op.path, parseOnvifFault);
   }
 
-  /** Calls an authenticated action, retrying once with the camera's clock if the token was rejected. */
+  /**
+   * Calls an authenticated action, retrying once with the camera's clock if the token was rejected,
+   * and once at the camera's real ONVIF address if it is not at the configured one.
+   */
   private async authenticated(camera: CameraConfig, op: SoapAction): Promise<string> {
+    try {
+      return await this.signedIn(camera, op);
+    } catch (err) {
+      const elsewhere = err instanceof CameraApiError &&
+        (err.code === "API_UNAVAILABLE" || err.code === "UNREACHABLE" || err.code === "TIMEOUT" || err.code === "TLS_ERROR" || err.options.httpStatus === 302);
+      if (!elsewhere || this.endpoints.has(cameraKey(camera))) throw err;
+      const searched = !this.searchedAt.has(cameraKey(camera)) || Date.now() - this.searchedAt.get(cameraKey(camera))! >= 3_600_000;
+      if (!(await this.findEndpoint(camera))) {
+        if (!searched) throw err;
+        const ports = [...new Set(COMMON_ONVIF_ENDPOINTS.map((e) => e.port))].join(", ");
+        throw new CameraApiError(err.code, `${err.message}. No ONVIF service answered on the camera's other usual ports (${ports}), and it did not answer an ONVIF discovery request`, err.options);
+      }
+      const t = this.target(camera);
+      return this.signedIn(camera, op).catch((again) => {
+        throw again instanceof CameraApiError
+          ? new CameraApiError(again.code, `${again.message} (ONVIF found at ${t.camera.protocol}://${camera.host}:${t.camera.port}${t.devicePath})`, again.options)
+          : again;
+      });
+    }
+  }
+
+  private async signedIn(camera: CameraConfig, op: SoapAction): Promise<string> {
     try {
       return await this.call(camera, op);
     } catch (err) {
