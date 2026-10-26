@@ -44,7 +44,8 @@ Browser ──HTTPS──> Caddy ──> API (Express)  ──┐
 
 Brands whose storage API is one HTTP request returning JSON or XML can be added **without code** as a
 configurable API integration in **Settings → Camera brands** — see [brand-integrations.md](brand-integrations.md),
-which also lists what needs a custom adapter. Otherwise, add a custom adapter (Mode B):
+which also lists what needs a custom adapter. Otherwise, add a custom adapter (Mode B) — step by step, with a
+worked example: [adding-a-camera-brand.md](adding-a-camera-brand.md). In short:
 
 1. Create `server/src/integrations/<brand>/adapter.ts` implementing `CameraBrandAdapter`:
    - `meta`: display name, `supportStatus`, auth methods, default ports, capabilities, storage endpoint,

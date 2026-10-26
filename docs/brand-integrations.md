@@ -126,7 +126,7 @@ only when the camera reports both.
 ## What needs a custom adapter
 
 The configurable framework deliberately supports only what has been implemented and reviewed. These
-need a developer-built adapter (see [Adding a camera brand](architecture.md#adding-a-camera-brand)):
+need a developer-built adapter (see [Adding a new camera brand](adding-a-camera-brand.md)):
 
 - Login flows that first obtain a session cookie or token (e.g. `POST /login`, then reuse it)
 - OAuth, request signing (HMAC, AWS-style), challenge-response or other vendor cryptography

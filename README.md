@@ -13,7 +13,7 @@ confirmed on real hardware — use Test Connection when adding such a camera.
 storage API is a single HTTP request returning JSON or XML (Basic, Digest, API key, bearer token or no
 authentication). A wizard maps the response onto the common storage model, tests it against a real camera on the
 server, and only a tested configuration can be enabled. Brands with other APIs need a custom adapter in code.
-See **[docs/brand-integrations.md](docs/brand-integrations.md)**.
+See **[docs/brand-integrations.md](docs/brand-integrations.md)**. Developers adding a brand in code: **[docs/adding-a-camera-brand.md](docs/adding-a-camera-brand.md)**.
 
 | | |
 |---|---|
