@@ -60,22 +60,35 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   // A stream that drops while playing (the camera closed it, the network blinked, or the stretch of
   // recording it was asked for ended) goes on by itself from where it was, at the next recording if
   // that one ended; only a stream that will not play is reported.
-  const resume = useRef<{ position: string | null; played: number; seek: (at: number) => void; tries: number }>({ position: null, played: 0, seek: () => undefined, tries: 0 });
+  // A resume that fails at once (the video service restarting, say) is tried again a little later.
+  const resume = useRef({ position: null as string | null, played: 0, seek: (_at: number) => undefined as void, tries: 0, resuming: false, timer: 0, active: false });
   const onFailed = useCallback((m: string) => {
     const r = resume.current;
-    if (r.position && r.played > 2 && r.tries < 3) {
+    if (r.position && (r.played > 2 || r.resuming) && r.tries < 4) {
+      const at = ms(r.position) + (r.resuming ? 0 : 1000);
       r.tries += 1;
-      return r.seek(ms(r.position) + 1000);
+      r.resuming = true;
+      window.clearTimeout(r.timer);
+      // Not if playback was stopped meanwhile (paused, another day chosen).
+      r.timer = window.setTimeout(() => r.active && r.seek(at), [0, 1500, 3000, 6000][r.tries - 1]);
+      return;
     }
+    r.resuming = false;
     setError(m);
   }, []);
   const onTime = useCallback((t: number) => {
     setPlayed(t);
+    if (t > 2) resume.current.resuming = false;
     if (t > 20) resume.current.tries = 0;
   }, []);
+  useEffect(() => () => window.clearTimeout(resume.current.timer), []);
 
   const dayStart = ms(`${date}T00:00:00`);
+  /** Counts play requests, so playing the same time again (a retry) still restarts the stream. */
+  const [attempt, setAttempt] = useState(0);
   const play = (t: string) => {
+    window.clearTimeout(resume.current.timer);
+    setAttempt((a) => a + 1);
     setError(null);
     setPlayed(0);
     setStartedAt(null);
@@ -127,6 +140,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
     if (pending.kind === "oldest") {
       const seg = segs.find((s) => ms(s.end) > ms(pending.at));
       if (seg) play(text(Math.max(ms(seg.start), ms(pending.at))));
+      else setError("No recordings after this time.");
       return;
     }
     const last = segs.at(-1);
@@ -155,10 +169,15 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
     const inside = segs.find((x) => x.start <= at && at < x.end);
     const next = segs.find((x) => x.start > at);
     const t = inside ? at : next?.start;
-    if (t === undefined) return setError("No recordings after this time on this day.");
-    play(text(t));
+    if (t !== undefined) return play(text(t));
+    // Nothing more this day: go on with the next day's first recording.
+    const nextDay = text(dayStart + DAY).slice(0, 10);
+    if (nextDay <= today()) return goTo({ kind: "oldest", at: `${nextDay}T00:00:00` });
+    setError("No recordings after this time.");
   };
   const pause = () => {
+    window.clearTimeout(resume.current.timer);
+    resume.current.resuming = false;
     if (position) setCursor(position);
     setStart(null);
   };
@@ -174,6 +193,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   resume.current.position = position;
   resume.current.played = played;
   resume.current.seek = seek;
+  resume.current.active = Boolean(start);
   const playing = Boolean(start);
   const fromStartOnly = day.data?.playsFromRecordingStart;
   const readout = text(head);
@@ -201,7 +221,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
         <div className="relative mx-auto flex aspect-video max-h-[46vh] w-full items-center justify-center overflow-hidden rounded bg-black [:fullscreen_&]:max-h-none [:fullscreen_&]:flex-1">
           {playing ? (
             <LiveVideo
-              key={`${start}|${Math.max(speed, 1)}`}
+              key={`${start}|${Math.max(speed, 1)}|${attempt}`}
               cameraId={cameraId}
               channel={channel}
               name={name}
