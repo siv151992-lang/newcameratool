@@ -1,7 +1,7 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { CameraApiError, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordingRange, type RecordingReading, type StorageReading } from "../types.js";
+import { CameraApiError, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingRange, type RecordingReading, type StorageReading } from "../types.js";
 import { OnvifAdapter } from "../onvif/adapter.js";
 import { parseUniviewChannels, parseUniviewContainers, parseUniviewDeviceInfo, parseUniviewError, parseUniviewRecording, parseUniviewStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
@@ -42,8 +42,13 @@ export class UniviewAdapter implements CameraBrandAdapter {
   readonly rtspFallbacks = ["/media/video1", "/unicast/c1/s1/live"];
 
   /** The current picture for the live view (LAPI, channel 0 main stream). */
-  getSnapshot(camera: CameraConfig) {
-    return fetchSnapshot(this.http, camera, "/LAPI/V1.0/Channels/0/Media/Video/Streams/0/Snapshot");
+  getSnapshot(camera: CameraConfig, channel = 1) {
+    return fetchSnapshot(this.http, camera, `/LAPI/V1.0/Channels/${channel > 1 ? channel : 0}/Media/Video/Streams/0/Snapshot`);
+  }
+
+  /** NVR channel N: sub stream, then main stream. */
+  channelRtspPaths(channel: number) {
+    return [`/unicast/c${channel}/s1/live`, `/unicast/c${channel}/s0/live`];
   }
 
   private async getJson(camera: CameraConfig, path: string): Promise<string> {
@@ -88,9 +93,9 @@ export class UniviewAdapter implements CameraBrandAdapter {
   }
 
   /** Replay of channel 1 from a UTC time (Unix seconds), to 12 hours later. */
-  playbackRtspPath(startMs: number): string {
+  playbackRtspPath(startMs: number, _segment?: RecordedSegment, channel = 1): string {
     const b = Math.floor(startMs / 1000);
-    return `/c1/b${b}/e${b + 12 * 3600}/replay/`;
+    return `/c${channel}/b${b}/e${b + 12 * 3600}/replay/`;
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

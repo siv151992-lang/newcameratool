@@ -212,11 +212,11 @@ export function parseCameraTime(xml: string): { nowMs: number; offsetMinutes?: n
 }
 
 /** Body of POST /ISAPI/ContentMgmt/search for track 101 between two wall-clock times. */
-export function searchRequestXml(fromMs: number, toMs: number, searchId: string, maxResults = 40, position = 0): string {
+export function searchRequestXml(fromMs: number, toMs: number, searchId: string, maxResults = 40, position = 0, trackId = 101): string {
   const t = (ms: number) => `${wallClockText(ms)}Z`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <CMSearchDescription><searchID>${searchId}</searchID>
-<trackIDList><trackID>101</trackID></trackIDList>
+<trackIDList><trackID>${trackId}</trackID></trackIDList>
 <timeSpanList><timeSpan><startTime>${t(fromMs)}</startTime><endTime>${t(toMs)}</endTime></timeSpan></timeSpanList>
 <maxResults>${maxResults}</maxResults><searchResultPostion>${position}</searchResultPostion>
 <metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList>

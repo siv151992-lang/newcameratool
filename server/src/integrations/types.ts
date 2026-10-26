@@ -216,12 +216,12 @@ export interface CameraBrandAdapter {
    * `shiftMs` (e.g. UTC for cameras that play back in UTC). `ref` identifies a recording for
    * brands that play a recording by its id rather than from a time.
    */
-  listRecordings?(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList>;
+  listRecordings?(camera: CameraConfig, fromMs: number, toMs: number, channel?: number): Promise<RecordingList>;
   /**
    * Optional: the RTSP path that plays the recordings from `startMs` (local time minus shiftMs).
    * Brands that play by recording id get the segment containing it, and play from its start.
    */
-  playbackRtspPath?(startMs: number, segment?: RecordedSegment): string;
+  playbackRtspPath?(startMs: number, segment?: RecordedSegment, channel?: number): string;
   /**
    * Optional: the replay address (without credentials) of the recording holding `segment`, asked from
    * the camera (ONVIF Profile G GetReplayUri). It plays through the replay relay, which adds the
@@ -237,5 +237,7 @@ export interface CameraBrandAdapter {
   /** Optional: other RTSP paths to try for live video when rtspPath does not answer (other streams, models or firmware). */
   readonly rtspFallbacks?: readonly string[];
   /** Optional: the current picture, for the live view. */
-  getSnapshot?(camera: CameraConfig): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
+  getSnapshot?(camera: CameraConfig, channel?: number): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
+  /** Optional, for NVRs: the RTSP paths of a channel's live video, to try in order (sub stream first). */
+  channelRtspPaths?(channel: number): string[];
 }

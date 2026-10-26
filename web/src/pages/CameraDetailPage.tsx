@@ -514,6 +514,10 @@ function PasswordDetail({ camera: c }: { camera: CameraDetail }) {
 /** An NVR's channels: each camera on it, whether the NVR has its video and whether it is recording. */
 function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
   const ch = c.channels;
+  const { can } = useAuth();
+  const [live, setLive] = useState<{ id: string; name: string; channel: number } | null>(null);
+  const [recordings, setRecordings] = useState<{ id: string; name: string; channel: number } | null>(null);
+  const label = (x: { channel: number; name: string | null }) => `${c.name} · D${x.channel}${x.name ? ` ${x.name}` : ""}`;
   return (
     <Card
       title={`Channels${ch?.total ? ` (${ch.total})` : ""}`}
@@ -542,6 +546,7 @@ function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
                 <th scope="col" className="px-4 py-2 font-medium">Camera</th>
                 <th scope="col" className="px-4 py-2 font-medium">Video</th>
                 <th scope="col" className="px-4 py-2 font-medium">Recording</th>
+                {can("cameras:live") && <th scope="col" className="px-4 py-2 text-right font-medium"><span className="sr-only">Watch</span></th>}
               </tr>
             </thead>
             <tbody>
@@ -559,12 +564,24 @@ function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
                     )}
                   </td>
                   <td className="px-4 py-2">{x.recording ? <RecordingBadge state={x.recording} /> : <span className="text-ink-muted">Not reported</span>}</td>
+                  {can("cameras:live") && (
+                    <td className="whitespace-nowrap px-4 py-1.5 text-right">
+                      <Button size="sm" variant="ghost" icon={<Video className="h-4 w-4" />} onClick={() => setLive({ id: c.id, name: label(x), channel: x.channel })} aria-label={`Live view of channel ${x.channel}`}>
+                        Live
+                      </Button>
+                      <Button size="sm" variant="ghost" icon={<Film className="h-4 w-4" />} onClick={() => setRecordings({ id: c.id, name: label(x), channel: x.channel })} aria-label={`Recordings of channel ${x.channel}`}>
+                        Recordings
+                      </Button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      <LiveViewDialog camera={live} onClose={() => setLive(null)} />
+      <RecordingsDialog camera={recordings} onClose={() => setRecordings(null)} />
     </Card>
   );
 }

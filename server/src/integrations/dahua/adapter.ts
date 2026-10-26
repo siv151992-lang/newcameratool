@@ -32,8 +32,13 @@ export class DahuaAdapter implements CameraBrandAdapter {
   readonly rtspFallbacks = ["/cam/realmonitor?channel=1&subtype=0"];
 
   /** The current picture for the live view (Channel 1). */
-  getSnapshot(camera: CameraConfig) {
-    return fetchSnapshot(this.http, camera, "/cgi-bin/snapshot.cgi?channel=1");
+  getSnapshot(camera: CameraConfig, channel = 1) {
+    return fetchSnapshot(this.http, camera, `/cgi-bin/snapshot.cgi?channel=${channel}`);
+  }
+
+  /** NVR channel N: sub stream, then main stream. */
+  channelRtspPaths(channel: number) {
+    return [`/cam/realmonitor?channel=${channel}&subtype=1`, `/cam/realmonitor?channel=${channel}&subtype=0`];
   }
 
   private async getText(camera: CameraConfig, path: string): Promise<string> {
@@ -64,7 +69,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
    * Recordings of channel 1 between two local times: mediaFileFind (create, findFile, then
    * findNextFile until the files run out; closed and destroyed afterwards). Dahua uses local time throughout.
    */
-  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList> {
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number, channel = 1): Promise<RecordingList> {
     const finder = "/cgi-bin/mediaFileFind.cgi";
     const now = await this.getText(camera, "/cgi-bin/global.cgi?action=getCurrentTime").then((t) => dahuaTimeMs(t), () => undefined);
     const id = /result=(\d+)/.exec(await this.getText(camera, `${finder}?action=factory.create`))?.[1];
@@ -73,7 +78,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
     try {
       await this.getText(
         camera,
-        `${finder}?action=findFile&object=${id}&condition.Channel=1&condition.StartTime=${encodeURIComponent(dahuaTime(fromMs))}&condition.EndTime=${encodeURIComponent(dahuaTime(toMs))}&condition.Types[0]=dav`,
+        `${finder}?action=findFile&object=${id}&condition.Channel=${channel}&condition.StartTime=${encodeURIComponent(dahuaTime(fromMs))}&condition.EndTime=${encodeURIComponent(dahuaTime(toMs))}&condition.Types[0]=dav`,
       ).catch((err: unknown) => {
         // "Error" here means no files in the period on many models.
         if (!(err instanceof CameraApiError) || err.code !== "API_ERROR") throw err;
@@ -91,8 +96,8 @@ export class DahuaAdapter implements CameraBrandAdapter {
   }
 
   /** Channel 1 main stream from a local time (to 12 hours later; it stops at the end of the recordings). */
-  playbackRtspPath(startMs: number): string {
-    return `/cam/playback?channel=1&subtype=0&starttime=${dahuaTime(startMs, "_")}&endtime=${dahuaTime(startMs + 12 * 3_600_000, "_")}`;
+  playbackRtspPath(startMs: number, _segment?: RecordedSegment, channel = 1): string {
+    return `/cam/playback?channel=${channel}&subtype=0&starttime=${dahuaTime(startMs, "_")}&endtime=${dahuaTime(startMs + 12 * 3_600_000, "_")}`;
   }
 
   testConnection(camera: CameraConfig): Promise<ConnectionResult> {

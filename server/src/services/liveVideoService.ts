@@ -19,7 +19,7 @@ import { probeReason, probeRtsp } from "./rtspProbe.js";
 
 export const RTSP_PORT = 554;
 export const liveVideoEnabled = () => Boolean(config.LIVE_VIDEO_URL);
-export const streamName = (cameraId: string) => `camera_${cameraId}`;
+export const streamName = (cameraId: string, channel?: number) => `camera_${cameraId}${channel ? `_c${channel}` : ""}`;
 
 export function rtspUrl(camera: Pick<CameraConfig, "host" | "username" | "password">, path: string): string {
   const host = isIP(camera.host) === 6 ? `[${camera.host}]` : camera.host;
@@ -52,14 +52,18 @@ async function streamExists(name: string): Promise<boolean> {
 }
 
 /** Makes sure go2rtc has this camera's stream; returns its name. */
-export async function prepareStream(orgId: string, cameraId: string): Promise<string> {
+export async function prepareStream(orgId: string, cameraId: string, channel?: number): Promise<string> {
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Smooth live video is not set up on this server");
   const row = await getCameraRow(cameraId, orgId);
   const adapter = registry.get(row.brand_key);
   const { requestTimeoutMs } = await getMonitoringSettings();
   const config = await getCameraConfig(cameraId, requestTimeoutMs);
   let src: string;
-  if (adapter.rtspPath) src = await chooseLiveSource(cameraId, adapter, config);
+  if (channel && row.device_type === "nvr") {
+    // A channel of an NVR: that channel's stream paths.
+    if (!adapter.channelRtspPaths) throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `Live video of NVR channels is not available for ${adapter.meta.displayName}`);
+    src = await chooseLiveSource(`${cameraId}:c${channel}`, adapter, config, adapter.channelRtspPaths(channel), false);
+  } else if (adapter.rtspPath) src = await chooseLiveSource(cameraId, adapter, config);
   else {
     // Asked from the camera (ONVIF), for ONVIF cameras and brands without a stream path of their own.
     const via = adapter.liveRtspUrl ? adapter : onvifAdapter();
@@ -70,7 +74,7 @@ export async function prepareStream(orgId: string, cameraId: string): Promise<st
       throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `The camera's video address could not be read over ONVIF: ${(err as Error).message}. Turn on ONVIF in the camera.`);
     }
   }
-  const name = streamName(cameraId);
+  const name = streamName(cameraId, channel && row.device_type === "nvr" ? channel : undefined);
   const hash = createHash("sha256").update(src).digest("hex");
   try {
     if (registered.get(name) === hash && (await streamExists(name))) return name;
@@ -92,8 +96,8 @@ const LIVE_SOURCE_TTL_MS = 10 * 60_000;
  * an RTSP DESCRIBE, so a camera whose usual stream is off or named differently still plays, and
  * one that refuses them all is explained (login refused, or no such stream).
  */
-async function chooseLiveSource(cameraId: string, adapter: CameraBrandAdapter, config: CameraConfig): Promise<string> {
-  const paths = [adapter.rtspPath!, ...(adapter.rtspFallbacks ?? [])];
+async function chooseLiveSource(cameraId: string, adapter: CameraBrandAdapter, config: CameraConfig, candidates?: string[], useOnvif = true): Promise<string> {
+  const paths = candidates ?? [adapter.rtspPath!, ...(adapter.rtspFallbacks ?? [])];
   const key = createHash("sha256").update(JSON.stringify([config.host, config.username, config.password, paths])).digest("hex");
   const cached = liveSources.get(cameraId);
   if (cached && cached.key === key && Date.now() - cached.at < LIVE_SOURCE_TTL_MS) return cached.src;
@@ -108,10 +112,10 @@ async function chooseLiveSource(cameraId: string, adapter: CameraBrandAdapter, c
     tried.push({ path, status });
     if (status === 200) return remember(rtspUrl(config, path));
     // No answer at all: the RTSP port is not reachable from here; let the video service try as before.
-    if (status === 0) return rtspUrl(config, adapter.rtspPath!);
+    if (status === 0) return rtspUrl(config, paths[0]!);
   }
   // Last, the address the camera itself gives over ONVIF.
-  const onvif = onvifAdapter();
+  const onvif = useOnvif ? onvifAdapter() : undefined;
   if (onvif?.liveRtspUrl) {
     try {
       const uri = new URL(await onvif.liveRtspUrl(config));
@@ -175,18 +179,21 @@ async function playbackAdapter(orgId: string, cameraId: string) {
 }
 
 /** Recorded periods on the camera's storage on `date` (YYYY-MM-DD, camera local time). */
-export async function listRecordings(orgId: string, cameraId: string, date: string) {
+/** Key for per-camera caches: the camera, or one NVR channel. */
+const listingKey = (cameraId: string, channel?: number) => (channel ? `${cameraId}:c${channel}` : cameraId);
+
+export async function listRecordings(orgId: string, cameraId: string, date: string, channel?: number) {
   const { adapter, own, config } = await playbackAdapter(orgId, cameraId);
   const from = Date.parse(`${date}T00:00:00Z`);
   const to = from + DAY_MS;
   let result: RecordingList;
   try {
-    result = await adapter.listRecordings!(config, from, to);
+    result = await adapter.listRecordings!(config, from, to, channel);
   } catch (err) {
     if (adapter === own) throw err;
     throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `${own.meta.displayName} recordings are read over ONVIF (Profile G), which failed: ${(err as Error).message}. Turn on ONVIF in the camera.`);
   }
-  lastListing.set(cameraId, result);
+  lastListing.set(listingKey(cameraId, channel), result);
   const segments = result.segments
     .filter((s) => s.end > from && s.start < to)
     .map((s) => ({ start: wall(Math.max(s.start, from)), end: wall(Math.min(s.end, to)) }));
@@ -197,8 +204,8 @@ export async function listRecordings(orgId: string, cameraId: string, date: stri
 const dayCache = new Map<string, { at: number; days: string[] }>();
 
 /** The days of `month` (YYYY-MM, camera local time) with recordings on the camera's storage. */
-export async function recordedDays(orgId: string, cameraId: string, month: string): Promise<string[]> {
-  const key = `${cameraId}:${month}`;
+export async function recordedDays(orgId: string, cameraId: string, month: string, channel?: number): Promise<string[]> {
+  const key = `${listingKey(cameraId, channel)}:${month}`;
   const cached = dayCache.get(key);
   if (cached && Date.now() - cached.at < 120_000) return cached.days;
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
@@ -206,7 +213,7 @@ export async function recordedDays(orgId: string, cameraId: string, month: strin
   const next = new Date(from);
   next.setUTCMonth(next.getUTCMonth() + 1);
   const to = next.getTime();
-  const list = await adapter.listRecordings!(config, from, to);
+  const list = await adapter.listRecordings!(config, from, to, channel);
   const days = new Set<string>();
   for (const s of list.segments) {
     // Every day the recording touches, within the month.
@@ -223,15 +230,16 @@ export async function recordedDays(orgId: string, cameraId: string, month: strin
  * holds none: from the camera's recording range where it reports one, else from its recordings of
  * the last 400 days.
  */
-export async function oldestRecording(orgId: string, cameraId: string): Promise<string | null> {
+export async function oldestRecording(orgId: string, cameraId: string, channel?: number): Promise<string | null> {
   const { adapter, own, config } = await playbackAdapter(orgId, cameraId);
-  const ranged = own.getRecordingRange ? own : adapter.getRecordingRange ? adapter : undefined;
+  // The recording range is the device's (all channels): an NVR channel is searched instead.
+  const ranged = channel && channel > 1 ? undefined : own.getRecordingRange ? own : adapter.getRecordingRange ? adapter : undefined;
   if (ranged) {
     const range = await ranged.getRecordingRange!(config).catch(() => undefined);
     if (range !== undefined) return range?.oldest ?? null;
   }
   const now = Date.now();
-  const list = await adapter.listRecordings!(config, now - 400 * DAY_MS, now + DAY_MS);
+  const list = await adapter.listRecordings!(config, now - 400 * DAY_MS, now + DAY_MS, channel);
   const first = list.segments[0];
   return first ? wall(first.start) : null;
 }
@@ -240,18 +248,18 @@ export async function oldestRecording(orgId: string, cameraId: string): Promise<
  * Points this session's playback stream at the recordings from `start` (camera local time).
  * Returns the time playback really starts (the recording's start, for brands that play by id).
  */
-export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string, speed = 1): Promise<string> {
+export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string, speed = 1, channel?: number): Promise<string> {
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Playing recordings needs the live video service (go2rtc), which is not set up on this server");
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
   const local = Date.parse(`${start}Z`);
-  const listing = lastListing.get(cameraId);
+  const listing = lastListing.get(listingKey(cameraId, channel));
   const shift = listing?.shiftMs ?? 0;
   const segment = listing?.segments.find((s) => s.start <= local && local < s.end) ?? listing?.segments.find((s) => s.start > local);
   const fromStart = listing?.playsFromRecordingStart && segment;
   const utcSegment = segment && { ...segment, start: segment.start - shift, end: segment.end - shift };
   const name = playbackStreamName(cameraId, sessionId);
   if (adapter.playbackRtspPath) {
-    const path = adapter.playbackRtspPath(local - shift, utcSegment);
+    const path = adapter.playbackRtspPath(local - shift, utcSegment, channel);
     // Faster than normal: through the relay, which asks the camera for it (RTSP Scale).
     const src = speed > 1
       ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password, onvif: false, scale: speed })

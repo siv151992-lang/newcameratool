@@ -14,16 +14,16 @@ const RETRY_MS = 5000;
  * The camera's picture, refreshed about once a second. Pictures come through the server with the
  * camera's stored credentials; the browser never talks to the camera. Paused while the tab is hidden.
  */
-export function LiveViewDialog({ camera, onClose }: { camera: { id: string; name: string } | null; onClose: () => void }) {
+export function LiveViewDialog({ camera, onClose }: { camera: { id: string; name: string; channel?: number } | null; onClose: () => void }) {
   return (
     <Dialog open={!!camera} onClose={onClose} title={camera ? `Live view: ${camera.name}` : "Live view"} size="xl">
-      {camera && <LiveViewBody key={camera.id} cameraId={camera.id} name={camera.name} />}
+      {camera && <LiveViewBody key={`${camera.id}:${camera.channel ?? ""}`} cameraId={camera.id} name={camera.name} channel={camera.channel} />}
     </Dialog>
   );
 }
 
 /** Smooth video when the server has the video service (go2rtc), else, or on request, pictures. */
-function LiveViewBody({ cameraId, name }: { cameraId: string; name: string }) {
+function LiveViewBody({ cameraId, name, channel }: { cameraId: string; name: string; channel?: number }) {
   const option = useQuery({ queryKey: ["live-video"], queryFn: () => api<{ enabled: boolean }>("/cameras/live-video"), staleTime: 5 * 60_000 });
   const [chosen, setChosen] = useState<"video" | "picture" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -56,17 +56,17 @@ function LiveViewBody({ cameraId, name }: { cameraId: string; name: string }) {
         </div>
       )}
       {notice && mode === "picture" && <p className="text-sm text-warn">{notice}</p>}
-      {mode === "video" ? <VideoFrame cameraId={cameraId} name={name} onFailed={onFailed} /> : <LivePicture cameraId={cameraId} name={name} />}
+      {mode === "video" ? <VideoFrame cameraId={cameraId} name={name} channel={channel} onFailed={onFailed} /> : <LivePicture cameraId={cameraId} name={name} channel={channel} />}
     </div>
   );
 }
 
-function VideoFrame({ cameraId, name, onFailed }: { cameraId: string; name: string; onFailed: (message: string) => void }) {
+function VideoFrame({ cameraId, name, channel, onFailed }: { cameraId: string; name: string; channel?: number; onFailed: (message: string) => void }) {
   const frame = useRef<HTMLDivElement>(null);
   return (
     <div className="space-y-3">
       <div ref={frame} className="relative mx-auto flex aspect-video max-h-[55vh] items-center justify-center overflow-hidden rounded-md bg-black">
-        <LiveVideo cameraId={cameraId} name={name} onFailed={onFailed} />
+        <LiveVideo cameraId={cameraId} name={name} channel={channel} onFailed={onFailed} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-ink-secondary">Live video from the camera's second stream, without sound.</p>
@@ -78,7 +78,7 @@ function VideoFrame({ cameraId, name, onFailed }: { cameraId: string; name: stri
   );
 }
 
-function LivePicture({ cameraId, name }: { cameraId: string; name: string }) {
+function LivePicture({ cameraId, name, channel }: { cameraId: string; name: string; channel?: number }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -97,7 +97,7 @@ function LivePicture({ cameraId, name }: { cameraId: string; name: string }) {
     async function load() {
       if (document.hidden) return next(REFRESH_MS);
       try {
-        const res = await fetch(`/api/cameras/${cameraId}/snapshot${first ? "?start=1" : ""}`, { credentials: "same-origin", cache: "no-store" });
+        const res = await fetch(`/api/cameras/${cameraId}/snapshot?${new URLSearchParams({ ...(first ? { start: "1" } : {}), ...(channel ? { channel: String(channel) } : {}) })}`, { credentials: "same-origin", cache: "no-store" });
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
           throw new Error(body?.error?.message ?? `The picture could not be loaded (${res.status})`);
@@ -125,7 +125,7 @@ function LivePicture({ cameraId, name }: { cameraId: string; name: string }) {
     };
     // updatedAt only marks the first picture of a viewing; it must not restart the loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraId, paused]);
+  }, [cameraId, paused, channel]);
 
   return (
     <div className="space-y-3">

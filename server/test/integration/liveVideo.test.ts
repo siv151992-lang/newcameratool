@@ -184,4 +184,23 @@ describe("live video", () => {
     // 05:30 in India is 00:00 UTC.
     expect(src).toBe(`rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/recording/${localToday.replace(/-/g, "")}000000-${localToday.replace(/-/g, "")}120000/play.smp`);
   });
+
+  it("plays an NVR's channels: live and recordings of channel 3 through the NVR", async () => {
+    const admin = await sessionCookie("admin");
+    const id = (await request(app).post("/api/cameras").set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ name: "NVR", host: "127.0.0.1", port: camPort, protocol: "http", brand: "Hikvision", username: "admin", password: "Cam P@ss:1", deviceType: "nvr" }).expect(201)).body.id as string;
+    await request(app).post(`/api/cameras/${id}/live/prepare?channel=3`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf).expect(200);
+    expect(go2rtc.streams.get(`camera_${id}_c3`)).toBe("rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/Streaming/Channels/302");
+    const reply = await upgrade(`/api/cameras/${id}/live/ws?channel=3`, { Cookie: admin.cookie, Origin: `http://127.0.0.1:${port}` });
+    expect(reply).toMatch(/^HTTP\/1\.1 101 /);
+    expect(go2rtc.wsPaths.at(-1)).toBe(`/api/ws?src=camera_${id}_c3`);
+
+    const today = new Date().toISOString().slice(0, 10);
+    await request(app).get(`/api/cameras/${id}/recordings?date=${today}&channel=3`).set("Cookie", admin.cookie).expect(200);
+    await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ start: `${today}T00:30:00`, channel: 3 }).expect(200);
+    const src = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))![1];
+    expect(src).toContain("/Streaming/tracks/301?starttime=");
+    await request(app).get(`/api/cameras/${id}/recordings?date=${today}&channel=0`).set("Cookie", admin.cookie).expect(400);
+  });
 });

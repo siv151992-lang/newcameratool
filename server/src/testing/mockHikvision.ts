@@ -157,7 +157,7 @@ export class MockHikvisionCamera {
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
     this.requests.push({ path, authorized });
     if (!authorized) return this.challenge(res);
-    if (path === "/ISAPI/Streaming/channels/101/picture" && this.mode === "ok") {
+    if (/^\/ISAPI\/Streaming\/channels\/\d+01\/picture$/.test(path) && this.mode === "ok") {
       res.setHeader("Content-Type", "image/jpeg");
       return res.end(MOCK_PICTURE);
     }

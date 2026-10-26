@@ -18,6 +18,7 @@ export function LiveVideo({
   onPrepared,
   speed = 1,
   onArrival,
+  channel,
 }: {
   cameraId: string;
   name: string;
@@ -35,6 +36,8 @@ export function LiveVideo({
   speed?: number;
   /** How fast (× normal) the camera is sending the recording, measured while playing faster. */
   onArrival?: (rate: number) => void;
+  /** An NVR channel to play instead of the device's own video. */
+  channel?: number;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   // Read at call time, so a new callback does not restart the stream.
@@ -83,16 +86,16 @@ export function LiveVideo({
     void (async () => {
       try {
         if (playbackStart) {
-          const r = await api<{ start?: string }>(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart, ...(fast > 1 ? { speed: fast } : {}) } });
+          const r = await api<{ start?: string }>(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart, ...(fast > 1 ? { speed: fast } : {}), ...(channel ? { channel } : {}) } });
           if (r.start) prepared.current?.(r.start);
         }
-        else await api(`/cameras/${cameraId}/live/prepare`, { method: "POST" });
+        else await api(`/cameras/${cameraId}/live/prepare${channel ? `?channel=${channel}` : ""}`, { method: "POST" });
       } catch (e) {
         return fail((e as Error).message);
       }
       if (stopped) return;
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${scheme}://${window.location.host}/api/cameras/${cameraId}/${playbackStart ? "playback" : "live"}/ws`);
+      ws = new WebSocket(`${scheme}://${window.location.host}/api/cameras/${cameraId}/${playbackStart ? "playback" : "live"}/ws${!playbackStart && channel ? `?channel=${channel}` : ""}`);
       ws.binaryType = "arraybuffer";
       ws.onopen = () => ws!.send(JSON.stringify({ type: "mse", value: CODECS.filter((c) => MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)).join() }));
       ws.onmessage = (ev) => {
@@ -156,7 +159,7 @@ export function LiveVideo({
       el.removeAttribute("src");
       el.load();
     };
-  }, [cameraId, onFailed, playbackStart, fast]);
+  }, [cameraId, onFailed, playbackStart, fast, channel]);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center">

@@ -19,15 +19,15 @@ const display = (date: string) => `${date.slice(8, 10)}-${date.slice(5, 7)}-${da
  * A day picker for a camera's recordings: the days its storage holds recordings are marked, so you
  * can see at a glance which dates have something to play.
  */
-export function RecordingCalendar({ cameraId, value, max, onChange }: { cameraId: string; value: string; max: string; onChange: (date: string) => void }) {
+export function RecordingCalendar({ cameraId, channel, value, max, onChange }: { cameraId: string; channel?: number; value: string; max: string; onChange: (date: string) => void }) {
   const [open, setOpen] = useState(false);
   // Placed against the window (fixed), so the scrolling dialog it sits in does not cut it off.
   const [at, setAt] = useState({ top: 0, left: 0 });
   const [month, setMonth] = useState(value.slice(0, 7));
   const box = useRef<HTMLDivElement>(null);
   const days = useQuery({
-    queryKey: ["recording-days", cameraId, month],
-    queryFn: () => api<{ days: string[] }>(`/cameras/${cameraId}/recordings/days?month=${month}`),
+    queryKey: ["recording-days", cameraId, channel, month],
+    queryFn: () => api<{ days: string[] }>(`/cameras/${cameraId}/recordings/days?month=${month}${channel ? `&channel=${channel}` : ""}`),
     enabled: open,
     staleTime: 60_000,
   });

@@ -43,7 +43,11 @@ export function attachLiveVideo(server: http.Server) {
 
 async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer) {
   const refuse = (status: string) => socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  const match = PATH.exec(new URL(req.url ?? "/", "http://localhost").pathname);
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const match = PATH.exec(url.pathname);
+  // An NVR channel (live view of one of its cameras).
+  const channelParam = url.searchParams.get("channel");
+  const channel = channelParam && /^\d{1,3}$/.test(channelParam) && Number(channelParam) >= 1 ? Number(channelParam) : undefined;
   if (!match || !config.LIVE_VIDEO_URL) return refuse("404 Not Found");
   const key = req.headers["sec-websocket-key"];
   if (typeof key !== "string" || !/^[A-Za-z0-9+/]{22}==$/.test(key)) return refuse("400 Bad Request");
@@ -55,7 +59,7 @@ async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer
   let name: string;
   try {
     if (match[2]!.toLowerCase() === "live") {
-      name = await prepareStream(auth.user.organizationId, match[1]!);
+      name = await prepareStream(auth.user.organizationId, match[1]!, channel);
     } else {
       // Playback was pointed at its start time by POST .../playback/prepare for this session.
       await getCameraRow(match[1]!, auth.user.organizationId);

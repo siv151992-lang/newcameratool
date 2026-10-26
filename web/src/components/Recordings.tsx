@@ -37,15 +37,16 @@ function duration(a: string, b: string) {
 }
 
 /** The recordings on a camera's own storage: pick a day, see what was recorded, play from any time. */
-export function RecordingsDialog({ camera, onClose }: { camera: { id: string; name: string } | null; onClose: () => void }) {
+export function RecordingsDialog({ camera, onClose }: { camera: { id: string; name: string; channel?: number } | null; onClose: () => void }) {
   return (
     <Dialog open={!!camera} onClose={onClose} title={camera ? `Recordings: ${camera.name}` : "Recordings"} size="xl">
-      {camera && <RecordingsBody key={camera.id} cameraId={camera.id} name={camera.name} />}
+      {camera && <RecordingsBody key={`${camera.id}:${camera.channel ?? ""}`} cameraId={camera.id} name={camera.name} channel={camera.channel} />}
     </Dialog>
   );
 }
 
-function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) {
+function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: string; channel?: number }) {
+  const ch = channel ? `&channel=${channel}` : "";
   const [date, setDate] = useState(today);
   const [start, setStart] = useState<string | null>(null);
   const [speed, setSpeed] = useState(1);
@@ -55,7 +56,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
   const [error, setError] = useState<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const video = useQuery({ queryKey: ["live-video"], queryFn: () => api<{ enabled: boolean }>("/cameras/live-video"), staleTime: 5 * 60_000 });
-  const day = useQuery({ queryKey: ["recordings", cameraId, date], queryFn: () => api<Day>(`/cameras/${cameraId}/recordings?date=${date}`) });
+  const day = useQuery({ queryKey: ["recordings", cameraId, channel, date], queryFn: () => api<Day>(`/cameras/${cameraId}/recordings?date=${date}${ch}`) });
   const onFailed = useCallback((m: string) => setError(m), []);
 
   const dayStart = ms(`${date}T00:00:00`);
@@ -91,7 +92,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
     setError(null);
     setFinding(true);
     try {
-      const { oldest } = await api<{ oldest: string | null }>(`/cameras/${cameraId}/recordings/oldest`);
+      const { oldest } = await api<{ oldest: string | null }>(`/cameras/${cameraId}/recordings/oldest${channel ? `?channel=${channel}` : ""}`);
       if (oldest) goTo({ kind: "oldest", at: oldest });
       else setError("The camera has no recordings.");
     } catch (err) {
@@ -167,7 +168,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => shiftDay(-1)} aria-label="Previous day" />
-        <RecordingCalendar cameraId={cameraId} value={date} max={today()} onChange={(d) => (setStart(null), setCursor(null), setDate(d))} />
+        <RecordingCalendar cameraId={cameraId} channel={channel} value={date} max={today()} onChange={(d) => (setStart(null), setCursor(null), setDate(d))} />
         <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => shiftDay(1)} disabled={date >= today()} aria-label="Next day" />
         <Button size="sm" icon={<SkipBack className="h-4 w-4" />} onClick={() => void playOldest()} loading={finding} title="Play from the oldest recording on the camera">From start</Button>
         <Button size="sm" icon={<SkipForward className="h-4 w-4" />} onClick={playLatest} title="Play the newest recording on the camera">Latest</Button>
@@ -184,6 +185,7 @@ function RecordingsBody({ cameraId, name }: { cameraId: string; name: string }) 
             <LiveVideo
               key={`${start}|${Math.max(speed, 1)}`}
               cameraId={cameraId}
+              channel={channel}
               name={name}
               playbackStart={start!}
               speed={speed}

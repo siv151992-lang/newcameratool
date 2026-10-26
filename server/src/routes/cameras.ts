@@ -162,8 +162,11 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
 });
 
 // Live video: registers the camera's stream, then the page opens /api/cameras/:id/live/ws (liveVideoProxy).
+/** An NVR channel (?channel=N or "channel" in the body), for live view and recordings of one of its cameras. */
+const channelOf = (raw: unknown) => parse(z.object({ channel: z.coerce.number().int().min(1).max(256).optional() }), { channel: raw ?? undefined }).channel;
+
 camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
-  await prepareStream(orgOf(req), param(req));
+  await prepareStream(orgOf(req), param(req), channelOf(req.query.channel));
   await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req), details: { video: true } });
   res.json({ ok: true });
 });
@@ -171,33 +174,34 @@ camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveV
 // Recordings on the camera's own storage: what a day holds, and playback from a time (through go2rtc).
 camerasRouter.get("/:id/recordings", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const { date } = parse(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD") }), req.query);
-  res.json(await listRecordings(orgOf(req), param(req), date));
+  res.json(await listRecordings(orgOf(req), param(req), date, channelOf(req.query.channel)));
 });
 camerasRouter.get("/:id/recordings/days", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const { month } = parse(z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Use YYYY-MM") }), req.query);
-  res.json({ month, days: await recordedDays(orgOf(req), param(req), month) });
+  res.json({ month, days: await recordedDays(orgOf(req), param(req), month, channelOf(req.query.channel)) });
 });
 camerasRouter.get("/:id/recordings/oldest", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
-  res.json({ oldest: await oldestRecording(orgOf(req), param(req)) });
+  res.json({ oldest: await oldestRecording(orgOf(req), param(req), channelOf(req.query.channel)) });
 });
 camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
-  const { start, speed } = parse(
+  const { start, speed, channel } = parse(
     z.object({
       start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS"),
       // Faster than normal is asked of the camera; slower is done by the browser.
       speed: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8), z.literal(16)]).optional(),
+      channel: z.number().int().min(1).max(256).optional(),
     }).strict(),
     req.body,
   );
-  const from = await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start, speed);
-  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from, ...(speed && speed > 1 ? { speed } : {}) } });
+  const from = await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start, speed, channel);
+  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from, ...(speed && speed > 1 ? { speed } : {}), ...(channel ? { channel } : {}) } });
   res.json({ ok: true, start: from });
 });
 
 // Live view: the current picture. `start=1` on the first picture of a viewing records it in the audit log.
 camerasRouter.get("/:id/snapshot", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const { start } = parse(z.object({ start: z.literal("1").optional() }), req.query);
-  const snapshot = await getSnapshot(orgOf(req), param(req));
+  const snapshot = await getSnapshot(orgOf(req), param(req), channelOf(req.query.channel));
   if (start) await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.live_view", entityType: "camera", entityId: param(req) });
   res.set({ "Content-Type": snapshot.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" }).send(snapshot.data);
 });

@@ -1,7 +1,7 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
+import { mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
 import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiChannels, parseSunapiError, parseSunapiTimeline, parseSunapiUtcOffset } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
@@ -35,8 +35,13 @@ export class HanwhaAdapter implements CameraBrandAdapter {
   readonly rtspFallbacks = ["/profile1/media.smp", "/0/profile2/media.smp"];
 
   /** The current picture for the live view (SUNAPI snapshot). */
-  getSnapshot(camera: CameraConfig) {
-    return fetchSnapshot(this.http, camera, "/stw-cgi/video.cgi?msubmenu=snapshot&action=view");
+  getSnapshot(camera: CameraConfig, channel = 1) {
+    return fetchSnapshot(this.http, camera, `/stw-cgi/video.cgi?msubmenu=snapshot&action=view${channel > 1 ? `&Channel=${channel - 1}` : ""}`);
+  }
+
+  /** NVR channel N (SUNAPI counts from 0): its second profile, then the first. */
+  channelRtspPaths(channel: number) {
+    return [`/${channel - 1}/profile2/media.smp`, `/${channel - 1}/profile1/media.smp`];
   }
 
   private async getText(camera: CameraConfig, path: string): Promise<string> {
@@ -47,21 +52,21 @@ export class HanwhaAdapter implements CameraBrandAdapter {
    * Recordings between two local times from the SUNAPI timeline (channel 0), which works in UTC:
    * the camera's offset (system date) turns local times into UTC and back (shiftMs).
    */
-  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList> {
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number, channel = 1): Promise<RecordingList> {
     const shiftMs = await this.getText(camera, "/stw-cgi/system.cgi?msubmenu=date&action=view").then(parseSunapiUtcOffset, () => 0);
     const iso = (ms: number) => `${new Date(ms - shiftMs).toISOString().slice(0, 19)}Z`;
     const body = await this.getText(
       camera,
-      `/stw-cgi/recording.cgi?msubmenu=timeline&action=view&ChannelIDList=0&Type=All&FromDate=${encodeURIComponent(iso(fromMs))}&ToDate=${encodeURIComponent(iso(toMs))}`,
+      `/stw-cgi/recording.cgi?msubmenu=timeline&action=view&ChannelIDList=${channel - 1}&Type=All&FromDate=${encodeURIComponent(iso(fromMs))}&ToDate=${encodeURIComponent(iso(toMs))}`,
     );
     const segments = parseSunapiTimeline(body).map((p) => ({ start: p.start + shiftMs, end: p.end + shiftMs }));
     return { segments: mergeSegments(segments), nowMs: Date.now() + shiftMs, shiftMs };
   }
 
   /** Playback from a UTC time (YYYYMMDDhhmmss, to 12 hours later), main profile. */
-  playbackRtspPath(startMs: number): string {
+  playbackRtspPath(startMs: number, _segment?: RecordedSegment, channel = 1): string {
     const c = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace(/[-T:]/g, "");
-    return `/recording/${c(startMs)}-${c(startMs + 12 * 3_600_000)}/play.smp`;
+    return `${channel > 1 ? `/${channel - 1}` : ""}/recording/${c(startMs)}-${c(startMs + 12 * 3_600_000)}/play.smp`;
   }
 
   /** NVR channels: video loss and recording per channel, from the event status. */

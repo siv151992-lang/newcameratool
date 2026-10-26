@@ -81,8 +81,13 @@ export class HikvisionAdapter implements CameraBrandAdapter {
   readonly rtspFallbacks = ["/Streaming/Channels/101", "/ISAPI/Streaming/channels/102"];
 
   /** The current picture for the live view (Main stream of channel 1). */
-  getSnapshot(camera: CameraConfig) {
-    return fetchSnapshot(this.http, camera, "/ISAPI/Streaming/channels/101/picture");
+  getSnapshot(camera: CameraConfig, channel = 1) {
+    return fetchSnapshot(this.http, camera, `/ISAPI/Streaming/channels/${channel}01/picture`);
+  }
+
+  /** NVR channel N: stream N02 (sub), then N01 (main). */
+  channelRtspPaths(channel: number) {
+    return [`/Streaming/Channels/${channel}02`, `/Streaming/Channels/${channel}01`];
   }
 
   private async getXml(camera: CameraConfig, path: string, body?: string): Promise<string> {
@@ -212,14 +217,14 @@ export class HikvisionAdapter implements CameraBrandAdapter {
    * where one segment ends as the next starts. Firmware that answers in UTC is detected as for
    * the recording range and its times shifted to local time (shiftMs).
    */
-  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number): Promise<RecordingList> {
+  async listRecordings(camera: CameraConfig, fromMs: number, toMs: number, channel = 1): Promise<RecordingList> {
     const { nowMs, offsetMinutes } = parseCameraTime(await this.step("reading the camera's clock", () => this.getXml(camera, HIKVISION_TIME_PATH)));
     const search = async (from: number, to: number) => {
       const id = randomUUID().toUpperCase();
       const found: RecordedSegment[] = [];
       for (let page = 0; page < 25; page++) {
         const { segments, more } = await this.step("searching its recordings", async () =>
-          parseSearchSegments(await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(from, to, id, 50, page * 50))),
+          parseSearchSegments(await this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(from, to, id, 50, page * 50, channel * 100 + 1))),
         );
         found.push(...segments);
         if (!more || segments.length === 0) break;
@@ -239,9 +244,9 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     return { segments: mergeSegments(found.map((s) => ({ start: s.start + shiftMs, end: s.end + shiftMs }))), nowMs, shiftMs };
   }
 
-  /** Recordings of track 101 from a camera time (YYYYMMDDTHHMMSSZ, the camera's own clock). */
-  playbackRtspPath(startMs: number): string {
-    return `/Streaming/tracks/101?starttime=${wallClockText(startMs).replace(/[-:]/g, "")}Z`;
+  /** Recordings of track N01 (channel N) from a camera time (YYYYMMDDTHHMMSSZ, the camera's own clock). */
+  playbackRtspPath(startMs: number, _segment?: RecordedSegment, channel = 1): string {
+    return `/Streaming/tracks/${channel}01?starttime=${wallClockText(startMs).replace(/[-:]/g, "")}Z`;
   }
 
   /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */
