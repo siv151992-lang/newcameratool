@@ -57,7 +57,13 @@ export class DahuaRpc {
         contentType: CONTENT_TYPES[t],
         accept: "application/json, text/javascript, */*; q=0.01",
         // As the camera's web page sends them; some firmware refuses requests without.
-        headers: { "X-Requested-With": "XMLHttpRequest", Origin: origin, Referer: `${origin}/` },
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          Origin: origin,
+          Referer: `${origin}/`,
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
         auth: "none",
       });
       if (res.status !== 400) {
@@ -68,7 +74,8 @@ export class DahuaRpc {
     if (res.status === 404) throw new CameraApiError("API_UNAVAILABLE", `The camera does not provide ${path} (HTTP 404)`, { httpStatus: 404 });
     if (res.status < 200 || res.status >= 300) {
       const said = res.body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
-      throw new CameraApiError("API_ERROR", `Camera returned HTTP ${res.status} for ${path}${said ? ` ("${said}")` : ""}`, { httpStatus: res.status });
+      const tried = res.status === 400 && order.length > 1 ? " (sent as JSON and as a form, as the web page does)" : "";
+      throw new CameraApiError("API_ERROR", `Camera returned HTTP ${res.status} for ${path}${said ? ` ("${said}")` : ""}${tried}`, { httpStatus: res.status });
     }
     try {
       return JSON.parse(res.body) as RpcReply;
