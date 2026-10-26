@@ -85,6 +85,8 @@ const baseFields = {
   localStorage: z.boolean().default(true),
   /** "critical": a critical area; listed first, and its problems are raised as critical. */
   priority: z.enum(["critical", "normal"]).default("normal"),
+  /** "nvr": a network video recorder; its hard disks are its storage and its channels are checked too. */
+  deviceType: z.enum(["camera", "nvr"]).default("camera"),
   warningThreshold: threshold,
   criticalThreshold: threshold,
   caCertificate: pemSchema,
@@ -139,7 +141,7 @@ export function defaultPort(brandKey: string, protocol: "http" | "https") {
 
 const SELECT_CAMERA = `
   SELECT c.id, c.name, c.host, c.port, c.protocol, c.brand_key, b.display_name AS brand_name,
-         c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.warning_threshold, c.critical_threshold,
+         c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.device_type, c.warning_threshold, c.critical_threshold,
          (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
          c.created_at, c.updated_at,
          cr.username, cr.updated_at AS credentials_updated_at, cr.password_changed_at, cr.password_issues,
@@ -149,6 +151,10 @@ const SELECT_CAMERA = `
          s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
          s.recording_state, s.recording_detail, s.recording_checked_at,
          s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least,
+         s.channels_error, s.channels_at,
+         (SELECT json_build_object('total', count(*), 'noVideo', count(*) FILTER (WHERE ch.online = false),
+                                   'notRecording', count(*) FILTER (WHERE ch.online IS DISTINCT FROM false AND ch.recording IN ('idle', 'error')))
+          FROM nvr_channels ch WHERE ch.camera_id = c.id) AS channel_counts,
          s.device_model, s.device_serial, s.firmware_version, s.next_check_at,
          (s.check_lock_until IS NOT NULL AND s.check_lock_until > now()) AS check_in_progress,
          (SELECT count(*)::int FROM alerts a WHERE a.camera_id = c.id AND a.status <> 'resolved') AS open_alerts
@@ -192,6 +198,11 @@ export function toCameraView(r: CameraRow) {
     monitoringEnabled: r.monitoring_enabled,
     localStorage: r.local_storage as boolean,
     priority: r.priority as "critical" | "normal",
+    deviceType: (r.device_type as "camera" | "nvr" | undefined) ?? "camera",
+    /** NVRs: how many channels, how many without video and how many not recording (null for cameras). */
+    channels: r.device_type === "nvr"
+      ? { ...((r.channel_counts as { total: number; noVideo: number; notRecording: number } | null) ?? { total: 0, noVideo: 0, notRecording: 0 }), error: (r.channels_error as string | null) ?? null, checkedAt: r.channels_at ?? null }
+      : null,
     warningThreshold: r.warning_threshold,
     criticalThreshold: r.critical_threshold,
     hasCaCertificate: r.has_ca_certificate,
@@ -245,13 +256,14 @@ export type CameraView = ReturnType<typeof toCameraView>;
 export const listQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   brand: z.string().trim().max(40).optional(),
-  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled", "nostoragedevice", "nolocalstorage", "sdproblem", "sdok"]).optional(),
+  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled", "nostoragedevice", "nolocalstorage", "sdproblem", "sdok", "channelproblem"]).optional(),
   location: z.string().trim().max(120).optional(),
   minUsage: z.coerce.number().min(0).max(100).optional(),
   maxUsage: z.coerce.number().min(0).max(100).optional(),
   recording: z.enum(["recording", "idle", "error", "unknown"]).optional(),
   password: z.enum(["ok", "weak", "expired"]).optional(),
   priority: z.enum(["critical", "normal"]).optional(),
+  type: z.enum(["camera", "nvr"]).optional(),
   sort: z.enum(["name", "host", "brand", "location", "connection", "health", "recording", "usage", "lastSuccess", "recordingDays"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   page: z.coerce.number().int().min(1).default(1),
@@ -295,6 +307,10 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
     const none = `NOT EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id)`;
     where.push(`c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND ${q.status === "sdproblem" ? `(${none} OR ${bad})` : `NOT ${none} AND NOT ${bad}`}`);
   }
+  else if (q.status === "channelproblem") {
+    // NVRs with a channel that has no video, or is not recording.
+    where.push(`c.monitoring_enabled AND EXISTS (SELECT 1 FROM nvr_channels ch WHERE ch.camera_id = c.id AND (ch.online = false OR ch.recording IN ('idle', 'error')))`);
+  }
   else if (q.status && ["online", "offline", "unknown"].includes(q.status)) {
     where.push(`c.monitoring_enabled AND s.connection_status = ${p(q.status)}`);
   } else if (q.status) where.push(`c.monitoring_enabled AND s.storage_health = ${p(q.status)}`);
@@ -302,6 +318,7 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
   if (q.maxUsage !== undefined) where.push(`s.used_percentage <= ${p(q.maxUsage)}`);
   if (q.recording) where.push(`c.monitoring_enabled AND s.recording_state = ${p(q.recording)}`);
   if (q.priority) where.push(`c.priority = ${p(q.priority)}`);
+  if (q.type) where.push(`c.device_type = ${p(q.type)}`);
   if (q.password) where.push(`(SELECT ${PASSWORD_STATUS_SQL} FROM camera_credentials cr WHERE cr.camera_id = c.id) = ${p(q.password)}`);
 
   return { clause: where.join(" AND "), params, p };
@@ -363,7 +380,10 @@ export async function getCamera(id: string, orgId: string | null) {
      FROM storage_devices WHERE camera_id = $1 ORDER BY vendor_id`,
     [id],
   );
-  return { ...toCameraView(row), devices: devices.rows };
+  const channels = row.device_type === "nvr"
+    ? (await pool.query(`SELECT channel, name, online, recording, updated_at AS "updatedAt" FROM nvr_channels WHERE camera_id = $1 ORDER BY channel`, [id])).rows
+    : [];
+  return { ...toCameraView(row), devices: devices.rows, channelList: channels };
 }
 
 export async function getSummary(orgId: string) {
@@ -379,9 +399,16 @@ export async function getSummary(orgId: string) {
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND NOT c.local_storage)::int AS without_local_storage,
-            coalesce(sum(d.devices) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_total,
-            coalesce(sum(d.bad) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_error,
-            count(*) FILTER (WHERE c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND coalesce(d.devices, 0) = 0)::int AS sd_missing,
+            coalesce(sum(d.devices) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_total,
+            coalesce(sum(d.bad) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_error,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL AND coalesce(d.devices, 0) = 0)::int AS sd_missing,
+            count(*) FILTER (WHERE c.device_type = 'nvr')::int AS nvr_total,
+            count(*) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.connection_status = 'offline')::int AS nvr_offline,
+            coalesce(sum(d.devices) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.last_success_at IS NOT NULL), 0)::int AS nvr_disks,
+            coalesce(sum(d.bad) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.last_success_at IS NOT NULL), 0)::int AS nvr_disk_error,
+            coalesce(sum(ch.total) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels,
+            coalesce(sum(ch.no_video) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels_no_video,
+            coalesce(sum(ch.not_recording) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels_not_recording,
             count(*) FILTER (WHERE c.priority = 'critical')::int AS critical_area,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND s.connection_status = 'offline')::int AS critical_area_offline,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND EXISTS (
@@ -396,6 +423,10 @@ export async function getSummary(orgId: string) {
      LEFT JOIN LATERAL (
        SELECT count(*) AS devices, count(*) FILTER (WHERE health_status IN ('unhealthy', 'degraded')) AS bad
        FROM storage_devices WHERE camera_id = c.id) d ON true
+     LEFT JOIN LATERAL (
+       SELECT count(*) AS total, count(*) FILTER (WHERE online = false) AS no_video,
+              count(*) FILTER (WHERE online IS DISTINCT FROM false AND recording IN ('idle', 'error')) AS not_recording
+       FROM nvr_channels WHERE camera_id = c.id) ch ON true
      WHERE c.organization_id = $1 AND c.deleted_at IS NULL`,
     [orgId],
   );
@@ -427,6 +458,11 @@ export async function getSummary(orgId: string) {
     /** SD cards (storage devices) of monitored cameras that record locally and were read at least once:
      * how many, how many report an error, and how many such cameras have none. */
     sdCard: { total: r.sd_total, ok: r.sd_total - r.sd_error, error: r.sd_error, camerasWithout: r.sd_missing },
+    /** NVRs: how many, offline, their hard disks (and how many report an error), and their channels. */
+    nvr: {
+      total: r.nvr_total, offline: r.nvr_offline, disks: r.nvr_disks, diskError: r.nvr_disk_error,
+      channels: r.nvr_channels, channelsNoVideo: r.nvr_channels_no_video, channelsNotRecording: r.nvr_channels_not_recording,
+    },
     criticalArea: { total: r.critical_area, offline: r.critical_area_offline, withProblems: r.critical_area_problems },
     alerts: alerts.rows[0],
   };
@@ -442,7 +478,7 @@ function translateUniqueViolation(err: unknown): never {
 }
 
 export async function createCamera(
-  orgId: string, input: Omit<CameraInput, "localStorage" | "priority"> & { localStorage?: boolean; priority?: "critical" | "normal" }, actor: Actor, ip?: string | null, db?: Queryable,
+  orgId: string, input: Omit<CameraInput, "localStorage" | "priority" | "deviceType"> & { localStorage?: boolean; priority?: "critical" | "normal"; deviceType?: "camera" | "nvr" }, actor: Actor, ip?: string | null, db?: Queryable,
 ) {
   const port = input.port ?? defaultPort(input.brand, input.protocol);
   const cipher = getCipher();
@@ -450,12 +486,12 @@ export async function createCamera(
     const { rows } = await client
       .query<{ id: string }>(
         `INSERT INTO cameras (name, host, port, protocol, brand_key, model, location, monitoring_enabled,
-                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id, priority)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id, priority, device_type)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
-          input.caCertificate, actor.id, input.localStorage ?? true, orgId, input.priority ?? "normal",
+          input.caCertificate, actor.id, input.localStorage ?? true, orgId, input.priority ?? "normal", input.deviceType ?? "camera",
         ],
       )
       .catch(translateUniqueViolation);
@@ -470,7 +506,7 @@ export async function createCamera(
     await audit(
       {
         actor, ip, action: "camera.created", entityType: "camera", entityId: id,
-        details: { name: input.name, host: input.host, port, brand: input.brand, protocol: input.protocol },
+        details: { name: input.name, host: input.host, port, brand: input.brand, protocol: input.protocol, ...(input.deviceType === "nvr" ? { deviceType: "nvr" } : {}) },
       },
       client,
     );
@@ -527,7 +563,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
       .query(
         `UPDATE cameras SET name = $2, host = $3, port = $4, protocol = $5, brand_key = $6, model = $7, location = $8,
                 monitoring_enabled = $9, warning_threshold = $10, critical_threshold = $11,
-                ca_certificate = $12, local_storage = $13, priority = $14, updated_at = now()
+                ca_certificate = $12, local_storage = $13, priority = $14, device_type = $15, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -546,6 +582,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
             : patch.caCertificate,
           patch.localStorage ?? current.local_storage,
           patch.priority ?? current.priority,
+          patch.deviceType ?? current.device_type,
         ],
       )
       .catch(translateUniqueViolation);

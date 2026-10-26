@@ -13,7 +13,7 @@ import { ColumnsMenu } from "./ColumnsMenu";
 import { LiveViewDialog } from "./LiveView";
 import { RecordingsDialog } from "./Recordings";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
-import { ConnectionBadge, CriticalAreaBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
+import { ConnectionBadge, CriticalAreaBadge, HealthBadge, NoLocalStorageBadge, NvrBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
 type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays";
@@ -159,7 +159,7 @@ function IconAction({ label, onClick, children, disabled, to }: { label: string;
   );
 }
 
-export function CameraTable({ initialStatus = "", initialRecording = "", initialPassword = "", initialPriority = "", title }: { initialStatus?: string; initialRecording?: string; initialPassword?: string; initialPriority?: string; title?: ReactNode }) {
+export function CameraTable({ initialStatus = "", initialRecording = "", initialPassword = "", initialPriority = "", initialType = "", title }: { initialStatus?: string; initialRecording?: string; initialPassword?: string; initialPriority?: string; initialType?: string; title?: ReactNode }) {
   const { can } = useAuth();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -170,6 +170,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const [recording, setRecording] = useState(initialRecording);
   const [password, setPassword] = useState(initialPassword);
   const [priority, setPriority] = useState(initialPriority);
+  const [type, setType] = useState(initialType);
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
@@ -184,10 +185,10 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const visibleColumns = COLUMNS.filter((col) => columnVisibility.isVisible(col.key));
   const pageSize = 25;
 
-  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording, password, priority]);
+  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording, password, priority, type]);
 
   const { minUsage, maxUsage } = USAGE_FILTERS[usage] ?? {};
-  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, password, priority, sort, order, page, pageSize };
+  const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, password, priority, type, sort, order, page, pageSize };
   const cameras = useQuery({
     queryKey: ["cameras", params],
     queryFn: () => api<Page<Camera>>(`/cameras${toQuery(params)}`),
@@ -221,7 +222,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
     else next.add(id);
     setSelected(next);
   };
-  const filtered = !!(debouncedSearch || brand || status || location || usage || recording || password || priority);
+  const filtered = !!(debouncedSearch || brand || status || location || usage || recording || password || priority || type);
   const clearFilters = () => {
     for (const reset of [setSearch, setBrand, setStatus, setLocation, setUsage, setRecording, setPassword, setPriority]) reset("");
   };
@@ -299,6 +300,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
               <option value="sdok">SD card OK</option>
               <option value="nostoragedevice">No SD card detected</option>
               <option value="nolocalstorage">No local storage (records elsewhere)</option>
+              <option value="channelproblem">NVR channel problem</option>
             </optgroup>
           </Select>
           <Select aria-label="Filter by location" className="w-full" value={location} onChange={(e) => setLocation(e.target.value)}>
@@ -315,6 +317,11 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
             <option value="idle">Not recording</option>
             <option value="error">Recording error</option>
             <option value="unknown">Recording unknown</option>
+          </Select>
+          <Select aria-label="Filter by device type" className="w-full" value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="">Cameras and NVRs</option>
+            <option value="camera">Cameras only</option>
+            <option value="nvr">NVRs only</option>
           </Select>
           <Select aria-label="Filter by priority" className="w-full" value={priority} onChange={(e) => setPriority(e.target.value)}>
             <option value="">Any priority</option>
@@ -460,7 +467,12 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                         {c.host}
                         {c.port !== (c.protocol === "https" ? 443 : 80) && `:${c.port}`} · {c.model ?? "Model unknown"}
                       </div>
-                      {c.priority === "critical" && <div className="mt-1"><CriticalAreaBadge /></div>}
+                      {(c.priority === "critical" || c.deviceType === "nvr") && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {c.deviceType === "nvr" && <NvrBadge channels={c.channels} />}
+                          {c.priority === "critical" && <CriticalAreaBadge />}
+                        </div>
+                      )}
                     </td>
                     {visibleColumns.map((col) => (
                       <td key={col.key} className={clsx("px-2 py-2", col.align === "right" && "text-right", col.cellClassName)}>

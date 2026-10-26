@@ -1,9 +1,9 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { CameraApiError, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordingRange, type RecordingReading, type StorageReading } from "../types.js";
+import { CameraApiError, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordingRange, type RecordingReading, type StorageReading } from "../types.js";
 import { OnvifAdapter } from "../onvif/adapter.js";
-import { parseUniviewContainers, parseUniviewDeviceInfo, parseUniviewError, parseUniviewRecording, parseUniviewStorage } from "./parser.js";
+import { parseUniviewChannels, parseUniviewContainers, parseUniviewDeviceInfo, parseUniviewError, parseUniviewRecording, parseUniviewStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 /** Storage on current firmware (confirmed on IPC815SB-ADF14K-I0); older firmware uses Storage/Disks. */
@@ -61,6 +61,11 @@ export class UniviewAdapter implements CameraBrandAdapter {
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
     return parseUniviewDeviceInfo(await this.getJson(camera, UNIVIEW_DEVICE_INFO_PATH));
+  }
+
+  /** NVR channels (LAPI Channels/System/BasicInfos): names and whether each camera is online. */
+  async getChannels(camera: CameraConfig): Promise<NvrChannel[]> {
+    return parseUniviewChannels(await this.getJson(camera, "/LAPI/V1.0/Channels/System/BasicInfos"));
   }
 
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {

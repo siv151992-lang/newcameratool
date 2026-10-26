@@ -3,6 +3,7 @@ import {
   AUTH_ERROR_CODES,
   NETWORK_ERROR_CODES,
   type CameraErrorCode,
+  type NvrChannel,
   type RecordingReading,
   type StorageHealth,
   type StorageReading,
@@ -19,6 +20,7 @@ export const ALERT_TYPES = [
   "no_storage_device",
   "not_recording",
   "password_change_due",
+  "nvr_channel",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";
@@ -89,6 +91,8 @@ export interface EvaluationInput {
   openTypes: ReadonlySet<AlertType>;
   /** False for cameras that record elsewhere: storage and recording alerts do not apply (and are resolved). */
   localStorage?: boolean;
+  /** An NVR's channels as read in this check; absent when not an NVR or not read. */
+  channels?: NvrChannel[];
 }
 
 export interface Evaluation {
@@ -128,6 +132,29 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
     });
   }
 
+  // NVR channels: cameras the NVR has no video from, or channels not recording. One alert per NVR.
+  if (input.channels) {
+    evaluated.push("nvr_channel");
+    const label = (c: NvrChannel) => `channel ${c.channel}${c.name ? ` (${c.name})` : ""}`;
+    const lost = input.channels.filter((c) => c.online === false);
+    const notRecording = settings.recordingAlertsEnabled
+      ? input.channels.filter((c) => c.online !== false && (c.recording === "idle" || c.recording === "error"))
+      : [];
+    if (lost.length || notRecording.length) {
+      const parts = [
+        lost.length ? `No video from ${lost.map(label).join(", ")}.` : "",
+        notRecording.length ? `Not recording: ${notRecording.map(label).join(", ")}.` : "",
+      ].filter(Boolean);
+      active.push({
+        type: "nvr_channel",
+        severity: lost.length ? "critical" : "warning",
+        title: lost.length ? `NVR: ${lost.length} channel${lost.length === 1 ? "" : "s"} without video` : `NVR: ${notRecording.length} channel${notRecording.length === 1 ? "" : "s"} not recording`,
+        description: parts.join(" "),
+        context: { videoLoss: lost.map((c) => c.channel), notRecording: notRecording.map((c) => c.channel) },
+      });
+    }
+  }
+
   if (input.localStorage === false) {
     evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "not_recording");
     return { active, evaluated };
@@ -158,7 +185,7 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
       type: "no_storage_device",
       severity: "critical",
       title: "No storage device",
-      description: "The camera reports no SD card or storage device. Recording to local storage is not possible.",
+      description: "The device reports no SD card, hard disk or other storage device. Recording to local storage is not possible.",
       context: {},
     });
   }

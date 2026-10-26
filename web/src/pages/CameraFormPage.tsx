@@ -24,6 +24,7 @@ interface FormState {
   monitoringEnabled: boolean;
   localStorage: boolean;
   priority: "critical" | "normal";
+  deviceType: "camera" | "nvr";
   warningThreshold: string;
   criticalThreshold: string;
   caCertificate: string;
@@ -31,13 +32,13 @@ interface FormState {
 
 const EMPTY: FormState = {
   name: "", host: "", brand: "hikvision", model: "", username: "admin", password: "", location: "", port: "",
-  protocol: "http", monitoringEnabled: true, localStorage: true, priority: "normal", warningThreshold: "", criticalThreshold: "", caCertificate: "",
+  protocol: "http", monitoringEnabled: true, localStorage: true, priority: "normal", deviceType: "camera", warningThreshold: "", criticalThreshold: "", caCertificate: "",
 };
 
 function fromCamera(c: CameraDetail): FormState {
   return {
     name: c.name, host: c.host, brand: c.brand, model: c.model ?? "", username: c.username ?? "", password: "",
-    location: c.location ?? "", port: String(c.port), protocol: c.protocol, monitoringEnabled: c.monitoringEnabled, localStorage: c.localStorage ?? true, priority: c.priority ?? "normal",
+    location: c.location ?? "", port: String(c.port), protocol: c.protocol, monitoringEnabled: c.monitoringEnabled, localStorage: c.localStorage ?? true, priority: c.priority ?? "normal", deviceType: c.deviceType ?? "camera",
     warningThreshold: c.warningThreshold?.toString() ?? "", criticalThreshold: c.criticalThreshold?.toString() ?? "", caCertificate: "",
   };
 }
@@ -47,7 +48,7 @@ function toPayload(f: FormState, original?: FormState) {
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const full: Record<string, unknown> = {
     name: f.name, host: f.host, brand: f.brand, model: f.model || null, username: f.username, location: f.location || null,
-    port: num(f.port), protocol: f.protocol, monitoringEnabled: f.monitoringEnabled, localStorage: f.localStorage, priority: f.priority,
+    port: num(f.port), protocol: f.protocol, monitoringEnabled: f.monitoringEnabled, localStorage: f.localStorage, priority: f.priority, deviceType: f.deviceType,
     warningThreshold: num(f.warningThreshold), criticalThreshold: num(f.criticalThreshold),
   };
   if (f.password) full.password = f.password;
@@ -279,6 +280,14 @@ export function CameraFormPage() {
                   checked={form.monitoringEnabled}
                   onChange={(e) => set("monitoringEnabled", e.target.checked)}
                 />
+                <div className="mt-3">
+                  <Checkbox
+                    label="This is an NVR"
+                    description="A network video recorder: its hard disks are monitored as its storage, and each channel (camera) is checked for video and recording."
+                    checked={form.deviceType === "nvr"}
+                    onChange={(e) => setForm((f) => ({ ...f, deviceType: e.target.checked ? "nvr" : "camera", localStorage: e.target.checked ? true : f.localStorage }))}
+                  />
+                </div>
                 <div className="mt-3">
                   <Checkbox
                     label="Records to an SD card or local storage"

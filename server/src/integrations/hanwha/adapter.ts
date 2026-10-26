@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
-import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiError, parseSunapiTimeline, parseSunapiUtcOffset } from "./parser.js";
+import { mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
+import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiChannels, parseSunapiError, parseSunapiTimeline, parseSunapiUtcOffset } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 export const HANWHA_STORAGE_PATH = "/stw-cgi/system.cgi?msubmenu=storageinfo&action=view";
@@ -62,6 +62,11 @@ export class HanwhaAdapter implements CameraBrandAdapter {
   playbackRtspPath(startMs: number): string {
     const c = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace(/[-T:]/g, "");
     return `/recording/${c(startMs)}-${c(startMs + 12 * 3_600_000)}/play.smp`;
+  }
+
+  /** NVR channels: video loss and recording per channel, from the event status. */
+  async getChannels(camera: CameraConfig): Promise<NvrChannel[]> {
+    return parseSunapiChannels(await this.getText(camera, HANWHA_EVENT_STATUS_PATH));
   }
 
   async getStorageStatus(camera: CameraConfig): Promise<StorageReading> {

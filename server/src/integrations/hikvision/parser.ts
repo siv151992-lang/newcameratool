@@ -1,10 +1,12 @@
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { combineRecording, recordingMapper } from "../recording.js";
 import { aggregate } from "../storageMath.js";
+import { parseBoolean } from "../parsing.js";
 import {
   CameraApiError,
   type DeviceHealth,
   type DeviceInfo,
+  type NvrChannel,
   type RecordingReading,
   type StorageDeviceStatus,
   type StorageReading,
@@ -27,7 +29,7 @@ const parser = new XMLParser({
   removeNSPrefix: true,
   parseTagValue: false,   // keep raw strings; numbers are validated explicitly
   trimValues: true,
-  isArray: (name) => ["hdd", "nas", "TrackStatus", "searchMatchItem", "ScheduleAction"].includes(name),
+  isArray: (name) => ["hdd", "nas", "TrackStatus", "searchMatchItem", "ScheduleAction", "InputProxyChannel", "InputProxyChannelStatus"].includes(name),
 });
 
 // Status strings documented/observed for ISAPI <hdd><status>.
@@ -336,4 +338,29 @@ export function recordingFromSegments(nowMs: number, latestEndMs: number | undef
   const nothing = `Nothing recorded in the last ${RECORDING_RECENT_MINUTES} minutes${last}`;
   if (schedule?.continuousAt(nowMs)) return result("error", `Continuous recording is scheduled, but n${nothing.slice(1)}`);
   return result("idle", schedule ? `${nothing} (recording is event-based or outside its schedule)` : nothing);
+}
+
+/**
+ * An NVR's channels: GET /ISAPI/ContentMgmt/InputProxy/channels (each channel's id and name) and
+ * /InputProxy/channels/status (online: whether the NVR gets video from the camera). Recording comes
+ * from Recording/status, whose track 101 is channel 1, 201 channel 2 and so on.
+ */
+export function parseHikvisionChannels(channelsXml: string, statusXml?: string, recording?: RecordingReading): NvrChannel[] {
+  const channels = new Map<number, NvrChannel>();
+  const items = (root: XmlNode, key: string) => ((root[key] as unknown[] | undefined) ?? []).filter((i): i is XmlNode => !!i && typeof i === "object");
+  for (const c of items(findRoot(parseXml(channelsXml), "InputProxyChannelList"), "InputProxyChannel")) {
+    const id = Number(text(c, "id"));
+    if (Number.isInteger(id) && id > 0) channels.set(id, { channel: id, name: text(c, "name") });
+  }
+  if (statusXml) {
+    for (const s of items(findRoot(parseXml(statusXml), "InputProxyChannelStatusList"), "InputProxyChannelStatus")) {
+      const ch = channels.get(Number(text(s, "id")));
+      if (ch) ch.online = parseBoolean(text(s, "online"));
+    }
+  }
+  for (const t of recording?.channels ?? []) {
+    const ch = channels.get(Math.floor(Number(/(\d+)$/.exec(t.id)?.[1]) / 100));
+    if (ch) ch.recording = t.state;
+  }
+  return [...channels.values()].sort((a, b) => a.channel - b.channel);
 }

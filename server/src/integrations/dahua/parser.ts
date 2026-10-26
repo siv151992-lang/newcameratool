@@ -4,6 +4,7 @@ import { COMMON_STATUSES, isAbsentStatus, parseBoolean, parseByteCount, parseKey
 import {
   CameraApiError,
   type DeviceInfo,
+  type NvrChannel,
   type RecordingChannelStatus,
   type RecordingReading,
   type StorageDeviceStatus,
@@ -227,4 +228,40 @@ export function parseDahuaFiles(body: string): { found: number; segments: { star
   }
   const segments = [...items.values()].filter((i): i is { start: number; end: number } => i.start !== undefined && i.end !== undefined && i.end > i.start);
   return { found, segments };
+}
+
+/**
+ * An NVR's channels: configManager.cgi?action=getConfig&name=ChannelTitle (table.ChannelTitle[0].Name=…),
+ * LogicDeviceManager.cgi?action=getCameraState (states[0].channel=0, states[0].connectionState=Connected)
+ * and the recording status of each channel (getRecordStatus). Channels count from 0 in Dahua, from 1 here.
+ */
+export function parseDahuaChannels(titles: string, states?: string, recording?: RecordingReading): NvrChannel[] {
+  const error = parseDahuaError(titles);
+  if (error) throw error;
+  const channels = new Map<number, NvrChannel>();
+  for (const [key, value] of parseKeyValueLines(unescapeLineBreaks(titles))) {
+    const m = /ChannelTitle\[(\d+)\]\.Name$/i.exec(key);
+    if (m) channels.set(Number(m[1]) + 1, { channel: Number(m[1]) + 1, name: value.trim() || undefined });
+  }
+  if (states) {
+    const byIndex = new Map<string, { channel?: number; state?: string }>();
+    for (const [key, value] of parseKeyValueLines(states)) {
+      const m = /states\[(\d+)\]\.(channel|connectionState)$/i.exec(key);
+      if (!m) continue;
+      const e = byIndex.get(m[1]!) ?? {};
+      byIndex.set(m[1]!, e);
+      if (m[2]!.toLowerCase() === "channel") e.channel = Number(value) + 1;
+      else e.state = value.trim();
+    }
+    for (const { channel, state } of byIndex.values()) {
+      const ch = channel ? channels.get(channel) : undefined;
+      if (ch && state) ch.online = /^connected$/i.test(state);
+    }
+  }
+  for (const r of recording?.channels ?? []) {
+    const ch = channels.get(Number(/(\d+)$/.exec(r.id)?.[1]));
+    if (ch) ch.recording = r.state;
+  }
+  if (channels.size === 0) throw new CameraApiError("INVALID_RESPONSE", "The device reported no channels");
+  return [...channels.values()].sort((a, b) => a.channel - b.channel);
 }

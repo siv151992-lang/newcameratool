@@ -10,12 +10,13 @@ import { MockVendorCamera } from "../testing/mockVendor.js";
  *   ... --panasonic                                          (also a simulated Panasonic / i-PRO camera)
  *   ... --uniview                                            (also a simulated Uniview LAPI camera)
  *   ... --hanwha                                             (also a simulated Hanwha Vision SUNAPI camera)
+ *   ... --nvr                                                (also a simulated Hikvision NVR with 8 channels)
  *   ... --search-recording                                   (Hikvision cameras without Recording/status, like
  *                                                            many real IP cameras: recording is found by search)
  * Register them in the app with host 127.0.0.1 (requires CAMERA_ALLOW_LOOPBACK=true, development only).
  */
 const { values } = parseArgs({
-  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false }, panasonic: { type: "boolean", default: false }, uniview: { type: "boolean", default: false }, "search-recording": { type: "boolean", default: false } },
+  options: { port: { type: "string", default: "8081" }, count: { type: "string", default: "3" }, vendor: { type: "boolean", default: false }, hanwha: { type: "boolean", default: false }, panasonic: { type: "boolean", default: false }, uniview: { type: "boolean", default: false }, nvr: { type: "boolean", default: false }, "search-recording": { type: "boolean", default: false } },
 });
 const base = Number(values.port);
 const count = Math.min(Number(values.count), 20);
@@ -74,3 +75,15 @@ if (values.uniview) {
   console.log(`Simulated Uniview camera: http://127.0.0.1:${port}  user=admin password=Unv-Passw0rd!  (LAPI, Digest)`);
 }
 console.log("\nThese are SIMULATED devices for demos. Press Ctrl+C to stop.");
+if (values.nvr) {
+  // A Hikvision NVR with two hard disks and eight channels: one camera without video, one not recording.
+  const nvr = new MockHikvisionCamera("admin", "Nvr-Passw0rd!", [
+    { id: 1, name: "hdd1", status: "ok", capacityMb: 3815447, freeMb: 512000, property: "RW", formatType: "EXT4" },
+    { id: 2, name: "hdd2", status: "ok", capacityMb: 3815447, freeMb: 1300000, property: "RW", formatType: "EXT4" },
+  ]);
+  nvr.nvrChannels = ["Gate", "Lobby", "Parking A", "Parking B", "Corridor 1F", "Corridor 2F", "Warehouse", "Back door"].map((name, i) => ({
+    name, online: i !== 6, recording: i !== 3,
+  }));
+  const port = await nvr.start(base + count + 10);
+  console.log(`Simulated Hikvision NVR: http://127.0.0.1:${port}  user=admin password=Nvr-Passw0rd!  (2 disks, 8 channels: 1 without video, 1 not recording)`);
+}

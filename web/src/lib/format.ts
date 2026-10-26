@@ -80,6 +80,7 @@ export const ALERT_TYPE_LABELS: Record<string, string> = {
   no_storage_device: "No storage device",
   not_recording: "Not recording",
   password_change_due: "Camera password change due",
+  nvr_channel: "NVR channel problem",
 };
 
 /** Category of the last error, so users can tell unreachable vs auth vs API vs disk problems apart. */

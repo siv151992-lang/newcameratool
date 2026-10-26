@@ -76,6 +76,8 @@ export class MockHikvisionCamera {
    * visible through the recording search (System/time, ContentMgmt/search, record/tracks/101).
    */
   recordingStatusApi = true;
+  /** Set to simulate an NVR: its channels (cameras), with video or not, recording or not. */
+  nvrChannels?: { name: string; online: boolean; recording: boolean }[];
   /** Search mode: the camera's UTC offset, and whether search replies are in UTC (as some firmware does). */
   utcOffsetMinutes = 0;
   searchRepliesUtc = false;
@@ -89,6 +91,19 @@ export class MockHikvisionCamera {
   private server?: http.Server;
   private readonly nonces = new Set<string>();
   private readonly realm = "IP Camera(SIM)";
+
+  /** An NVR's channel list, channel status and per-channel recording status (ISAPI InputProxy). */
+  private nvrRoutes(channels: { name: string; online: boolean; recording: boolean }[]): Record<string, () => string> {
+    const ns = 'version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"';
+    return {
+      "/ISAPI/ContentMgmt/InputProxy/channels": () =>
+        `<?xml version="1.0" encoding="UTF-8"?><InputProxyChannelList ${ns}>${channels.map((c, i) => `<InputProxyChannel><id>${i + 1}</id><name>${c.name}</name></InputProxyChannel>`).join("")}</InputProxyChannelList>`,
+      "/ISAPI/ContentMgmt/InputProxy/channels/status": () =>
+        `<?xml version="1.0" encoding="UTF-8"?><InputProxyChannelStatusList ${ns}>${channels.map((c, i) => `<InputProxyChannelStatus><id>${i + 1}</id><online>${c.online}</online><chanDetectResult>${c.online ? "connect" : "offline"}</chanDetectResult></InputProxyChannelStatus>`).join("")}</InputProxyChannelStatusList>`,
+      "/ISAPI/ContentMgmt/Recording/status": () =>
+        `<?xml version="1.0" encoding="UTF-8"?><RecordingStatus ${ns}><status>${channels.some((c) => c.recording) ? "recording" : "notRecording"}</status><TrackStatusList>${channels.map((c, i) => `<TrackStatus><id>${i + 1}01</id><videoRecordStatus>${c.recording && c.online ? "recording" : "notRecording"}</videoRecordStatus></TrackStatus>`).join("")}</TrackStatusList></RecordingStatus>`,
+    };
+  }
 
   constructor(
     public username = "admin",
@@ -159,6 +174,7 @@ export class MockHikvisionCamera {
       // broken recording state breaks the search too.
       ...(["recording", "idle", "error"].includes(this.recording) ? this.searchRoutes(body) : {}),
       ...(this.recordingStatusApi ? { "/ISAPI/ContentMgmt/Recording/status": () => recordingXml(this.recording) } : {}),
+      ...(this.nvrChannels ? this.nvrRoutes(this.nvrChannels) : {}),
     };
     if (this.mode === "not-found" || !routes[path]) {
       res.statusCode = 404;

@@ -114,6 +114,10 @@ export interface Camera {
   credentialsUpdatedAt: string | null;
   /** "critical": a critical area, listed first, problems raised as critical. */
   priority: "critical" | "normal";
+  /** "nvr": a network video recorder (its hard disks and channels are checked). */
+  deviceType: "camera" | "nvr";
+  /** NVRs: channel counts, and why channels could not be read (null for cameras). */
+  channels: { total: number; noVideo: number; notRecording: number; error: string | null; checkedAt: string | null } | null;
   /** The camera password against the organization's camera password policy. */
   password: { status: CameraPasswordStatus; issues: CameraPasswordIssue[]; changedAt: string | null };
   createdAt: string;
@@ -167,8 +171,19 @@ export interface StorageDevice {
   updatedAt: string;
 }
 
+export interface NvrChannel {
+  channel: number;
+  name: string | null;
+  /** False: the NVR has no video from this camera. */
+  online: boolean | null;
+  recording: RecordingState | null;
+  updatedAt: string;
+}
+
 export interface CameraDetail extends Camera {
   devices: StorageDevice[];
+  /** NVRs: each channel (empty for cameras). */
+  channelList: NvrChannel[];
 }
 
 export interface Page<T> {
@@ -198,6 +213,7 @@ export interface Summary {
   withoutLocalStorage: number;
   criticalArea: { total: number; offline: number; withProblems: number };
   sdCard: { total: number; ok: number; error: number; camerasWithout: number };
+  nvr: { total: number; offline: number; disks: number; diskError: number; channels: number; channelsNoVideo: number; channelsNotRecording: number };
   alerts: { active: number; acknowledged: number; critical: number };
 }
 

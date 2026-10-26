@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, Clock, FilePen, FlaskConical, HardDriveDownload, KeyRound, ShieldAlert, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, Clock, FilePen, FlaskConical, HardDriveDownload, KeyRound, Server, ShieldAlert, WifiOff } from "lucide-react";
 import type { CameraPasswordStatus, ConnectionStatus, IntegrationStatus, RecordingState, Severity, StorageHealth } from "../api/types";
 
 /**
@@ -129,6 +129,14 @@ export function PasswordBadge({ status, title }: { status: CameraPasswordStatus;
 }
 
 /** A camera in a critical area: listed first, its problems raised as critical. */
+/** An NVR, with how many channels and any channel problems. */
+export function NvrBadge({ channels }: { channels: { total: number; noVideo: number; notRecording: number } | null }) {
+  const problems = channels ? channels.noVideo + channels.notRecording : 0;
+  const label = `NVR${channels?.total ? ` · ${channels.total} ch` : ""}${problems ? ` · ${problems} issue${problems === 1 ? "" : "s"}` : ""}`;
+  const title = channels ? `${channels.total} channels: ${channels.noVideo} without video, ${channels.notRecording} not recording` : "Network video recorder";
+  return <Pill tone={problems ? (channels!.noVideo ? "bad" : "warn") : "good"} icon={Server} label={label} title={title} />;
+}
+
 export function CriticalAreaBadge() {
   return <Pill tone="bad" icon={ShieldAlert} label="Critical area" title="Listed first; every problem is raised as critical" />;
 }

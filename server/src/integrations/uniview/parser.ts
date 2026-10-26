@@ -4,6 +4,7 @@ import { COMMON_STATUSES, MIB, isAbsentStatus, parseByteCount, statusMapper } fr
 import {
   CameraApiError,
   type DeviceInfo,
+  type NvrChannel,
   type RecordingChannelStatus,
   type RecordingReading,
   type StorageDeviceStatus,
@@ -218,4 +219,27 @@ export function parseUniviewRecording(body: string): RecordingReading {
     .map((item, i) => toChannel(item, `channel-${str(item, "ID", "ChannelID", "Id") ?? i + 1}`))
     .filter((c): c is RecordingChannelStatus => c !== undefined);
   return combineRecording(channels);
+}
+
+/**
+ * An NVR's channels: GET /LAPI/V1.0/Channels/System/BasicInfos, a list of channels with their ID,
+ * Name and Status (1 or "Online" when the NVR has video from the camera). Field names vary by
+ * firmware, so the usual alternatives are read.
+ */
+export function parseUniviewChannels(body: string): NvrChannel[] {
+  const data = unwrapLapi(body);
+  const listed = Array.isArray(data)
+    ? data
+    : isObject(data)
+      ? (Object.values(data).find((v) => Array.isArray(v)) as unknown[] | undefined) ?? []
+      : [];
+  const channels = listed.filter(isObject).flatMap((c): NvrChannel[] => {
+    const id = Number(field(c, "ID", "ChannelID", "Id"));
+    if (!Number.isInteger(id) || id < 1) return [];
+    const status = field(c, "Status", "OnlineStatus", "IsOnline", "Online");
+    const online = status === undefined ? undefined : status === 1 || status === true || /^(1|online|true)$/i.test(String(status));
+    return [{ channel: id, name: str(c, "Name", "ChannelName"), online }];
+  });
+  if (channels.length === 0) throw new CameraApiError("INVALID_RESPONSE", "The device reported no channels");
+  return channels.sort((a, b) => a.channel - b.channel);
 }

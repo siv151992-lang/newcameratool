@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
-import { dahuaTime, dahuaTimeMs, parseDahuaDeviceInfo, parseDahuaError, parseDahuaFiles, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
+import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
+import { dahuaTime, dahuaTimeMs, parseDahuaChannels, parseDahuaDeviceInfo, parseDahuaError, parseDahuaFiles, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 export const DAHUA_STORAGE_PATH = "/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo";
@@ -46,6 +46,14 @@ export class DahuaAdapter implements CameraBrandAdapter {
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
     return parseDahuaDeviceInfo(await this.getText(camera, DAHUA_DEVICE_INFO_PATH));
+  }
+
+  /** NVR channels: names, whether each camera is connected, and whether each channel is recording. */
+  async getChannels(camera: CameraConfig): Promise<NvrChannel[]> {
+    const titles = await this.getText(camera, "/cgi-bin/configManager.cgi?action=getConfig&name=ChannelTitle");
+    const states = await this.getText(camera, "/cgi-bin/LogicDeviceManager.cgi?action=getCameraState&uniqueChannels[0]=-1").catch(() => undefined);
+    const recording = await this.getRecordingStatus(camera).catch(() => undefined);
+    return parseDahuaChannels(titles, states, recording);
   }
 
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {

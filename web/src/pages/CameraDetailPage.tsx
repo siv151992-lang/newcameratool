@@ -203,7 +203,7 @@ export function CameraDetailPage() {
       <ProblemPanel camera={c} />
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <Card title="Storage" className="lg:col-span-2">
+        <Card title={c.deviceType === "nvr" ? "Hard disks" : "Storage"} className="lg:col-span-2">
           <div className="p-4">
             {c.localStorage === false ? (
               <EmptyState
@@ -240,7 +240,7 @@ export function CameraDetailPage() {
           {c.devices.length > 0 && (
             <div className="overflow-x-auto border-t border-line">
               <table className="w-full text-left text-sm">
-                <caption className="sr-only">Storage devices</caption>
+                <caption className="sr-only">{c.deviceType === "nvr" ? "Hard disks" : "Storage devices"}</caption>
                 <thead className="text-xs text-ink-secondary">
                   <tr>
                     <th scope="col" className="px-4 py-2 font-medium">Device</th>
@@ -326,6 +326,8 @@ export function CameraDetailPage() {
             </div>
           </dl>
         </Card>
+
+        {c.deviceType === "nvr" && <NvrChannelsCard camera={c} />}
 
         <Card
           title="Storage utilisation history"
@@ -506,5 +508,63 @@ function PasswordDetail({ camera: c }: { camera: CameraDetail }) {
         {p && p.maxAgeDays > 0 ? `; the policy asks for a new password every ${p.maxAgeDays} days` : ""}. Change it on the camera, then enter the new one under Edit.
       </p>
     </>
+  );
+}
+
+/** An NVR's channels: each camera on it, whether the NVR has its video and whether it is recording. */
+function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
+  const ch = c.channels;
+  return (
+    <Card
+      title={`Channels${ch?.total ? ` (${ch.total})` : ""}`}
+      className="lg:col-span-3"
+      actions={ch && ch.total > 0 ? (
+        <span className="text-xs text-ink-secondary">
+          {ch.noVideo === 0 && ch.notRecording === 0 ? "All channels have video and are recording" : [ch.noVideo && `${ch.noVideo} without video`, ch.notRecording && `${ch.notRecording} not recording`].filter(Boolean).join(" · ")}
+          {ch.checkedAt && ` · checked ${relativeTime(ch.checkedAt)}`}
+        </span>
+      ) : undefined}
+    >
+      {c.channelList.length === 0 ? (
+        <div className="p-4">
+          <EmptyState
+            title={ch?.error ? "Channels could not be read" : "No channels yet"}
+            description={ch?.error ?? "The NVR's channels are read on every check. Use Refresh now to read them."}
+          />
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">NVR channels</caption>
+            <thead className="text-xs text-ink-secondary">
+              <tr>
+                <th scope="col" className="px-4 py-2 font-medium">Channel</th>
+                <th scope="col" className="px-4 py-2 font-medium">Camera</th>
+                <th scope="col" className="px-4 py-2 font-medium">Video</th>
+                <th scope="col" className="px-4 py-2 font-medium">Recording</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.channelList.map((x) => (
+                <tr key={x.channel} className={clsx("border-t border-line", x.online === false && "bg-bad/5")}>
+                  <td className="tabular px-4 py-2 font-medium">D{x.channel}</td>
+                  <td className="px-4 py-2">{x.name ?? <span className="text-ink-muted">—</span>}</td>
+                  <td className="px-4 py-2">
+                    {x.online === false ? (
+                      <span className="inline-flex items-center gap-1.5 font-medium text-bad"><WifiOff className="h-3.5 w-3.5" aria-hidden /> No video</span>
+                    ) : x.online ? (
+                      <span className="inline-flex items-center gap-1.5 text-good"><Video className="h-3.5 w-3.5" aria-hidden /> Video</span>
+                    ) : (
+                      <span className="text-ink-muted">Unknown</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2">{x.recording ? <RecordingBadge state={x.recording} /> : <span className="text-ink-muted">Not reported</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }

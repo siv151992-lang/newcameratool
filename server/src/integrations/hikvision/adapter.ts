@@ -8,6 +8,7 @@ import {
   type CameraConfig,
   type ConnectionResult,
   type DeviceInfo,
+  type NvrChannel,
   type RecordingRange,
   type RecordingReading,
   type StorageReading,
@@ -18,6 +19,7 @@ import {
 import {
   parseCameraTime,
   parseDeviceInfoXml,
+  parseHikvisionChannels,
   parseRecordingStatusXml,
   parseResponseStatus,
   parseSearchLatestEnd,
@@ -118,6 +120,17 @@ export class HikvisionAdapter implements CameraBrandAdapter {
    * Live status from Recording/status when the camera provides it; otherwise (many IP cameras
    * answer it with 404) inferred from the newest recorded segment on the camera's storage.
    */
+  /**
+   * NVR channels: the IP cameras added to the NVR (InputProxy), whether each has video, and
+   * whether it is recording (Recording/status tracks). An IP camera has no InputProxy (404).
+   */
+  async getChannels(camera: CameraConfig): Promise<NvrChannel[]> {
+    const channels = await this.getXml(camera, "/ISAPI/ContentMgmt/InputProxy/channels");
+    const status = await this.getXml(camera, "/ISAPI/ContentMgmt/InputProxy/channels/status").catch(() => undefined);
+    const recording = await this.getXml(camera, HIKVISION_RECORDING_PATH).then(parseRecordingStatusXml, () => undefined);
+    return parseHikvisionChannels(channels, status, recording);
+  }
+
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
     const key = `${camera.host}:${camera.port}`;
     if ((this.noStatusApi.get(key) ?? 0) < Date.now()) {

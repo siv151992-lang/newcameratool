@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, Download, HardDrive, MemoryStick, Plus, RefreshCw, ShieldAlert, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, Download, HardDrive, MemoryStick, Plus, RefreshCw, Server, ShieldAlert, Video, WifiOff } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -96,7 +96,7 @@ export function DashboardPage() {
           value={s?.sdCard.total ?? "—"}
           icon={<MemoryStick className={`${icon} ${s && s.sdCard.error + s.sdCard.camerasWithout > 0 ? "text-bad" : "text-good"}`} />}
           hint={s ? sdCardHint(s.sdCard) : undefined}
-          to={s && s.sdCard.error + s.sdCard.camerasWithout > 0 ? "/cameras?status=sdproblem" : "/cameras?status=sdok"}
+          to={s && s.sdCard.error + s.sdCard.camerasWithout > 0 ? "/cameras?type=camera&status=sdproblem" : "/cameras?type=camera&status=sdok"}
         />
         <StatTile
           label="Total capacity"
@@ -106,6 +106,34 @@ export function DashboardPage() {
         />
         <StatTile label="Used" value={s ? formatBytes(s.usedBytes) : "—"} icon={<HardDrive className={icon} />} hint={usedPct !== null ? `${usedPct.toFixed(1)}% of capacity` : undefined} />
         <StatTile label="Available" value={s ? formatBytes(s.freeBytes) : "—"} icon={<HardDrive className={icon} />} />
+      </div>
+
+      {/* NVRs: the recorders, their hard disks and their channels. */}
+      <h2 className="mb-2 mt-6 flex items-center gap-2 text-sm font-semibold text-ink-secondary">
+        <Server className="h-4 w-4" aria-hidden /> NVRs
+      </h2>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <StatTile
+          label="NVRs"
+          value={s?.nvr.total ?? "—"}
+          icon={<Server className={`${icon} ${s?.nvr.offline ? "text-bad" : ""}`} />}
+          hint={s ? (s.nvr.total === 0 ? "Add one under Cameras → Add camera, and tick “This is an NVR”" : s.nvr.offline ? `${s.nvr.offline} offline` : "All online") : undefined}
+          to={s?.nvr.offline ? "/cameras?type=nvr&status=offline" : "/cameras?type=nvr"}
+        />
+        <StatTile
+          label="NVR hard disks"
+          value={s?.nvr.disks ?? "—"}
+          icon={<HardDrive className={`${icon} ${s?.nvr.diskError ? "text-bad" : s?.nvr.disks ? "text-good" : ""}`} />}
+          hint={s && s.nvr.total > 0 ? (s.nvr.diskError ? `${s.nvr.diskError} reporting an error` : `${s.nvr.disks} OK`) : undefined}
+          to={s?.nvr.diskError ? "/cameras?type=nvr&status=sdproblem" : "/cameras?type=nvr"}
+        />
+        <StatTile
+          label="NVR channels"
+          value={s?.nvr.channels ?? "—"}
+          icon={<Video className={`${icon} ${s && s.nvr.channelsNoVideo ? "text-bad" : s?.nvr.channelsNotRecording ? "text-warn" : s?.nvr.channels ? "text-good" : ""}`} />}
+          hint={s && s.nvr.total > 0 ? (s.nvr.channelsNoVideo + s.nvr.channelsNotRecording ? [s.nvr.channelsNoVideo && `${s.nvr.channelsNoVideo} without video`, s.nvr.channelsNotRecording && `${s.nvr.channelsNotRecording} not recording`].filter(Boolean).join(" · ") : "All with video and recording") : undefined}
+          to={s && s.nvr.channelsNoVideo + s.nvr.channelsNotRecording ? "/cameras?type=nvr&status=channelproblem" : "/cameras?type=nvr"}
+        />
       </div>
 
       {s && s.totalCameras === 0 && (

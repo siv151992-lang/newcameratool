@@ -9,6 +9,7 @@ import {
   type CameraBrandAdapter,
   type CameraConfig,
   type DeviceInfo,
+  type NvrChannel,
   type RecordingReading,
   type StorageReading,
 } from "../integrations/types.js";
@@ -117,11 +118,12 @@ export async function runCheck(
   let result: CheckResult;
   let deviceInfo: DeviceInfo | undefined;
   let recording: RecordingReading | undefined;
+  let channels: { list?: NvrChannel[]; error?: string } | undefined;
   let config: CameraConfig | undefined;
   let integrationVersion: string | undefined;
   try {
     const cam = await pool.query(
-      "SELECT brand_key, monitoring_enabled, local_storage, deleted_at, organization_id FROM cameras WHERE id = $1",
+      "SELECT brand_key, monitoring_enabled, local_storage, deleted_at, organization_id, device_type FROM cameras WHERE id = $1",
       [cameraId],
     );
     const row = cam.rows[0];
@@ -154,6 +156,7 @@ export async function runCheck(
       recording = local
         ? await readRecording(adapter, cfg)
         : { state: "unknown", channels: [], detail: "No local storage: this camera records elsewhere (e.g. an NVR)" };
+      if (row.device_type === "nvr") channels = await readChannels(adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
       if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);
     } catch (err) {
@@ -161,7 +164,7 @@ export async function runCheck(
       result = toFailure(err, [config?.password]);
     }
 
-    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, recording, settings, integrationVersion);
+    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, recording, settings, integrationVersion, channels);
     deps.notifier.dispatch(events).catch((err) => logger.error({ err: (err as Error).message }, "Notification dispatch failed"));
     return { cameraId, status: "completed", result, attempts, durationMs: Date.now() - started };
   } finally {
@@ -182,6 +185,20 @@ async function reachability(adapter: CameraBrandAdapter, cfg: CameraConfig): Pro
     if (["CREDENTIALS_UNAVAILABLE", "UNSUPPORTED_BRAND", "HOST_NOT_ALLOWED", "INVALID_HOST"].includes(err.code)) throw err;
   }
   return { devices: [] };
+}
+
+/**
+ * An NVR's channels. Best effort like recording: one attempt, and a failure is kept as the reason
+ * (no channel alerts are raised or resolved without a reading).
+ */
+async function readChannels(adapter: CameraBrandAdapter, cfg: CameraConfig): Promise<{ list?: NvrChannel[]; error?: string }> {
+  if (!adapter.getChannels) return { error: "Channels are not available for this brand" };
+  try {
+    return { list: await adapter.getChannels(cfg) };
+  } catch (err) {
+    const msg = err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : "unexpected error";
+    return { error: `Channels could not be read: ${msg}` };
+  }
 }
 
 /**
@@ -263,6 +280,7 @@ async function persist(
   recording: RecordingReading | undefined,
   settings: MonitoringSettings,
   integrationVersion?: string,
+  channels?: { list?: NvrChannel[]; error?: string },
 ): Promise<NotificationEvent[]> {
   return withTransaction(async (db) => {
     const { rows } = await db.query(
@@ -401,8 +419,23 @@ async function persist(
       thresholds,
       settings,
       localStorage,
+      channels: result.ok ? channels?.list : undefined,
       openTypes: await openAlertTypes(cameraId, db),
     });
+    if (channels) {
+      if (channels.list) {
+        const list = channels.list;
+        await db.query("DELETE FROM nvr_channels WHERE camera_id = $1 AND NOT (channel = ANY($2::int[]))", [cameraId, list.map((c) => c.channel)]);
+        for (const c of list) {
+          await db.query(
+            `INSERT INTO nvr_channels (camera_id, channel, name, online, recording, updated_at) VALUES ($1,$2,$3,$4,$5, now())
+             ON CONFLICT (camera_id, channel) DO UPDATE SET name = EXCLUDED.name, online = EXCLUDED.online, recording = EXCLUDED.recording, updated_at = now()`,
+            [cameraId, c.channel, c.name?.slice(0, 120) ?? null, c.online ?? null, c.recording ?? null],
+          );
+        }
+      }
+      await db.query("UPDATE camera_status SET channels_error = $2, channels_at = now() WHERE camera_id = $1", [cameraId, channels.error?.slice(0, 500) ?? null]);
+    }
     // The password's age is known whatever the check found: due a change, or not (resolved).
     const policy = await getCameraPasswordPolicy(cam.organization_id, db);
     const due = credentialsFor(cam.brand_key) === "user_password"

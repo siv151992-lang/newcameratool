@@ -102,6 +102,16 @@ export interface RecordingChannelStatus {
   mode?: string;
 }
 
+/** One channel (camera) of an NVR. */
+export interface NvrChannel {
+  /** Channel number, from 1. */
+  channel: number;
+  name?: string;
+  /** Whether the NVR has video from the camera on this channel (false: video loss / disconnected). */
+  online?: boolean;
+  recording?: RecordingState;
+}
+
 export interface RecordingReading {
   state: RecordingState;
   channels: RecordingChannelStatus[];
@@ -222,6 +232,8 @@ export interface CameraBrandAdapter {
   liveRtspUrl?(camera: CameraConfig): Promise<string>;
   /** Optional: the RTSP path of a stream browsers can play (H.264, usually the second stream), for live video. */
   readonly rtspPath?: string;
+  /** Optional, for NVRs: each channel's camera name, whether it has video and whether it is recording. */
+  getChannels?(camera: CameraConfig): Promise<NvrChannel[]>;
   /** Optional: other RTSP paths to try for live video when rtspPath does not answer (other streams, models or firmware). */
   readonly rtspFallbacks?: readonly string[];
   /** Optional: the current picture, for the live view. */

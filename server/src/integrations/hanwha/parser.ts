@@ -1,6 +1,6 @@
 import { COMMON_STATUSES, isAbsentStatus, MIB, parseBoolean, parseKeyValueLines, statusMapper } from "../parsing.js";
 import { aggregate } from "../storageMath.js";
-import { CameraApiError, type DeviceInfo, type RecordingReading, type RecordingState, type StorageDeviceStatus, type StorageReading } from "../types.js";
+import { CameraApiError, type DeviceInfo, type NvrChannel, type RecordingReading, type RecordingState, type StorageDeviceStatus, type StorageReading } from "../types.js";
 
 /**
  * Hanwha Vision (Wisenet) SUNAPI replies. Depending on firmware, a "view" request answers either with
@@ -227,4 +227,26 @@ export function parseSunapiTimeline(body: string): { start: number; end: number 
     periods.set(m[1]!, p);
   }
   return [...periods.values()].filter((p): p is { start: number; end: number } => p.start !== undefined && p.end !== undefined && p.end > p.start);
+}
+
+/**
+ * An NVR's channels from SUNAPI event status (eventstatus.cgi?msubmenu=eventstatus&action=check):
+ * "Channel.0.VideoLoss=False" (or JSON ChannelEvent[0].VideoLoss), and recording where reported
+ * ("Channel.0.Recording" / "Record"). Channels count from 0 in SUNAPI, from 1 here.
+ */
+export function parseSunapiChannels(body: string): NvrChannel[] {
+  const channels = new Map<number, NvrChannel>();
+  for (const [key, value] of parseSunapiBody(body)) {
+    const m = /(?:^|\.)(?:Channel|ChannelEvent)\.(\d+)\.(\w+)$/i.exec(key);
+    if (!m) continue;
+    const n = Number(m[1]) + 1;
+    const ch = channels.get(n) ?? { channel: n };
+    channels.set(n, ch);
+    const prop = m[2]!.toLowerCase();
+    const flag = parseBoolean(value);
+    if (prop === "videoloss" && flag !== undefined) ch.online = !flag;
+    if ((prop === "recording" || prop === "record") && flag !== undefined) ch.recording = flag ? "recording" : "idle";
+  }
+  if (channels.size === 0) throw new CameraApiError("API_UNAVAILABLE", "The device reported no channels in its event status");
+  return [...channels.values()].sort((a, b) => a.channel - b.channel);
 }
