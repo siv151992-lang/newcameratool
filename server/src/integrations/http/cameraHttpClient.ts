@@ -42,6 +42,8 @@ export interface CameraRequest {
    * Any 401 after that is an authentication failure.
    */
   auth?: "auto" | "digest" | "none" | { authorization: string };
+  /** A Cookie header, for camera APIs that also want their session as a cookie (set by adapters only). */
+  cookie?: string;
   /** The path as it may appear in error messages (e.g. with an API key in the query redacted). */
   displayPath?: string;
   /** Keep the body as bytes in `raw` (images), with this size limit instead of the default. */
@@ -146,6 +148,7 @@ export class CameraHttpClient {
       Connection: "close",
     });
     if (authorization) headers.Authorization = authorization;
+    if (request.cookie && !/[\r\n]/.test(request.cookie)) headers.Cookie = request.cookie;
     if (body !== undefined) {
       headers["Content-Type"] = request.contentType ?? "application/octet-stream";
       headers["Content-Length"] = String(Buffer.byteLength(body, "utf8"));

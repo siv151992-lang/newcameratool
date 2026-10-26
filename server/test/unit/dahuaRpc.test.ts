@@ -9,13 +9,14 @@ const md5 = (s: string) => createHash("md5").update(s).digest("hex").toUpperCase
 const camera: CameraConfig = { host: "10.251.130.50", port: 443, protocol: "https", username: "admin", password: "Cp-Pass-123", timeoutMs: 5000 };
 
 /** Like a CP Plus CP-UNC-TC81ZL6C-VMD-LQ: /cgi-bin is 404, the web page's RPC API is /cpapi2. */
-function cpPlus(needsObject = false, formOnly = false) {
+function cpPlus(needsObject = false, web5 = false) {
   const calls: { path: string; body: Record<string, unknown>; contentType?: string }[] = [];
   const http = {
     request: async (_cfg: CameraConfig, req: CameraRequest) => {
       const body = req.body ? (JSON.parse(req.body) as Record<string, unknown>) : {};
       calls.push({ path: req.path, body, contentType: req.contentType });
-      if (formOnly && req.path.startsWith("/cpapi2") && req.contentType === "application/json") return { status: 400, headers: {}, body: "<html><body>400 Bad Request</body></html>" };
+      // Web5.0 firmware: only user.signin logs in; global.login is a bad request.
+      if (web5 && req.path === "/cpapi2_Login" && body.method !== "user.signin") return { status: 400, headers: {}, body: "" };
       const json = (o: object) => ({ status: 200, headers: {}, body: JSON.stringify({ id: body.id, ...o }) });
       if (req.path === "/cpapi2_Login") {
         const p = body.params as Record<string, string>;
@@ -70,15 +71,17 @@ describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
     ]);
   });
 
-  it("sends the web page's form content type when the camera refuses JSON (HTTP 400)", async () => {
+  it("logs in with user.signin (Web5.0) when the camera refuses global.login (HTTP 400)", async () => {
     const { http, calls } = cpPlus(false, true);
     const adapter = new DahuaAdapter(http);
     expect((await adapter.getStorageStatus(camera)).devices).toHaveLength(1);
     await adapter.getDeviceInfo(camera);
-    // JSON is tried once; the form type is then used for every call.
-    const rpc = calls.filter((c) => c.path.startsWith("/cpapi2"));
-    expect(rpc.filter((c) => c.contentType === "application/json")).toHaveLength(1);
-    expect(rpc.slice(1).every((c) => c.contentType?.startsWith("application/x-www-form-urlencoded"))).toBe(true);
+    const logins = calls.filter((c) => c.path === "/cpapi2_Login").map((c) => [c.body.method, (c.body.params as { clientType: string }).clientType]);
+    // global.login is tried once; user.signin is then used for both logins.
+    expect(logins).toEqual([
+      ["global.login", "Web3.0"], ["user.signin", "Web5.0"], ["user.signin", "Web5.0"],
+      ["user.signin", "Web5.0"], ["user.signin", "Web5.0"],
+    ]);
   });
 
   it("reports a refused login", async () => {

@@ -31,51 +31,39 @@ export function rpcPasswordHash(encryption: string, user: string, password: stri
 }
 
 /**
- * How the body is labelled. Dahua answers JSON; some CP Plus firmware refuses it (HTTP 400) and
- * only takes what its web page sends (jQuery's default form type, with the JSON as the body).
+ * The two login dialects: Dahua's Web3.0 page (global.login) and the newer Web5.0 page on CP Plus
+ * firmware (user.signin), which answers global.login with HTTP 400. The challenge, the password hash
+ * and the calls after login are the same.
  */
-const CONTENT_TYPES = ["application/json", "application/x-www-form-urlencoded; charset=UTF-8"] as const;
+const DIALECTS = [
+  { method: "global.login", params: { clientType: "Web3.0", loginType: "Direct" } },
+  { method: "user.signin", params: { clientType: "Web5.0" } },
+] as const;
 
 export class DahuaRpc {
   private id = 0;
-  /** The content type each camera took, by host and port. */
-  private readonly types = new Map<string, number>();
+  /** The dialect each camera logs in with, by host and port. */
+  private readonly dialects = new Map<string, number>();
 
   constructor(private readonly http: CameraHttpClient) {}
 
-  private async post(camera: CameraConfig, path: string, body: object): Promise<RpcReply> {
-    const key = `${camera.host}:${camera.port}`;
-    const known = this.types.get(key);
-    const order = known === undefined ? [0, 1] : [known];
+  private async post(camera: CameraConfig, path: string, body: object, session?: string): Promise<RpcReply> {
     const origin = `${camera.protocol}://${camera.host}${(camera.protocol === "https" ? camera.port === 443 : camera.port === 80) ? "" : `:${camera.port}`}`;
-    let res!: Awaited<ReturnType<CameraHttpClient["request"]>>;
-    for (const t of order) {
-      res = await this.http.request(camera, {
-        method: "POST",
-        path,
-        body: JSON.stringify({ ...body, id: ++this.id }),
-        contentType: CONTENT_TYPES[t],
-        accept: "application/json, text/javascript, */*; q=0.01",
-        // As the camera's web page sends them; some firmware refuses requests without.
-        headers: {
-          "X-Requested-With": "XMLHttpRequest",
-          Origin: origin,
-          Referer: `${origin}/`,
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-        auth: "none",
-      });
-      if (res.status !== 400) {
-        if (res.status >= 200 && res.status < 300) this.types.set(key, t);
-        break;
-      }
-    }
+    const res = await this.http.request(camera, {
+      method: "POST",
+      path,
+      body: JSON.stringify({ ...body, id: ++this.id }),
+      contentType: "application/json",
+      accept: "application/json, text/plain, */*",
+      // As the camera's web page sends them.
+      headers: { Origin: origin, Referer: `${origin}/`, "Accept-Language": "en-US,en;q=0.9" },
+      cookie: session ? `username=${encodeURIComponent(camera.username)}; WebClientHttpsSessionID=${session}; WebClientSessionID=${session}` : undefined,
+      auth: "none",
+    });
     if (res.status === 404) throw new CameraApiError("API_UNAVAILABLE", `The camera does not provide ${path} (HTTP 404)`, { httpStatus: 404 });
     if (res.status < 200 || res.status >= 300) {
       const said = res.body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
-      const tried = res.status === 400 && order.length > 1 ? " (sent as JSON and as a form, as the web page does)" : "";
-      throw new CameraApiError("API_ERROR", `Camera returned HTTP ${res.status} for ${path}${said ? ` ("${said}")` : ""}${tried}`, { httpStatus: res.status });
+      throw new CameraApiError("API_ERROR", `Camera returned HTTP ${res.status} for ${path}${said ? ` ("${said}")` : ""}`, { httpStatus: res.status });
     }
     try {
       return JSON.parse(res.body) as RpcReply;
@@ -87,19 +75,37 @@ export class DahuaRpc {
   /** Logs in and returns the session. */
   async login(camera: CameraConfig, base: RpcBase): Promise<string> {
     const path = `${base}_Login`;
-    const params = { userName: camera.username, password: "", clientType: "Web3.0", loginType: "Direct" };
-    const challenge = await this.post(camera, path, { method: "global.login", params });
-    const p = challenge.params ?? {};
-    const session = challenge.session;
+    const key = `${camera.host}:${camera.port}`;
+    const known = this.dialects.get(key);
+    const order = known === undefined ? [0, 1] : [known];
+    let challenge: RpcReply | undefined;
+    let dialect: (typeof DIALECTS)[number] = DIALECTS[0];
+    for (const [i, d] of order.entries()) {
+      dialect = DIALECTS[d]!;
+      try {
+        challenge = await this.post(camera, path, { method: dialect.method, params: { userName: camera.username, password: "", ...dialect.params } });
+      } catch (err) {
+        // HTTP 400: this firmware does not know the method; try the other dialect.
+        if (i < order.length - 1 && err instanceof CameraApiError && err.options.httpStatus === 400) continue;
+        throw err;
+      }
+      const p = challenge.params ?? {};
+      if (typeof p.realm === "string" && typeof p.random === "string") {
+        this.dialects.set(key, d);
+        break;
+      }
+      if (i === order.length - 1) break;
+    }
+    const p = challenge?.params ?? {};
+    const session = challenge?.session;
     if (session === undefined || typeof p.realm !== "string" || typeof p.random !== "string") {
       throw new CameraApiError("INVALID_RESPONSE", `The camera did not start a login on ${path}`);
     }
     const encryption = typeof p.encryption === "string" ? p.encryption : "Default";
     const hash = rpcPasswordHash(encryption, camera.username, camera.password, p.realm, p.random);
-    // As the web page sends it (passwordType is new in Web3.0 firmware; older firmware ignores it).
     const reply = await this.post(camera, path, {
-      method: "global.login",
-      params: { ...params, password: hash, authorityType: encryption, passwordType: encryption },
+      method: dialect.method,
+      params: { userName: camera.username, password: hash, ...dialect.params, authorityType: encryption, passwordType: encryption },
       session,
     }).catch((err: unknown) => {
       if (err instanceof CameraApiError && err.code === "API_ERROR") throw new CameraApiError("API_ERROR", `${err.message} (on the second login step, with the password)`, err.options);
@@ -113,7 +119,7 @@ export class DahuaRpc {
   }
 
   private async send(camera: CameraConfig, base: RpcBase, session: string, method: string, params: unknown, object?: unknown): Promise<RpcReply> {
-    const reply = await this.post(camera, base, { method, params, session, ...(object !== undefined ? { object } : {}) });
+    const reply = await this.post(camera, base, { method, params, session, ...(object !== undefined ? { object } : {}) }, session);
     if (reply.result === false || reply.error) {
       const msg = reply.error?.message || "the call was refused";
       const code = reply.error?.code === 287637505 || /no.?session|invalid session/i.test(msg) ? "AUTH_FAILED" : "API_ERROR";
@@ -147,7 +153,7 @@ export class DahuaRpc {
   }
 
   logout(camera: CameraConfig, base: RpcBase, session: string) {
-    return this.post(camera, base, { method: "global.logout", params: null, session }).catch(() => undefined);
+    return this.post(camera, base, { method: "global.logout", params: null, session }, session).catch(() => undefined);
   }
 
   /** Logs in, runs `work`, and logs out. */
