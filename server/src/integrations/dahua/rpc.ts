@@ -56,8 +56,15 @@ export class DahuaRpc {
       contentType: "application/json",
       accept: "application/json, text/plain, */*",
       // As the camera's web page sends them.
-      headers: { Origin: origin, Referer: `${origin}/`, "Accept-Language": "en-US,en;q=0.9" },
-      cookie: session ? `username=${encodeURIComponent(camera.username)}; WebClientHttpsSessionID=${session}; WebClientSessionID=${session}` : undefined,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "Accept-Encoding": "identity",
+        "Accept-Language": "en-US,en;q=0.9",
+        Origin: origin,
+        Referer: `${origin}/`,
+      },
+      cookie: `username=${encodeURIComponent(camera.username)}; curLanguage=English${session ? `; WebClientHttpsSessionID=${session}; WebClientSessionID=${session}` : ""}`,
+      keepAlive: true,
       auth: "none",
     });
     if (res.status === 404) throw new CameraApiError("API_UNAVAILABLE", `The camera does not provide ${path} (HTTP 404)`, { httpStatus: 404 });
@@ -87,6 +94,9 @@ export class DahuaRpc {
       } catch (err) {
         // HTTP 400: this firmware does not know the method; try the other dialect.
         if (i < order.length - 1 && err instanceof CameraApiError && err.options.httpStatus === 400) continue;
+        if (order.length > 1 && err instanceof CameraApiError && err.options.httpStatus === 400) {
+          throw new CameraApiError("API_ERROR", `${err.message} (refused both global.login and user.signin)`, err.options);
+        }
         throw err;
       }
       const p = challenge.params ?? {};

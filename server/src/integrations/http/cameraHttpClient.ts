@@ -44,6 +44,8 @@ export interface CameraRequest {
   auth?: "auto" | "digest" | "none" | { authorization: string };
   /** A Cookie header, for camera APIs that also want their session as a cookie (set by adapters only). */
   cookie?: string;
+  /** Ask for a kept-alive connection, as browsers do (some camera web servers refuse "close"); it is closed after the reply. */
+  keepAlive?: boolean;
   /** The path as it may appear in error messages (e.g. with an API key in the query redacted). */
   displayPath?: string;
   /** Keep the body as bytes in `raw` (images), with this size limit instead of the default. */
@@ -138,14 +140,14 @@ export class CameraHttpClient {
     const isHttps = camera.protocol === "https";
     const hostHeader = (isIP(camera.host) === 6 ? `[${camera.host}]` : camera.host) +
       (camera.port === (isHttps ? 443 : 80) ? "" : `:${camera.port}`);
-    const headers: Record<string, string> = {};
+    // Host first, as browsers send it; some camera web servers expect that.
+    const headers: Record<string, string> = { Host: hostHeader };
     for (const [k, v] of Object.entries(request.headers ?? {})) {
       if (!RESERVED_HEADERS.has(k.toLowerCase()) && !/[\r\n]/.test(k + v)) headers[k] = v;
     }
     Object.assign(headers, {
-      Host: hostHeader,
       Accept: request.accept ?? "application/xml, text/xml, */*",
-      Connection: "close",
+      Connection: request.keepAlive ? "keep-alive" : "close",
     });
     if (authorization) headers.Authorization = authorization;
     if (request.cookie && !/[\r\n]/.test(request.cookie)) headers.Cookie = request.cookie;
@@ -193,6 +195,7 @@ export class CameraHttpClient {
         });
         res.on("end", () => {
           clearTimeout(timer);
+          if (request.keepAlive) res.socket?.destroy();
           const challenges: string[] = [];
           for (let i = 0; i < res.rawHeaders.length; i += 2) {
             if (res.rawHeaders[i]!.toLowerCase() === "www-authenticate") challenges.push(res.rawHeaders[i + 1]!);
