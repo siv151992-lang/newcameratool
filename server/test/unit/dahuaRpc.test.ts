@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { DahuaAdapter } from "../../src/integrations/dahua/adapter.js";
-import { parseRpcStorage, rpcPasswordHash } from "../../src/integrations/dahua/rpc.js";
+import { DahuaRpc, parseRpcStorage, rpcPasswordHash } from "../../src/integrations/dahua/rpc.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
 
@@ -84,6 +84,26 @@ describe("Dahua RPC API (RPC2 / CP Plus cpapi2)", () => {
   it("reports a refused login", async () => {
     const { http } = cpPlus();
     await expect(new DahuaAdapter(http).getStorageStatus({ ...camera, password: "wrong" })).rejects.toMatchObject({ code: "AUTH_FAILED" });
+  });
+
+  it("logs in with the challenge a CP Plus camera sends", async () => {
+    // As captured from a CP-UNC-TC81ZL6C-VMD-LQ (authorityType and qop are lists; random is negative).
+    const challenge = { error: { code: 268632079, message: "Component error: login challenge!" }, id: 8, params: { authorityType: ["Default"], authorization: "", encryption: "Default", opaque: "206da593220355afcb40abf239824edd", qop: ["auth"], random: "-620111643", realm: "Login to 29f1fc5f4a16e81104f1ef6aa431f36d" }, result: false, session: "11eff635868cd7ddf4632556afe073d2" };
+    let second: Record<string, unknown> | undefined;
+    const http = {
+      request: async (_c: CameraConfig, req: CameraRequest) => {
+        const body = JSON.parse(req.body!) as Record<string, unknown>;
+        if ((body.params as { password?: string }).password === "") return { status: 200, headers: {}, body: JSON.stringify(challenge) };
+        second = body;
+        return { status: 200, headers: {}, body: JSON.stringify({ id: body.id, result: true, session: challenge.session, params: { keepAliveInterval: 60 } }) };
+      },
+    } as unknown as CameraHttpClient;
+    expect(await new DahuaRpc(http).login(camera, "/cpapi2")).toBe(challenge.session);
+    expect(second).toMatchObject({
+      method: "global.login",
+      session: challenge.session,
+      params: { userName: "admin", clientType: "Web3.0", loginType: "Direct", authorityType: "Default", passwordType: "Default", password: md5(`admin:-620111643:${md5("admin:Login to 29f1fc5f4a16e81104f1ef6aa431f36d:Cp-Pass-123")}`) },
+    });
   });
 
   it("marks a disk reporting an error as unhealthy", () => {

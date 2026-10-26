@@ -89,10 +89,14 @@ export class DahuaRpc {
     }
     const encryption = typeof p.encryption === "string" ? p.encryption : "Default";
     const hash = rpcPasswordHash(encryption, camera.username, camera.password, p.realm, p.random);
+    // As the web page sends it (passwordType is new in Web3.0 firmware; older firmware ignores it).
     const reply = await this.post(camera, path, {
       method: "global.login",
-      params: { ...params, password: hash, authorityType: encryption },
+      params: { ...params, password: hash, authorityType: encryption, passwordType: encryption },
       session,
+    }).catch((err: unknown) => {
+      if (err instanceof CameraApiError && err.code === "API_ERROR") throw new CameraApiError("API_ERROR", `${err.message} (on the second login step, with the password)`, err.options);
+      throw err;
     });
     if (reply.result !== true) {
       const why = reply.error?.message ? `: ${reply.error.message}` : "";
