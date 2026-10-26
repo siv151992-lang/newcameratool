@@ -256,7 +256,10 @@ auditRouter.get("/", requirePermission("audit:read"), async (req, res) => {
       pageSize: z.coerce.number().int().min(1).max(200).default(50),
       entityType: z.string().max(40).optional(),
       entityId: z.string().max(80).optional(),
-    }),
+      from: day.optional(),
+      to: day.optional(),
+      timeZone: z.string().min(1).max(64).default("UTC"),
+    }).refine((v) => !v.from || !v.to || v.from <= v.to, { message: "From must not be after To", path: ["from"] }),
     req.query,
   );
   res.json(await listAudit(auditScope(req), q));

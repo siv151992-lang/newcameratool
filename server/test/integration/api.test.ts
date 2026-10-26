@@ -422,6 +422,12 @@ describe("alerts and settings", () => {
     expect(exported[0].details).toMatchObject({ from: "2026-10-22", to: "2026-10-22" });
     // Browsers report India as the legacy Asia/Calcutta, which PostgreSQL does not know.
     expect((await agent.get("/api/audit/export?timeZone=Asia/Calcutta&from=2026-10-22&to=2026-10-22").expect(200)).text).toContain("2026-10-22 01:30:00,admin-user,camera.created");
+    // The list on the page filters by the same days.
+    const day = (await agent.get("/api/audit?timeZone=Asia/Kolkata&from=2026-10-22&to=2026-10-22").expect(200)).body;
+    expect(day.items.map((a: { action: string }) => a.action)).toEqual(["camera.created"]);
+    expect(day.total).toBe(1);
+    expect((await agent.get("/api/audit?timeZone=UTC&from=2026-10-22&to=2026-10-22").expect(200)).body.total).toBe(0);
+    await agent.get("/api/audit?from=2026-10-23&to=2026-10-22").expect(400);
     await agent.get("/api/audit/export?timeZone=Mars/Olympus").expect(400);
     await agent.get("/api/audit/export?from=2026-10-23&to=2026-10-22").expect(400);
     await (await signIn("viewer")).agent.get("/api/audit/export").expect(403);

@@ -51,11 +51,20 @@ function scopeFilter(scope: AuditScope, params: unknown[]) {
   return scope.includeServerWide ? `(a.organization_id = ${org} OR a.organization_id IS NULL)` : `a.organization_id = ${org}`;
 }
 
-export async function listAudit(scope: AuditScope, opts: { page: number; pageSize: number; entityType?: string; entityId?: string }) {
+/** Entries on calendar days `from` to `to` (inclusive), in the viewer's time zone. */
+function dayFilter(opts: { from?: string; to?: string; timeZone?: string }, where: string[], params: unknown[]) {
+  const zone = opts.timeZone ?? "UTC";
+  if (opts.from || opts.to) zonedParts(Date.now(), zone); // validates the zone
+  if (opts.from) where.push(`a.created_at >= $${params.push(startOfDay(opts.from, zone))}`);
+  if (opts.to) where.push(`a.created_at < $${params.push(startOfDay(nextDay(opts.to), zone))}`);
+}
+
+export async function listAudit(scope: AuditScope, opts: { page: number; pageSize: number; entityType?: string; entityId?: string; from?: string; to?: string; timeZone?: string }) {
   const params: unknown[] = [];
   const where: string[] = [scopeFilter(scope, params)];
   if (opts.entityType) where.push(`a.entity_type = $${params.push(opts.entityType)}`);
   if (opts.entityId) where.push(`a.entity_id = $${params.push(opts.entityId)}`);
+  dayFilter(opts, where, params);
   const clause = `WHERE ${where.join(" AND ")}`;
   const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_logs a ${clause}`, params)).rows[0]!.n;
   params.push(opts.pageSize, (opts.page - 1) * opts.pageSize);
@@ -92,8 +101,7 @@ export async function exportAuditCsv(scope: AuditScope, opts: { from?: string; t
   zonedParts(Date.now(), opts.timeZone); // validates the zone
   const params: unknown[] = [];
   const where: string[] = [scopeFilter(scope, params)];
-  if (opts.from) where.push(`a.created_at >= $${params.push(startOfDay(opts.from, opts.timeZone))}`);
-  if (opts.to) where.push(`a.created_at < $${params.push(startOfDay(nextDay(opts.to), opts.timeZone))}`);
+  dayFilter(opts, where, params);
   params.push(AUDIT_EXPORT_MAX_ROWS);
   const { rows } = await pool.query(
     `SELECT a.created_at, a.actor_username, a.action,

@@ -843,23 +843,30 @@ function AccountTab() {
 
 function AuditTab() {
   const [page, setPage] = useState(1);
+  const [from, setFromDay] = useState("");
+  const [to, setToDay] = useState("");
+  const setFrom = (v: string) => { setFromDay(v); setPage(1); };
+  const setTo = (v: string) => { setToDay(v); setPage(1); };
+  const rangeInvalid = !!from && !!to && from > to;
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const filtered = !!(from || to);
   // Polled so new entries appear without reloading; mutations also invalidate it (main.tsx).
   const audit = useQuery({
-    queryKey: ["audit", page],
-    queryFn: () => api<Page<AuditEntry>>(`/audit${toQuery({ page, pageSize: 50 })}`),
+    queryKey: ["audit", page, from, to],
+    queryFn: () => api<Page<AuditEntry>>(`/audit${toQuery({ page, pageSize: 50, from, to, ...(filtered ? { timeZone } : {}) })}`),
+    enabled: !rangeInvalid,
     refetchInterval: 5_000,
     staleTime: 0,
+    placeholderData: (prev) => prev,
   });
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
   const [downloading, setDownloading] = useState(false);
-  const rangeInvalid = !!from && !!to && from > to;
+  const today = new Date().toLocaleDateString("en-CA");
+  const showDay = (d: string) => { setFromDay(d); setToDay(d); setPage(1); };
   const download = async () => {
     setDownloading(true);
     try {
-      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
       await downloadFile(`/audit/export${toQuery({ from, to, timeZone })}`, "audit-log.csv");
       void queryClient.invalidateQueries({ queryKey: ["audit"] }); // the export is itself audited
     } catch (e) {
@@ -894,11 +901,15 @@ function AuditTab() {
         <Field label="To" className="w-40">
           {(id, describedBy) => <Input id={id} aria-describedby={describedBy} type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} invalid={rangeInvalid} />}
         </Field>
+        <Button variant="secondary" onClick={() => showDay(today)} aria-pressed={from === today && to === today}>Today</Button>
+        {filtered && <Button variant="ghost" onClick={() => showDay("")}>Show all</Button>}
         <Button icon={<Download className="h-4 w-4" />} onClick={download} loading={downloading} disabled={rangeInvalid}>
           Download CSV
         </Button>
-        <p className="text-xs text-ink-secondary">
-          {rangeInvalid ? "“From” must not be after “To”." : `${from || to ? "Entries in the selected days" : "All entries"}, newest first, times in your time zone. Opens in Excel.`}
+        <p className="text-xs text-ink-secondary" aria-live="polite">
+          {rangeInvalid
+            ? "“From” must not be after “To”."
+            : `${filtered ? `Showing ${audit.data?.total ?? "…"} ${audit.data?.total === 1 ? "entry" : "entries"} ${from === to ? `on ${from.split("-").reverse().join("-")}` : "in the selected days"}` : "All entries"}, newest first, times in your time zone. The CSV has the same entries.`}
         </p>
       </div>
       {audit.isLoading ? <Spinner /> : audit.error ? <div className="p-4"><ErrorMessage error={audit.error} /></div> : (
@@ -935,6 +946,7 @@ function AuditTab() {
               </tbody>
             </table>
           </div>
+          {audit.data?.total === 0 && <p className="border-t border-line px-4 py-6 text-center text-sm text-ink-secondary">{filtered ? "No entries on the selected days." : "No entries yet."}</p>}
           {audit.data && <div className="border-t border-line"><Pagination page={page} pageSize={50} total={audit.data.total} onPage={setPage} /></div>}
         </>
       )}
