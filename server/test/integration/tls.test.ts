@@ -48,4 +48,31 @@ describe("HTTPS cameras with their own certificate", () => {
 
     await agent.post("/api/cameras/tls-certificate").set("X-CSRF-Token", csrf).send({ host: "8.8.8.8", port: 443 }).expect(400);
   });
+
+  it("trusts the camera's own certificate when it also sends its own root (Dahua: SELF_SIGNED_CERT_IN_CHAIN)", async () => {
+    const leaf = readFileSync(new URL("../fixtures/camera-chain-leaf.pem", import.meta.url), "utf8");
+    const root = readFileSync(new URL("../fixtures/camera-chain-root.pem", import.meta.url), "utf8");
+    const chained = new MockHikvisionCamera("admin", "Cam-Pass-123");
+    const chainPort = await chained.start(0, "127.0.0.1", { cert: leaf + root, key: readFileSync(new URL("../fixtures/camera-chain.key", import.meta.url), "utf8") });
+    try {
+      const { username } = await createTestUser("admin", "chain-admin");
+      const agent = request.agent(app);
+      const csrf = (await agent.post("/api/auth/login").send({ username, password: PASSWORD }).expect(200)).body.csrfToken as string;
+      const id = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf)
+        .send({ name: "Dahua", host: "127.0.0.1", port: chainPort, protocol: "https", brand: "Hikvision", username: "admin", password: "Cam-Pass-123" })
+        .expect(201)).body.id as string;
+      await agent.post(`/api/cameras/${id}/check-storage`).set("X-CSRF-Token", csrf).expect(200);
+      expect((await agent.get(`/api/cameras/${id}`).expect(200)).body.status.lastErrorMessage).toMatch(/SELF_SIGNED_CERT_IN_CHAIN/);
+
+      const fetched = (await agent.post("/api/cameras/tls-certificate").set("X-CSRF-Token", csrf).send({ host: "127.0.0.1", port: chainPort }).expect(200)).body;
+      expect(fetched.fingerprint256).toBe(new X509Certificate(leaf).fingerprint256);
+      await agent.patch(`/api/cameras/${id}`).set("X-CSRF-Token", csrf).send({ caCertificate: fetched.pem }).expect(200);
+      await agent.post(`/api/cameras/${id}/check-storage`).set("X-CSRF-Token", csrf).expect(200);
+      const detail = (await agent.get(`/api/cameras/${id}`).expect(200)).body;
+      expect(detail.status.lastErrorMessage, detail.status.lastErrorMessage).toBeNull();
+      expect(detail.status.totalBytes).toBeGreaterThan(0);
+    } finally {
+      await chained.stop();
+    }
+  });
 });

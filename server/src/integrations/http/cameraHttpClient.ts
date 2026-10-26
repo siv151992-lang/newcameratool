@@ -163,7 +163,12 @@ export class CameraHttpClient {
     if (isHttps) {
       options.rejectUnauthorized = true;
       if (!isIP(camera.host)) options.servername = camera.host;
-      if (camera.caCertificate) options.ca = camera.caCertificate;
+      if (camera.caCertificate) {
+        options.ca = camera.caCertificate;
+        // A trusted camera certificate counts on its own, even when the camera also sends its own
+        // (untrusted) root above it, as Dahua cameras do (SELF_SIGNED_CERT_IN_CHAIN otherwise).
+        (options as https.RequestOptions & { allowPartialTrustChain?: boolean }).allowPartialTrustChain = true;
+      }
       // Verify the certificate against the configured host, not the pinned address.
       // The camera's own certificate, trusted on purpose (pinned): the exact certificate is what counts,
       // since such certificates rarely name the address the camera is reached at.
