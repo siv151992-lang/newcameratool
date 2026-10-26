@@ -28,6 +28,7 @@ import {
 import { testCameraConfig, testSavedCamera } from "../services/connectionService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
+import { fetchCameraCertificate } from "../services/tlsCertificate.js";
 import { listRecordings, liveVideoEnabled, oldestRecording, preparePlayback, recordedDays, prepareStream } from "../services/liveVideoService.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
@@ -146,6 +147,12 @@ camerasRouter.post("/:id/monitoring", write, async (req, res) => {
 });
 
 // Test a saved camera, optionally with unsaved edits applied (blank password keeps the stored one).
+// The certificate a camera presents on HTTPS, to check its fingerprint and trust it (camera form).
+camerasRouter.post("/tls-certificate", write, deviceLimiter, async (req, res) => {
+  const { host, port } = parse(z.object({ host: z.string().trim().min(1).max(253), port: z.coerce.number().int().min(1).max(65535).default(443) }).strict(), req.body);
+  res.json(await fetchCameraCertificate(host, port));
+});
+
 camerasRouter.post("/:id/test-connection", check, deviceLimiter, async (req, res) => {
   const overrides = parse(cameraUpdateSchema, req.body ?? {});
   if (Object.keys(overrides).length > 0 && !req.auth!.user.permissions.includes("cameras:write")) {

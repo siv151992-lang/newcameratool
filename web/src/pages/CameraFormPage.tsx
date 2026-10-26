@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, PlugZap, Save, X } from "lucide-react";
+import { Check, KeyRound, PlugZap, Save, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
@@ -256,13 +256,18 @@ export function CameraFormPage() {
             )}
             {form.protocol === "https" && (
               <div className="border-t border-line p-4">
+                <CameraCertificate
+                  host={form.host}
+                  port={form.port}
+                  onTrust={(pem) => set("caCertificate", pem)}
+                />
                 <Field
                   label="Camera CA certificate (optional)"
                   error={errors.caCertificate}
                   hint={
                     editing && camera.data?.hasCaCertificate
                       ? "A certificate is stored. Paste a new PEM to replace it."
-                      : "If the camera uses a self-signed certificate, paste it (PEM) here so it can be verified. Certificate checks are never disabled."
+                      : "Cameras usually make their own (self-signed) certificate: get it above and trust it, or paste a certificate (PEM). Certificate checks are never disabled."
                   }
                 >
                   {(fid, d) => <Textarea id={fid} aria-describedby={d} placeholder="-----BEGIN CERTIFICATE-----" value={form.caCertificate} onChange={(e) => set("caCertificate", e.target.value)} />}
@@ -384,6 +389,60 @@ function PasswordChecklist({ password, username }: { password: string; username:
         ))}
       </ul>
       <p className="mt-2 text-xs text-ink-secondary">Set the same password on the camera itself; this app only stores it to read the camera.</p>
+    </div>
+  );
+}
+
+interface FetchedCertificate {
+  pem: string;
+  fingerprint256: string;
+  subject: string;
+  issuer: string;
+  validFrom: string;
+  validTo: string;
+  selfSigned: boolean;
+}
+
+/**
+ * Gets the certificate the camera presents on HTTPS and shows its fingerprint, so the user can
+ * trust that exact certificate (it becomes the camera's TLS CA certificate).
+ */
+function CameraCertificate({ host, port, onTrust }: { host: string; port: string; onTrust: (pem: string) => void }) {
+  const [trusted, setTrusted] = useState<string | null>(null);
+  const fetchCert = useMutation({
+    mutationFn: () => api<FetchedCertificate>("/cameras/tls-certificate", { method: "POST", body: { host, port: port.trim() ? Number(port) : 443 } }),
+    onSuccess: () => setTrusted(null),
+  });
+  const c = fetchCert.data;
+  return (
+    <div className="mb-4 rounded-md border border-line bg-raised/40 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-ink-secondary">Most cameras use their own certificate for HTTPS. Get it, check it, and trust it for this camera.</p>
+        <Button size="sm" icon={<KeyRound className="h-4 w-4" />} onClick={() => fetchCert.mutate()} loading={fetchCert.isPending} disabled={!host.trim()}>
+          Get the camera's certificate
+        </Button>
+      </div>
+      {fetchCert.error && <ErrorMessage error={fetchCert.error} className="mt-2" />}
+      {c && (
+        <div className="mt-3 space-y-2 text-sm">
+          <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr]">
+            <dt className="text-ink-secondary">Issued to</dt>
+            <dd className="break-all">{c.subject}{c.selfSigned && <span className="ml-2 text-xs text-ink-muted">(self-signed)</span>}</dd>
+            <dt className="text-ink-secondary">Valid</dt>
+            <dd>{c.validFrom.slice(0, 10)} to {c.validTo.slice(0, 10)}</dd>
+            <dt className="text-ink-secondary">SHA-256 fingerprint</dt>
+            <dd className="break-all font-mono text-xs">{c.fingerprint256}</dd>
+          </dl>
+          <p className="text-xs text-ink-muted">If you can, compare the fingerprint with the one the camera's web page shows, then trust it.</p>
+          {trusted === c.fingerprint256 ? (
+            <p className="flex items-center gap-1.5 text-sm text-good"><ShieldCheck className="h-4 w-4" aria-hidden /> Trusted: save the camera to keep it.</p>
+          ) : (
+            <Button size="sm" variant="primary" icon={<ShieldCheck className="h-4 w-4" />} onClick={() => { onTrust(c.pem); setTrusted(c.fingerprint256); }}>
+              Trust this certificate
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

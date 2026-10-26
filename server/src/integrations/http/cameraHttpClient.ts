@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
@@ -165,7 +165,10 @@ export class CameraHttpClient {
       if (!isIP(camera.host)) options.servername = camera.host;
       if (camera.caCertificate) options.ca = camera.caCertificate;
       // Verify the certificate against the configured host, not the pinned address.
-      options.checkServerIdentity = (_h, cert) => checkServerIdentity(camera.host, cert);
+      // The camera's own certificate, trusted on purpose (pinned): the exact certificate is what counts,
+      // since such certificates rarely name the address the camera is reached at.
+      const pinned = pinnedFingerprint(camera.caCertificate);
+      options.checkServerIdentity = (_h, cert) => (pinned && cert.fingerprint256 === pinned ? undefined : checkServerIdentity(camera.host, cert));
     }
 
     return new Promise<RawResponse>((resolve, reject) => {
@@ -208,6 +211,16 @@ function timeoutError(ms: number) {
   return new CameraApiError("TIMEOUT", `No response from the camera within ${Math.round(ms / 1000)} seconds`, { transient: true });
 }
 
+/** The SHA-256 fingerprint of a single PEM certificate (a camera's own certificate, pinned), else undefined. */
+export function pinnedFingerprint(pem: string | null | undefined): string | undefined {
+  if (!pem || (pem.match(/BEGIN CERTIFICATE/g) ?? []).length !== 1) return undefined;
+  try {
+    return new X509Certificate(pem).fingerprint256;
+  } catch {
+    return undefined;
+  }
+}
+
 const TLS_CODES = /^(ERR_TLS|ERR_SSL|CERT_|DEPTH_ZERO|SELF_SIGNED|UNABLE_TO_|ERR_OSSL|EPROTO)/;
 
 export function classifyNetworkError(err: Error & { code?: string }): CameraApiError {
@@ -216,7 +229,8 @@ export function classifyNetworkError(err: Error & { code?: string }): CameraApiE
   if (TLS_CODES.test(code) || /certificate|ssl|tls|wrong version number/i.test(err.message)) {
     const hint = /wrong version number|EPROTO/i.test(code + err.message)
       ? " The port may not be serving HTTPS — check the protocol and port."
-      : " If the camera uses a self-signed certificate, add its CA certificate to the camera settings.";
+      : " The camera's certificate is not trusted (cameras usually make their own, self-signed). Edit the camera and use " +
+        "\u201cGet the camera's certificate\u201d under TLS CA certificate to trust it.";
     return new CameraApiError("TLS_ERROR", `Secure connection failed (${code || "TLS error"}).${hint}`);
   }
   switch (code) {

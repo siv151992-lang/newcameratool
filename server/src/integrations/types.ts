@@ -5,16 +5,20 @@ export type StorageHealth = "healthy" | "warning" | "critical" | "unknown";
 
 export const ERROR_CODES = [
   "INVALID_HOST", "HOST_NOT_ALLOWED", "DNS_FAILED",          // configuration / SSRF guard
-  "UNREACHABLE", "TIMEOUT", "TLS_ERROR",                      // network: counts towards offline
+  "UNREACHABLE", "TIMEOUT",                                   // network: counts towards offline
+  "TLS_ERROR",                                                // reachable, HTTPS certificate or protocol problem
   "AUTH_FAILED", "AUTH_METHOD_INSECURE", "PERMISSION_DENIED", // reachable, credentials rejected
   "API_UNAVAILABLE", "API_ERROR", "INVALID_RESPONSE",         // reachable, storage API problem
   "CREDENTIALS_UNAVAILABLE", "UNSUPPORTED_BRAND",             // local problems
 ] as const;
 export type CameraErrorCode = (typeof ERROR_CODES)[number];
 
-/** Errors that mean "we could not talk to the device at all". */
+/**
+ * Errors that mean "we could not talk to the device at all". A TLS error is not one: the camera
+ * answered (with a certificate that is not trusted, usually its own self-signed one), so it is online.
+ */
 export const NETWORK_ERROR_CODES: ReadonlySet<CameraErrorCode> = new Set([
-  "UNREACHABLE", "TIMEOUT", "TLS_ERROR", "DNS_FAILED",
+  "UNREACHABLE", "TIMEOUT", "DNS_FAILED",
 ]);
 export const AUTH_ERROR_CODES: ReadonlySet<CameraErrorCode> = new Set([
   "AUTH_FAILED", "AUTH_METHOD_INSECURE", "PERMISSION_DENIED",

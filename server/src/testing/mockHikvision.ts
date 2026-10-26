@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import http from "node:http";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { MOCK_PICTURE } from "./mockPicture.js";
 
@@ -225,8 +226,10 @@ export class MockHikvisionCamera {
     };
   }
 
-  async start(port = 0, host = "127.0.0.1"): Promise<number> {
-    this.server = http.createServer((req, res) => this.handle(req, res));
+  /** Starts on HTTP, or on HTTPS with `tls` (a certificate and key, e.g. self-signed like a real camera's). */
+  async start(port = 0, host = "127.0.0.1", tls?: { cert: string; key: string }): Promise<number> {
+    const handler = (req: http.IncomingMessage, res: http.ServerResponse) => this.handle(req, res);
+    this.server = tls ? https.createServer(tls, handler) : http.createServer(handler);
     await new Promise<void>((resolve) => this.server!.listen(port, host, resolve));
     return (this.server.address() as AddressInfo).port;
   }
