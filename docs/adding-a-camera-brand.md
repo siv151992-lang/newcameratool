@@ -20,6 +20,7 @@ was found.
 ```
 server/src/integrations/
   types.ts                 the CameraBrandAdapter interface every brand implements (read this first)
+  common/                  base adapters a new brand extends: HttpApiAdapter, SessionApiAdapter, OnvifBrandAdapter
   registry.ts              the list of brands: register the new adapter here, plus name aliases
   http/cameraHttpClient.ts the only way to talk to a camera (login, HTTPS, time-outs, blocked addresses)
   http/responses.ts        requireOk(): turns HTTP errors into clear messages
@@ -56,6 +57,23 @@ database migration and no web change is needed.
 - **Its own name in the brand list, with small differences** (e.g. Prama): make a subclass, change
   `meta` and override only what differs. See `prama/adapter.ts`, which extends `HikvisionAdapter`
   and only changes the API path (`/pramaAPI` instead of `/ISAPI`). Then register it (step 3 below).
+
+## Common adapters
+
+New brands start from one of these bases in `server/src/integrations/common/`, so a brand is only
+what is different about it. The login (Digest, or Basic over HTTPS), certificates, time-outs,
+blocked addresses, error messages and the connection test are shared; and whatever a brand does not
+declare (device information, recording status, recordings and playback, the live stream address, the
+picture) is read over ONVIF.
+
+| Base | For | A brand declares | Example |
+|---|---|---|---|
+| `HttpApiAdapter` | a plain HTTP API (JSON, XML or text) | `meta`, `storage` (path + parser); optional `deviceInfo`, `recording`, `snapshotPath`, `rtspPath`, `describeError` | the Acme example below |
+| `SessionApiAdapter` | APIs that log in first for a token or session | `meta`, `login()`, `logout()`, `storageCall(token)`; optional `deviceInfoCall(token)`. Logins that send the password itself are refused over plain HTTP | `reolink/adapter.ts` |
+| `OnvifBrandAdapter` | brands read over ONVIF under their own name | `meta`; optional `snapshotPath` (tried before ONVIF's) | `bosch/adapter.ts` |
+
+Brands with several dependent requests, SOAP or binary protocols still implement `CameraBrandAdapter`
+directly (see `hikvision/`, `dahua/`).
 
 ## C. A new adapter, step by step
 
@@ -105,48 +123,33 @@ export function parseAcmeDeviceInfo(body: string): DeviceInfo {
 
 ### 2. The adapter — `server/src/integrations/acme/adapter.ts`
 
-Only three methods are required: `getStorageStatus`, `getDeviceInfo`, `testConnection`.
+Start from a common adapter (see [Common adapters](#common-adapters) above). For a plain HTTP API,
+extend `HttpApiAdapter` and declare the storage request; everything else is shared.
 
 ```ts
-import type { CameraHttpClient } from "../http/cameraHttpClient.js";
-import { requireOk } from "../http/responses.js";
-import { runDiagnostics } from "../diagnostics.js";
-import type { BrandMeta, CameraBrandAdapter, CameraConfig, ConnectionResult, DeviceInfo, StorageReading } from "../types.js";
+import { HttpApiAdapter } from "../common/httpApiAdapter.js";
+import type { BrandMeta } from "../types.js";
 import { parseAcmeDeviceInfo, parseAcmeStorage } from "./parser.js";
 
-export const ACME_STORAGE_PATH = "/api/v1/storage";
-
-export class AcmeAdapter implements CameraBrandAdapter {
+export class AcmeAdapter extends HttpApiAdapter {
   readonly meta: BrandMeta = {
     key: "acme",                       // short, lower case, never changed later (cameras store it)
     displayName: "Acme Vision",        // what users see in the brand list
     supportStatus: "unverified",       // "supported" only after testing on a real camera
     authMethods: ["digest"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "device-info", "connection-test"],
-    storageEndpoint: `GET ${ACME_STORAGE_PATH}`,
+    capabilities: ["storage-status", "device-info", "connection-test", "live-view"],
+    storageEndpoint: "GET /api/v1/storage",
     defaultTimeoutMs: 10000,
     notes: "JSON API with HTTP Digest authentication; capacities in MB.",
   };
 
-  constructor(private readonly http: CameraHttpClient) {}
-
-  private async get(camera: CameraConfig, path: string): Promise<string> {
-    // The shared client handles Digest/Basic login, HTTPS certificates, time-outs and blocked addresses.
-    return requireOk(await this.http.request(camera, { path, accept: "application/json" }), path);
-  }
-
-  async getStorageStatus(camera: CameraConfig): Promise<StorageReading> {
-    return parseAcmeStorage(await this.get(camera, ACME_STORAGE_PATH));
-  }
-
-  async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
-    return parseAcmeDeviceInfo(await this.get(camera, "/api/v1/system"));
-  }
-
-  testConnection(camera: CameraConfig): Promise<ConnectionResult> {
-    return runDiagnostics(this, camera);
-  }
+  // The only required part: where storage is read, and how.
+  protected readonly storage = { path: "/api/v1/storage", accept: "application/json", parse: parseAcmeStorage };
+  // Optional: leave any of these out and ONVIF's is used instead.
+  protected readonly deviceInfo = { path: "/api/v1/system", accept: "application/json", parse: parseAcmeDeviceInfo };
+  protected readonly snapshotPath = (channel = 1) => `/api/v1/picture?channel=${channel}`;
+  readonly rtspPath = "/stream2";      // live video (sub stream, H.264); ONVIF's address when left out
 }
 ```
 
