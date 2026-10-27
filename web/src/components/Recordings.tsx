@@ -94,7 +94,8 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
     setStartedAt(null);
     setStart(t);
   };
-  const from = startedAt ?? start;
+  // Only while playing: once stopped (another day chosen, paused), the old position must not pull the timeline back.
+  const from = start ? (startedAt ?? start) : null;
   const position = from ? text(ms(from) + played * 1000) : null;
   // Slower than normal changes at once; faster (asked of the camera) restarts from where it is.
   const changeSpeed = (v: number) => {
