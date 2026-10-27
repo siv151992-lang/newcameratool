@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import type { ImportRow, ImportRowResult, ImportValidation } from "../api/types";
 import { Button, Card, Checkbox, ConfirmDialog, ErrorMessage, Field, Input, PageHeader, Select } from "../components/ui";
 import { useInvalidateCameras } from "../hooks/cameras";
+import { readTabText, readXlsx, toImportRecords, type ImportRecord } from "../lib/spreadsheet";
 
 const COLUMNS = ["name", "ip", "brand", "model", "username", "password", "location", "port", "protocol"] as const;
 const REQUIRED = ["name", "ip", "brand"];
@@ -43,6 +44,7 @@ export function ImportPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<Step>("upload");
   const [fileName, setFileName] = useState("");
+  const [sourceFormat, setSourceFormat] = useState<"app" | "bosch">("app");
   // Rows (including any passwords) live only in this component's memory and are cleared when done.
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [validation, setValidation] = useState<ImportValidation[] | null>(null);
@@ -70,12 +72,38 @@ export function ImportPage() {
     if (fileInput.current) fileInput.current.value = "";
   };
 
-  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
+  /** Rows from a spreadsheet (Excel, or tab-separated text such as Bosch Project Assistant's export). */
+  const takeRecords = (records: ImportRecord[]) => {
+    if (records.length === 0) return setParseError("The file contains no camera rows.");
+    if (records.length > MAX_ROWS) return setParseError(`The file has ${records.length} rows; import at most ${MAX_ROWS} at a time.`);
+    const missing = records.findIndex((r) => !r.name || !r.ip);
+    if (missing >= 0) return setParseError(`Row ${missing + 2} has no camera name or IP address.`);
+    setRows(records.map((r, i) => ({ row: i + 2, ...r })));
+  };
+
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setParseError(null);
     setValidation(null);
     setFileName(file.name);
+    const ext = file.name.toLowerCase().split(".").pop();
+    if (ext === "xlsx" || ext === "txt" || ext === "tsv") {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        // The first sheet with a camera list (a Bosch template starts with an instructions sheet).
+        const sheets = ext === "xlsx" ? await readXlsx(bytes) : [{ name: file.name, rows: readTabText(bytes) }];
+        const found = sheets.map((s) => toImportRecords(s.rows)).find((r) => r !== null);
+        if (!found) {
+          return setParseError("No camera list found: the sheet needs name, ip and brand columns (as in the template), or a Bosch Project Assistant list.");
+        }
+        setSourceFormat(found.format);
+        return takeRecords(found.records);
+      } catch (err) {
+        return setParseError((err as Error).message || "The file could not be read.");
+      }
+    }
+    setSourceFormat("app");
     Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: "greedy",
@@ -170,22 +198,27 @@ export function ImportPage() {
 
       {step === "upload" && (
         <div className="grid gap-5 lg:grid-cols-2">
-          <Card title="1. Choose a CSV file">
+          <Card title="1. Choose a file">
             <div className="space-y-4 p-4 text-sm">
               <p className="text-ink-secondary">
                 Columns: <code className="text-xs">{COLUMNS.join(",")}</code>. Name, ip and brand are required; port and protocol default per brand
                 (HTTP 80). Rows from multiple brands are allowed.
               </p>
+              <p className="text-ink-secondary">
+                Bosch Project Assistant lists can be imported as they are (the Excel template, or its &ldquo;Unicode Text&rdquo; export): name,
+                comment (as location), IP address and type number (as model) are read, the brand is Bosch, and a service password, if filled in,
+                is used with the camera&apos;s &ldquo;service&rdquo; user.
+              </p>
               <a href="/api/cameras/import/template" className="inline-flex items-center gap-2 font-medium text-accent-ink hover:underline">
                 <Download className="h-4 w-4" /> Download CSV template
               </a>
               <div>
-                <label htmlFor="csv" className="mb-1 block font-medium">CSV file</label>
+                <label htmlFor="csv" className="mb-1 block font-medium">CSV, Excel (.xlsx) or tab-separated text file</label>
                 <input
                   id="csv"
                   ref={fileInput}
                   type="file"
-                  accept=".csv,text/csv"
+                  accept=".csv,text/csv,.xlsx,.txt,.tsv"
                   onChange={onFile}
                   className="block w-full text-sm file:mr-3 file:rounded-md file:border file:border-line-strong file:bg-raised file:px-3 file:py-1.5 file:text-ink"
                 />
@@ -199,6 +232,7 @@ export function ImportPage() {
               {rows.length > 0 && !parseError && (
                 <p className="flex items-center gap-2">
                   <FileUp className="h-4 w-4 text-ink-muted" /> {fileName}: {rows.length} camera row{rows.length === 1 ? "" : "s"} read
+                  {sourceFormat === "bosch" && " (Bosch Project Assistant list)"}
                 </p>
               )}
             </div>
