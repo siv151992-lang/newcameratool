@@ -5,7 +5,7 @@ import { OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { parseOnvifRecordingResults, parseOnvifSearchToken } from "../../src/integrations/onvif/parser.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
-import { clockTime, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
+import { clockTime, controlBeforeQuery, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
 
 const envelope = (body: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`;
 const results = (state: string, ...recs: [string, string, string][]) =>
@@ -140,6 +140,17 @@ describe("Replay relay", () => {
     cam.server.close();
   });
 
+  it("puts a stream part's name before the query, where the camera expects it", () => {
+    // As go2rtc builds it from a Hikvision playback address, and as the camera wants it.
+    expect(controlBeforeQuery("rtsp://10.0.0.5:554/Streaming/tracks/101?starttime=20261027T190000Z&endtime=20261028T070000Z/trackID=1"))
+      .toBe("rtsp://10.0.0.5:554/Streaming/tracks/101/trackID=1?starttime=20261027T190000Z&endtime=20261028T070000Z");
+    expect(controlBeforeQuery("rtsp://h/Streaming/tracks/101/?starttime=20261027T190000Z/trackID=1")).toBe("rtsp://h/Streaming/tracks/101/trackID=1?starttime=20261027T190000Z");
+    // Already right, or no query: unchanged.
+    for (const u of ["rtsp://h/Streaming/tracks/101/trackID=1?starttime=20261027T190000Z", "rtsp://h/Streaming/tracks/101?starttime=20261027T190000Z", "rtsp://h/onvif-media/record/Rec1/track1"]) {
+      expect(controlBeforeQuery(u)).toBe(u);
+    }
+  });
+
   it("formats the clock range", () => {
     expect(clockTime(Date.parse("2026-10-24T10:15:00.500Z"))).toBe("20261024T101500Z");
   });
@@ -220,7 +231,9 @@ describe("Replay relay", () => {
       const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, `clock_${refuse}`, { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101?starttime=20261024T101500Z", username: "admin", password: "secret", onvif: false, startUtcMs: start });
       const c = rtspClient(relayPort);
       expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
+      // As go2rtc addresses the stream part: after the query.
       expect((await c.request("SETUP", `${url}/track1`)).first).toBe("RTSP/1.0 200 OK");
+      expect(cam.requests.filter((r) => r.first.startsWith("SETUP")).at(-1)!.first).toBe(`SETUP rtsp://127.0.0.1:${camPort}/Streaming/tracks/101/track1?starttime=20261024T101500Z RTSP/1.0`);
       expect((await c.request("PLAY", url, ["Session: 1234", "Range: npt=0.000-"])).first).toBe("RTSP/1.0 200 OK");
       await c.until(() => c.frames.length > 0);
       const plays = cam.requests.filter((r) => r.first.startsWith("PLAY") && r.headers.authorization);

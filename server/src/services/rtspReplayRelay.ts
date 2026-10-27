@@ -49,6 +49,21 @@ const byStream = new Map<string, string>();
 /** The clock time for a Range header: 20261024T101500Z. */
 export const clockTime = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace(/[-:]/g, "") + "Z";
 
+/**
+ * A stream part's address as the camera expects it. go2rtc addresses each stream part by appending
+ * its control name to the playback address, query included: path?starttime=…&endtime=…/trackID=1.
+ * The camera then reads "…Z/trackID=1" as the time (and plays from the first recording on the card,
+ * or refuses SETUP). The part goes before the query: path/trackID=1?starttime=…&endtime=….
+ */
+export function controlBeforeQuery(uri: string): string {
+  const q = uri.indexOf("?");
+  if (q < 0) return uri;
+  const slash = uri.indexOf("/", q);
+  if (slash < 0) return uri;
+  const base = uri.slice(0, q).replace(/\/+$/, "");
+  return `${base}/${uri.slice(slash + 1)}?${uri.slice(q + 1, slash)}`;
+}
+
 /** Registers a playback and returns the address go2rtc should play (relayBase: rtsp://host:port). */
 export function registerReplay(relayBase: string, streamName: string, target: ReplayTarget): string {
   const now = Date.now();
@@ -161,7 +176,7 @@ function relayConnection(client: net.Socket) {
   /** Sends a request on to the camera: its address, the login, the replay headers and the speed. */
   const sendRequest = (m: RtspMessage, unscaled = false, unranged = false) => {
     const [method = "", uri = "", version = "RTSP/1.0"] = m.first.split(" ");
-    const cameraUri = uri === "*" ? uri : cameraOrigin + (uri.slice(relayPrefix.length) || "/");
+    const cameraUri = uri === "*" ? uri : controlBeforeQuery(cameraOrigin + (uri.slice(relayPrefix.length) || "/"));
     const out: RtspMessage = { first: `${method} ${cameraUri} ${version}`, headers: m.headers.filter(([k]) => k.toLowerCase() !== "authorization"), body: m.body };
     const play = method.toUpperCase() === "PLAY";
     if (target!.onvif) {
@@ -210,6 +225,9 @@ function relayConnection(client: net.Socket) {
       pending.set(cseq!, { ...request, ranged: false, unranged: true });
       sendRequest(request.message, request.unscaled, true);
       return;
+    }
+    if (request && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
+      logger.warn({ request: request.message.first.split(" ").slice(0, 2).join(" ").replace(/\/r\/[A-Za-z0-9_-]{24}/, "/r/…"), status: m.first, host: target?.host }, "Recording playback: the camera refused a request");
     }
     for (const name of ["Content-Base", "Content-Location", "RTP-Info"]) {
       const v = header(m, name);

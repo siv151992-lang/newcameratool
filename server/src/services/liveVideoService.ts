@@ -344,7 +344,9 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
       // brands whose firmware may ignore the start time in the address (it adds it as a clock range).
       const offset = clockOffsets.get(listingKey(cameraId, channel));
       const clockStart = adapter.playbackClockRange && offset !== undefined ? playFrom - offset : undefined;
-      const src = speed > 1 || clockStart !== undefined
+      // Also every address with a query (a start time): go2rtc appends the stream part after the query,
+      // which the relay puts back before it (otherwise the camera misreads the time).
+      const src = speed > 1 || clockStart !== undefined || pick.path.includes("?")
         ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path: pick.path, username: config.username, password: config.password, onvif: false, scale: speed > 1 ? speed : undefined, startUtcMs: clockStart })
         : rtspUrl(config, pick.path);
       await putStream(name, src);
