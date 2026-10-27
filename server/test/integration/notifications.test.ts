@@ -72,3 +72,44 @@ describe("Notifier", () => {
     expect(row).toEqual({ status: "failed", detail: "SMTP down" });
   });
 });
+
+describe("webhook channels", () => {
+  it("stores the address encrypted, never returns it, and keeps it when left blank", async () => {
+    const { createChannel, listChannels, updateChannel } = await import("../../src/services/notificationChannelService.js");
+    const actor = await createTestUser("admin", "hook-admin");
+    const n = new Notifier();
+    const url = "https://hooks.slack.com/services/T000/B000/SECRETxyz";
+    const created = await createChannel(testOrgId, n, {
+      type: "webhook", name: "Slack #cctv", enabled: true, config: { format: "slack", url }, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true,
+    }, actor);
+    expect(created.config).toEqual({ format: "slack", host: "hooks.slack.com" });
+    expect(created.hasSecret).toBe(true);
+    const row = (await pool.query("SELECT config, secret_encrypted FROM notification_channels WHERE id = $1", [created.id])).rows[0];
+    expect(JSON.stringify(row)).not.toContain("SECRETxyz");
+    expect(JSON.stringify(await listChannels(testOrgId))).not.toContain("SECRETxyz");
+
+    await updateChannel(testOrgId, n, created.id, { name: "Slack", config: { format: "slack", url: "" } }, actor);
+    const kept = (await pool.query("SELECT secret_encrypted FROM notification_channels WHERE id = $1", [created.id])).rows[0].secret_encrypted;
+    const { getCipher } = await import("../../src/security/cipher.js");
+    expect(getCipher().decrypt(kept)).toBe(url);
+
+    await expect(createChannel(testOrgId, n, {
+      type: "webhook", name: "x", enabled: true, config: { format: "generic", url: "http://example.com" }, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true,
+    }, actor)).rejects.toThrow(/https:\/\//);
+  });
+
+  it("passes the decrypted address and the alert to the driver", async () => {
+    const { createChannel } = await import("../../src/services/notificationChannelService.js");
+    const sent: { secret?: string | null; event?: unknown }[] = [];
+    const n = new Notifier([new FakeDriver(), {
+      type: "webhook", secretField: "url",
+      validateConfig: (c: unknown) => c as Record<string, unknown>,
+      send: async (c, m) => void sent.push({ secret: c.secret, event: m.event }),
+    }]);
+    await createChannel(testOrgId, n, {
+      type: "webhook", name: "Hook", enabled: true, config: { format: "generic", url: "https://example.com/h/1" }, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true,
+    }, await createTestUser("admin", "hook-admin"));
+    await n.dispatch([event("opened")]);
+    expect(sent).toEqual([{ secret: "https://example.com/h/1", event: expect.objectContaining({ kind: "opened", cameraName: "Lobby", type: "storage_usage" }) }]);
+  });
+});

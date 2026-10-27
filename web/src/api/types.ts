@@ -344,12 +344,17 @@ export interface MonitoringSettings {
   auditRetentionDays: number;
 }
 
+export type WebhookFormat = "teams" | "slack" | "google_chat" | "generic";
+
 export interface NotificationChannel {
   id: string;
-  type: "email";
+  type: "email" | "webhook";
   name: string;
   enabled: boolean;
-  config: { recipients?: string[] };
+  /** Webhooks: the service and the address's host (the address itself is never returned). */
+  config: { recipients?: string[]; format?: WebhookFormat; host?: string };
+  /** A webhook address is stored (encrypted). */
+  hasSecret?: boolean;
   minSeverity: Severity;
   cooldownMinutes: number;
   notifyOnRecovery: boolean;

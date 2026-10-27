@@ -2,7 +2,9 @@ import { getEmailSettings } from "../services/emailSettings.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../lib/logger.js";
 import { SEVERITY_RANK } from "../monitoring/evaluate.js";
+import { getCipher } from "../security/cipher.js";
 import { EmailDriver } from "./emailDriver.js";
+import { WebhookDriver } from "./webhookDriver.js";
 import type { NotificationChannel, NotificationDriver, NotificationEvent } from "./types.js";
 
 export function formatMessage(e: NotificationEvent, publicUrl: string | null = null) {
@@ -19,6 +21,11 @@ export function formatMessage(e: NotificationEvent, publicUrl: string | null = n
   return { subject, text: lines.join("\n") };
 }
 
+/** The channel with its stored secret (a webhook's address) decrypted for the driver. */
+export function withSecret<T extends NotificationChannel & { secret_encrypted?: string | null }>(channel: T): T {
+  return { ...channel, secret: channel.secret_encrypted ? getCipher().decrypt(channel.secret_encrypted) : null };
+}
+
 /**
  * Sends alert notifications through configured channels with:
  * - a minimum severity per channel
@@ -29,7 +36,7 @@ export function formatMessage(e: NotificationEvent, publicUrl: string | null = n
 export class Notifier {
   private readonly drivers = new Map<string, NotificationDriver>();
 
-  constructor(drivers: NotificationDriver[] = [new EmailDriver()]) {
+  constructor(drivers: NotificationDriver[] = [new EmailDriver(), new WebhookDriver()]) {
     for (const d of drivers) this.drivers.set(d.type, d);
   }
 
@@ -40,7 +47,7 @@ export class Notifier {
   async dispatch(events: NotificationEvent[]) {
     if (events.length === 0) return;
     // Only the channels of the organization that owns the camera.
-    const { rows: channels } = await pool.query<NotificationChannel & { camera_id: string }>(
+    const { rows: channels } = await pool.query<NotificationChannel & { camera_id: string; secret_encrypted: string | null }>(
       `SELECT n.*, c.id AS camera_id FROM notification_channels n JOIN cameras c ON c.organization_id = n.organization_id
        WHERE n.enabled AND c.id = ANY($1::uuid[])`,
       [[...new Set(events.map((e) => e.cameraId))]],
@@ -90,7 +97,11 @@ export class Notifier {
       return;
     }
     try {
-      await driver.send(channel, formatMessage(event, (await getEmailSettings()).publicUrl));
+      const publicUrl = (await getEmailSettings()).publicUrl;
+      await driver.send(withSecret(channel), {
+        ...formatMessage(event, publicUrl),
+        event: { ...event, ...(publicUrl ? { url: `${publicUrl}/cameras/${event.cameraId}` } : {}) },
+      });
       await this.record(channel, event, "sent");
     } catch (err) {
       await this.record(channel, event, "failed", (err as Error).message.slice(0, 500));

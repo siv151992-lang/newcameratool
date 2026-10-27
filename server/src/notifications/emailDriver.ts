@@ -1,7 +1,7 @@
 import type { Transporter } from "nodemailer";
 import { z } from "zod";
 import { sendMail } from "./mailer.js";
-import type { NotificationChannel, NotificationDriver } from "./types.js";
+import type { NotificationChannel, NotificationDriver, NotificationMessage } from "./types.js";
 
 const emailConfigSchema = z.object({
   recipients: z.array(z.string().email()).min(1, "At least one recipient is required").max(20),
@@ -18,7 +18,7 @@ export class EmailDriver implements NotificationDriver {
     return emailConfigSchema.parse(input);
   }
 
-  async send(channel: NotificationChannel, message: { subject: string; text: string }) {
+  async send(channel: NotificationChannel, message: NotificationMessage) {
     const { recipients } = emailConfigSchema.parse(channel.config);
     if (this.transportFactory) {
       this.transporter ??= this.transportFactory();

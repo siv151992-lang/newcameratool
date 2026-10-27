@@ -4,7 +4,7 @@ import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, Chev
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
-import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NetworkSettings, NotificationChannel, Page } from "../api/types";
+import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NetworkSettings, NotificationChannel, Page, WebhookFormat } from "../api/types";
 import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea } from "../components/ui";
 import { useToast } from "../components/toast";
 import { useAiStatus } from "../hooks/ai";
@@ -39,7 +39,7 @@ function useSections(): Section[] {
     can("settings:read") && { path: "brands", label: "Camera brands", description: "Brand integrations: built-in adapters and API integrations configured here.", icon: <Boxes className={icon} />, element: <BrandsSection /> },
     can("settings:read") && { path: "networks", label: "Camera networks", description: "The network ranges the monitor may contact cameras on.", icon: <Network className={icon} />, element: <NetworksTab /> },
     can("settings:read") && { path: "camera-passwords", label: "Camera passwords", description: "The standard for the cameras' own passwords, and which cameras fall short.", icon: <KeyRound className={icon} />, element: <CameraPasswordsTab /> },
-    can("settings:read") && { path: "notifications", label: "Notifications", description: "Email alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
+    can("settings:read") && { path: "notifications", label: "Notifications", description: "Email, Teams, Slack and Google Chat alerts, cooldowns and recovery notices.", icon: <Mail className={icon} />, element: <NotificationsTab /> },
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Users", description: `The people in ${user?.organizationName ?? "this organization"}: add them, set their roles, and delete them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
     can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
@@ -488,7 +488,7 @@ function NotificationsTab() {
   const qc = useQueryClient();
   const editable = can("settings:write");
   const channels = useQuery({ queryKey: ["settings", "notifications"], queryFn: () => api<NotificationChannel[]>("/settings/notifications") });
-  const [editing, setEditing] = useState<Partial<NotificationChannel> & { recipientsText?: string } | null>(null);
+  const [editing, setEditing] = useState<Partial<NotificationChannel> & { kind?: ChannelKind; recipientsText?: string; urlText?: string } | null>(null);
   const [deleting, setDeleting] = useState<NotificationChannel | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ["settings", "notifications"] });
 
@@ -501,11 +501,14 @@ function NotificationsTab() {
         minSeverity: e.minSeverity ?? "warning",
         cooldownMinutes: Number(e.cooldownMinutes ?? 60),
         notifyOnRecovery: e.notifyOnRecovery ?? true,
-        config: { recipients: (e.recipientsText ?? "").split(/[,;\s]+/).filter(Boolean) },
+        // A webhook's address left blank on an edit keeps the stored one.
+        config: e.kind === "email"
+          ? { recipients: (e.recipientsText ?? "").split(/[,;\s]+/).filter(Boolean) }
+          : { format: e.kind, url: (e.urlText ?? "").trim() },
       };
       return e.id
         ? api(`/settings/notifications/${e.id}`, { method: "PATCH", body })
-        : api("/settings/notifications", { method: "POST", body: { ...body, type: "email" } });
+        : api("/settings/notifications", { method: "POST", body: { ...body, type: e.kind === "email" ? "email" : "webhook" } });
     },
     onSuccess: () => {
       toast("success", "Notification channel saved");
@@ -530,17 +533,18 @@ function NotificationsTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-secondary">
-        Alerts always appear in the dashboard. Email notifications are optional and use the mail server in Settings → Email & sign-in (set by the system administrator).
-        A cooldown per camera and alert type prevents repeated emails; escalations to critical are always sent.
+        Alerts always appear in the dashboard. They can also be sent by email (through the mail server in Settings → Email & sign-in, set by the
+        system administrator) or to a Microsoft Teams, Slack or Google Chat channel, or any system that takes a webhook.
+        A cooldown per camera and alert type prevents repeated messages; escalations to critical are always sent.
       </p>
       <Card
-        title="Email channels"
-        actions={editable && <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing({ enabled: true, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true, recipientsText: "" })}>Add channel</Button>}
+        title="Notification channels"
+        actions={editable && <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing({ kind: "email", enabled: true, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true, recipientsText: "", urlText: "" })}>Add channel</Button>}
       >
         {channels.isLoading ? (
           <Spinner />
         ) : !channels.data?.length ? (
-          <EmptyState icon={<Mail className="h-6 w-6" />} title="No notification channels" description="Add an email channel to be notified when alerts open, escalate or resolve." />
+          <EmptyState icon={<Mail className="h-6 w-6" />} title="No notification channels" description="Add an email, Teams, Slack or Google Chat channel to be notified when alerts open, escalate or resolve." />
         ) : (
           <ul className="divide-y divide-line">
             {channels.data.map((c) => (
@@ -548,13 +552,13 @@ function NotificationsTab() {
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{c.name} {!c.enabled && <span className="text-xs text-ink-muted">(disabled)</span>}</div>
                   <div className="text-xs text-ink-secondary">
-                    {c.config.recipients?.join(", ")} · {c.minSeverity}+ · cooldown {c.cooldownMinutes} min{c.notifyOnRecovery ? " · recovery notices" : ""}
+                    {c.type === "webhook" ? `${CHANNEL_KINDS[c.config.format ?? "generic"].label} · ${c.config.host ?? ""}` : c.config.recipients?.join(", ")} · {c.minSeverity}+ · cooldown {c.cooldownMinutes} min{c.notifyOnRecovery ? " · recovery notices" : ""}
                   </div>
                 </div>
                 {editable && (
                   <>
                     <Button size="sm" variant="ghost" icon={<Send className="h-4 w-4" />} loading={test.isPending && test.variables === c.id} onClick={() => test.mutate(c.id)}>Send test</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditing({ ...c, recipientsText: c.config.recipients?.join(", ") })}>Edit</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing({ ...c, kind: c.type === "webhook" ? c.config.format ?? "generic" : "email", recipientsText: c.config.recipients?.join(", "), urlText: "" })}>Edit</Button>
                     <Button size="sm" variant="ghost" aria-label={`Delete ${c.name}`} icon={<Trash2 className="h-4 w-4" />} onClick={() => setDeleting(c)} />
                   </>
                 )}
@@ -567,13 +571,38 @@ function NotificationsTab() {
       <Dialog
         open={!!editing}
         onClose={() => setEditing(null)}
-        title={editing?.id ? "Edit email channel" : "Add email channel"}
+        title={editing?.id ? `Edit ${CHANNEL_KINDS[editing.kind ?? "email"].label} channel` : "Add notification channel"}
         footer={<><Button onClick={() => setEditing(null)}>Cancel</Button><Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
       >
         {editing && (
           <div className="space-y-3">
             <Field label="Name" required>{(id) => <Input id={id} value={editing.name ?? ""} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />}</Field>
-            <Field label="Recipients" required hint="Separate addresses with commas">{(id, d) => <Input id={id} aria-describedby={d} value={editing.recipientsText ?? ""} onChange={(e) => setEditing({ ...editing, recipientsText: e.target.value })} />}</Field>
+            {!editing.id && (
+              <Field label="Send to">
+                {(id) => (
+                  <Select id={id} value={editing.kind} onChange={(e) => setEditing({ ...editing, kind: e.target.value as ChannelKind })}>
+                    {(Object.keys(CHANNEL_KINDS) as ChannelKind[]).map((k) => <option key={k} value={k}>{CHANNEL_KINDS[k].label}</option>)}
+                  </Select>
+                )}
+              </Field>
+            )}
+            {editing.kind === "email" ? (
+              <Field label="Recipients" required hint="Separate addresses with commas">{(id, d) => <Input id={id} aria-describedby={d} value={editing.recipientsText ?? ""} onChange={(e) => setEditing({ ...editing, recipientsText: e.target.value })} />}</Field>
+            ) : (
+              <Field
+                label="Webhook address"
+                required={!editing.hasSecret}
+                hint={`${CHANNEL_KINDS[editing.kind ?? "generic"].hint}${editing.hasSecret ? " Leave blank to keep the saved address." : ""} The address is stored encrypted and not shown again.`}
+              >
+                {(id, d) => (
+                  <Input
+                    id={id} aria-describedby={d} type="password" autoComplete="off"
+                    placeholder={editing.hasSecret ? `Saved (${editing.config?.host ?? "hidden"})` : "https://…"}
+                    value={editing.urlText ?? ""} onChange={(e) => setEditing({ ...editing, urlText: e.target.value })}
+                  />
+                )}
+              </Field>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Minimum severity">
                 {(id) => (
@@ -596,6 +625,16 @@ function NotificationsTab() {
     </div>
   );
 }
+
+type ChannelKind = "email" | WebhookFormat;
+
+const CHANNEL_KINDS: Record<ChannelKind, { label: string; hint: string }> = {
+  email: { label: "Email", hint: "" },
+  teams: { label: "Microsoft Teams", hint: "In Teams: the channel's ⋯ → Workflows → \"Post to a channel when a webhook request is received\", then copy its address." },
+  slack: { label: "Slack", hint: "In Slack: an app with Incoming Webhooks turned on → Add New Webhook to Workspace; the address starts with https://hooks.slack.com/." },
+  google_chat: { label: "Google Chat", hint: "In the Chat space: Apps & integrations → Webhooks → Add webhook; the address starts with https://chat.googleapis.com/." },
+  generic: { label: "Webhook (JSON)", hint: "Any HTTPS address on the internet; it receives a JSON POST with subject, text and the alert." },
+};
 
 // ------------------------------------------------------------------ Users
 
