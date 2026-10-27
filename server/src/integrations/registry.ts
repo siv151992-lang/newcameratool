@@ -1,5 +1,6 @@
 import { hostGuard } from "../security/hostGuardInstance.js";
 import { AxisAdapter } from "./axis/adapter.js";
+import { BoschAdapter } from "./bosch/adapter.js";
 import { DahuaAdapter } from "./dahua/adapter.js";
 import { HanwhaAdapter } from "./hanwha/adapter.js";
 import { HikvisionAdapter } from "./hikvision/adapter.js";
@@ -186,8 +187,9 @@ export class BrandRegistry {
       lorex: "dahua",
       icrealtime: "dahua",
       imou: "dahua",
+      bosch: "bosch",
+      boschsecurity: "bosch",
       // Brands without an API of their own here: their cameras are read over ONVIF.
-      bosch: "onvif",
       vivotek: "onvif",
       sony: "onvif",
       avigilon: "onvif",
@@ -227,6 +229,7 @@ export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandReg
   registry.register(new HanwhaAdapter(http));
   registry.register(new PanasonicAdapter(http));
   registry.register(new ReolinkAdapter(http));
+  registry.register(new BoschAdapter(http));
   for (const p of PLANNED) registry.registerPlanned(p);
   return registry;
 }

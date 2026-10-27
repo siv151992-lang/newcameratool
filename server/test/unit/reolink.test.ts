@@ -69,7 +69,7 @@ describe("Reolink", () => {
     const registry = createRegistry();
     expect(["HiLook", "HiWatch", "Annke", "LTS"].map((b) => registry.resolveKey(b))).toEqual(["hikvision", "hikvision", "hikvision", "hikvision"]);
     expect(["Lorex", "IC Realtime", "Imou"].map((b) => registry.resolveKey(b))).toEqual(["dahua", "dahua", "dahua"]);
-    expect(["Bosch", "Vivotek", "TP-Link VIGI", "Milesight"].map((b) => registry.resolveKey(b))).toEqual(["onvif", "onvif", "onvif", "onvif"]);
+    expect(["Vivotek", "TP-Link VIGI", "Milesight"].map((b) => registry.resolveKey(b))).toEqual(["onvif", "onvif", "onvif"]);
     expect(registry.resolveKey("Reolink")).toBe("reolink");
   });
 });
