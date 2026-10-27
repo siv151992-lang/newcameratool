@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { localTimeText, pictureFileName, savePicture } from "../lib/savePicture";
 import { LiveVideo } from "./LiveVideo";
 import { RecordingCalendar } from "./RecordingCalendar";
 import { MilestoneTimeline, SPANS, zoomSpan } from "./MilestoneTimeline";
@@ -344,6 +345,9 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
                 <ZoomIn className="h-4 w-4" />
               </PlayerButton>
             </div>
+            <PlayerButton label="Save picture (camera time in the file name)" onClick={() => void savePicture(frame.current, pictureFileName(name, position ?? localTimeText()))} disabled={!position}>
+              <Camera className="h-4 w-4" />
+            </PlayerButton>
             <PlayerButton label="Full screen" onClick={() => void frame.current?.requestFullscreen?.()}><Maximize2 className="h-4 w-4" /></PlayerButton>
           </div>
         </div>

@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Image, Maximize2, Pause, Play, Video } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Camera, Image, Maximize2, Pause, Play, Video } from "lucide-react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { localTimeText, pictureFileName, savePicture } from "../lib/savePicture";
 import { LiveVideo } from "./LiveVideo";
 import { ZoomPan } from "./ZoomPan";
 import { Button, Dialog, ErrorMessage, Spinner } from "./ui";
@@ -71,9 +72,12 @@ function VideoFrame({ cameraId, name, channel, onFailed }: { cameraId: string; n
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-ink-secondary">Live video from the camera's second stream, without sound.</p>
-        <Button size="sm" icon={<Maximize2 className="h-4 w-4" />} onClick={() => void frame.current?.requestFullscreen?.()}>
-          Full screen
-        </Button>
+        <div className="flex gap-2">
+          <SavePictureButton frame={frame} name={name} />
+          <Button size="sm" icon={<Maximize2 className="h-4 w-4" />} onClick={() => void frame.current?.requestFullscreen?.()}>
+            Full screen
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -151,11 +155,26 @@ function LivePicture({ cameraId, name, channel }: { cameraId: string; name: stri
           <Button size="sm" icon={paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />} onClick={() => setPaused(!paused)}>
             {paused ? "Resume" : "Pause"}
           </Button>
+          <SavePictureButton frame={frame} name={name} disabled={!src} />
           <Button size="sm" icon={<Maximize2 className="h-4 w-4" />} disabled={!src} onClick={() => void frame.current?.requestFullscreen?.()}>
             Full screen
           </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+/** Saves the picture on screen as a PNG named after the camera and the time. */
+function SavePictureButton({ frame, name, disabled }: { frame: RefObject<HTMLDivElement | null>; name: string; disabled?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <Button
+      size="sm" icon={<Camera className="h-4 w-4" />} disabled={disabled}
+      title={failed ? "No picture yet; try again once the video shows" : "Save the current picture as a PNG file"}
+      onClick={() => void savePicture(frame.current, pictureFileName(name, localTimeText())).then((ok) => setFailed(!ok))}
+    >
+      Save picture
+    </Button>
   );
 }
