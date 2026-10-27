@@ -13,6 +13,7 @@ import {
   cameraUpdateSchema,
   createCamera,
   getCamera,
+  getCameraRow,
   getHistory,
   getSummary,
   listCameras,
@@ -29,7 +30,8 @@ import { testCameraConfig, testSavedCamera } from "../services/connectionService
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
-import { listRecordings, liveVideoEnabled, oldestRecording, preparePlayback, recordedDays, prepareStream } from "../services/liveVideoService.js";
+import { listRecordings, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, prepareStream } from "../services/liveVideoService.js";
+import { lastRefusal } from "../services/rtspReplayRelay.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
 export const camerasRouter = Router();
@@ -191,6 +193,12 @@ camerasRouter.get("/:id/recordings/days", requirePermission("cameras:live"), liv
 camerasRouter.get("/:id/recordings/oldest", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   res.json({ oldest: await oldestRecording(orgOf(req), param(req), channelOf(req.query.channel)) });
 });
+// Why the camera refused this session's playback (the relay saw its answer; go2rtc only says "wrong response").
+camerasRouter.get("/:id/playback/problem", requirePermission("cameras:live"), async (req, res) => {
+  await getCameraRow(param(req), orgOf(req));
+  res.json({ refusal: lastRefusal(playbackStreamName(param(req), req.auth!.sessionId)) ?? null });
+});
+
 camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const { start, speed, channel } = parse(
     z.object({

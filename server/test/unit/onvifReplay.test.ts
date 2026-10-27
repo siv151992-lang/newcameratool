@@ -5,7 +5,7 @@ import { OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { parseOnvifRecordingResults, parseOnvifSearchToken } from "../../src/integrations/onvif/parser.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
-import { clockTime, controlBeforeQuery, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
+import { clockTime, controlBeforeQuery, lastRefusal, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
 
 const envelope = (body: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`;
 const results = (state: string, ...recs: [string, string, string][]) =>
@@ -56,7 +56,7 @@ describe("ONVIF recordings (Profile G)", () => {
 
 /** A replay server that insists on digest login, Require: onvif-replay and a clock Range. */
 function fakeReplayCamera() {
-  const options = { refuseScale: false, refuseRange: false };
+  const options = { refuseScale: false, refuseRange: false, refuseSetup: false };
   const requests: { first: string; headers: Record<string, string> }[] = [];
   const md5 = (s: string) => createHash("md5").update(s).digest("hex");
   const server = net.createServer((socket) => {
@@ -79,6 +79,7 @@ function fakeReplayCamera() {
           const sdp = "v=0\r\ns=replay\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:rtsp://192.168.1.99/onvif-media/record/Rec1/track1\r\n";
           return send("200 OK", ["Content-Type: application/sdp", "Content-Base: rtsp://192.168.1.99/onvif-media/record/Rec1/"], sdp);
         }
+        if (method === "SETUP" && options.refuseSetup) return send("400 Bad Request");
         if (method === "SETUP") return send("200 OK", ["Session: 1234", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
         if (method === "PLAY") {
           if (onvif && !/^clock=\d{8}T\d{6}Z-$/.test(headers.range ?? "")) return send("457 Invalid Range");
@@ -243,6 +244,21 @@ describe("Replay relay", () => {
       c.close();
     }
     cam.options.refuseRange = false;
+  });
+
+  it("keeps what the camera refused, to show in the player", async () => {
+    cam.options.refuseSetup = true;
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "refused_stream", { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101?starttime=20261024T101500Z", username: "admin", password: "secret", onvif: false });
+    const c = rtspClient(relayPort);
+    expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
+    expect((await c.request("SETUP", `${url}/trackID=1`)).first).toBe("RTSP/1.0 400 Bad Request");
+    // The camera's path and answer, never the relay's token or the login.
+    expect(lastRefusal("refused_stream")).toEqual({ request: "SETUP /Streaming/tracks/101/trackID=1?starttime=20261024T101500Z", status: "400 Bad Request" });
+    // A new playback of the stream starts clean.
+    registerReplay(`rtsp://127.0.0.1:${relayPort}`, "refused_stream", { host: "127.0.0.1", port: camPort, path: "/x", username: "admin", password: "secret", onvif: false });
+    expect(lastRefusal("refused_stream")).toBeUndefined();
+    c.close();
+    cam.options.refuseSetup = false;
   });
 
   it("refuses unknown playback addresses", async () => {

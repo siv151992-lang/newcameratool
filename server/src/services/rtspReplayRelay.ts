@@ -42,7 +42,15 @@ const MAX_TOKENS = 2000;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const CONNECT_TIMEOUT_MS = 10_000;
 
-const targets = new Map<string, ReplayTarget & { expires: number }>();
+const targets = new Map<string, ReplayTarget & { expires: number; streamName: string }>();
+/** The last request each playback stream's camera refused, to show in the player (go2rtc only says "wrong response"). */
+const refusals = new Map<string, { request: string; status: string; at: number }>();
+
+/** What the camera last refused for this playback stream, in the last two minutes. */
+export function lastRefusal(streamName: string): { request: string; status: string } | undefined {
+  const r = refusals.get(streamName);
+  return r && Date.now() - r.at < 120_000 ? { request: r.request, status: r.status } : undefined;
+}
 /** The token each playback stream uses now, so choosing a new time retires the old one. */
 const byStream = new Map<string, string>();
 
@@ -72,7 +80,8 @@ export function registerReplay(relayBase: string, streamName: string, target: Re
   if (previous) targets.delete(previous);
   if (targets.size >= MAX_TOKENS) targets.delete(targets.keys().next().value!);
   const token = randomBytes(18).toString("base64url");
-  targets.set(token, { ...target, expires: now + TOKEN_TTL_MS });
+  targets.set(token, { ...target, expires: now + TOKEN_TTL_MS, streamName });
+  refusals.delete(streamName);
   byStream.set(streamName, token);
   return `${relayBase.replace(/\/+$/, "")}/r/${token}${target.path.startsWith("/") ? "" : "/"}${target.path}`;
 }
@@ -133,7 +142,7 @@ export function readRtsp(buf: Buffer, onMessage: (m: RtspMessage) => void, onFra
 
 /** Handles one connection from go2rtc. */
 function relayConnection(client: net.Socket) {
-  let target: ReplayTarget | undefined;
+  let target: (ReplayTarget & { streamName?: string }) | undefined;
   let camera: net.Socket | undefined;
   let cameraOrigin = "";
   let relayPrefix = "";
@@ -227,7 +236,15 @@ function relayConnection(client: net.Socket) {
       return;
     }
     if (request && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
-      logger.warn({ request: request.message.first.split(" ").slice(0, 2).join(" ").replace(/\/r\/[A-Za-z0-9_-]{24}/, "/r/…"), status: m.first, host: target?.host }, "Recording playback: the camera refused a request");
+      // The request as the camera got it (its path, without the relay's token or any credentials).
+      const [method = "", uri = ""] = request.message.first.split(" ");
+      const path = uri.startsWith(relayPrefix) ? controlBeforeQuery(uri.slice(relayPrefix.length)) : uri;
+      const refusal = { request: `${method} ${path}`.slice(0, 300), status: m.first.replace(/^RTSP\/\S+\s+/, "").slice(0, 100), at: Date.now() };
+      logger.warn({ ...refusal, host: target?.host }, "Recording playback: the camera refused a request");
+      if (target?.streamName) {
+        if (refusals.size > 2000) refusals.clear();
+        refusals.set(target.streamName, refusal);
+      }
     }
     for (const name of ["Content-Base", "Content-Location", "RTP-Info"]) {
       const v = header(m, name);

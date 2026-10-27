@@ -155,7 +155,15 @@ export function LiveVideo({
           return flush();
         }
         const msg = JSON.parse(ev.data) as { type: string; value: string };
-        if (msg.type === "error") return gotVideo ? dropped(`The video stopped: ${msg.value}`) : fail(`The camera stream could not be opened: ${msg.value}`);
+        if (msg.type === "error") {
+          if (gotVideo) return dropped(`The video stopped: ${msg.value}`);
+          if (!playbackStart) return fail(`The camera stream could not be opened: ${msg.value}`);
+          // go2rtc only says "wrong response on SETUP": add what the camera actually answered.
+          void api<{ refusal: { request: string; status: string } | null }>(`/cameras/${cameraId}/playback/problem`)
+            .then((p) => p.refusal, () => null)
+            .then((r) => fail(`The camera stream could not be opened: ${msg.value}.${r ? ` The camera answered "${r.status}" to ${r.request}.` : ""}`));
+          return;
+        }
         if (msg.type !== "mse") return;
         const source = new Source();
         el.src = URL.createObjectURL(source);
