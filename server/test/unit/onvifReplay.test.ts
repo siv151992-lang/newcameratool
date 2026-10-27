@@ -243,7 +243,26 @@ describe("Replay relay", () => {
       expect(plays.every((r) => !r.headers.require)).toBe(true);
       c.close();
     }
+    // Refused once: not asked of that camera again (a round trip and a refusal less on every play).
+    cam.requests.length = 0;
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "clock_again", { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101?starttime=20261024T101500Z", username: "admin", password: "secret", onvif: false, startUtcMs: Date.parse("2026-10-24T04:45:00Z") });
+    const c = rtspClient(relayPort);
+    await c.request("DESCRIBE", url);
+    await c.request("SETUP", `${url}/track1`);
+    expect((await c.request("PLAY", url, ["Session: 1234", "Range: npt=0.000-"])).first).toBe("RTSP/1.0 200 OK");
+    expect(cam.requests.filter((r) => r.first.startsWith("PLAY")).map((r) => r.headers.range)).toEqual(["npt=0.000-"]);
+    c.close();
     cam.options.refuseRange = false;
+  });
+
+  it("answers a camera's login at once on the next playback, without being refused first", async () => {
+    cam.requests.length = 0;
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "login_again", { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101", username: "admin", password: "secret", onvif: false });
+    const c = rtspClient(relayPort);
+    expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
+    // One DESCRIBE reached the camera, already signed in (earlier playbacks learned its challenge).
+    expect(cam.requests.map((r) => [r.first.split(" ")[0], Boolean(r.headers.authorization)])).toEqual([["DESCRIBE", true]]);
+    c.close();
   });
 
   it("keeps what the camera refused, to show in the player", async () => {

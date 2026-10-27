@@ -52,6 +52,16 @@ export function lastRefusal(streamName: string): { request: string; status: stri
   return r && Date.now() - r.at < 120_000 ? { request: r.request, status: r.status } : undefined;
 }
 
+/**
+ * Per camera (host:port): its last login challenge, answered at once on the next connection instead
+ * of after a refusal (a round trip less on every play and seek; a stale one is just refused and
+ * answered again), and when it refused a clock range (not asked again for an hour).
+ */
+const challenges = new Map<string, { scheme: "digest" | "basic"; params: Record<string, string>; nc: number; at: number }>();
+const CHALLENGE_REUSE_MS = 10 * 60_000;
+const rangeRefusedAt = new Map<string, number>();
+const RANGE_REFUSAL_MS = 3_600_000;
+
 /** What happened to each playback stream's last connection, to explain a recording that does not play. */
 interface Trace {
   port: number;
@@ -209,8 +219,8 @@ function relayConnection(client: net.Socket) {
   let camera: net.Socket | undefined;
   let cameraOrigin = "";
   let relayPrefix = "";
-  let challenge: { scheme: "digest" | "basic"; params: Record<string, string> } | undefined;
-  let nc = 0;
+  let challenge: { scheme: "digest" | "basic"; params: Record<string, string>; nc: number; at: number } | undefined;
+  let cameraKey = "";
   /** Requests waiting for the camera to answer, by CSeq, to resend once after a login challenge. */
   const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean; ranged?: boolean; unranged?: boolean }>();
   /** Messages for the camera before its connection is up. */
@@ -243,8 +253,8 @@ function relayConnection(client: net.Socket) {
     if (challenge.scheme === "basic") {
       setHeader(m, "Authorization", `Basic ${Buffer.from(`${target.username}:${target.password}`).toString("base64")}`);
     } else {
-      nc += 1;
-      setHeader(m, "Authorization", digestAuthorization(challenge.params, target.username, target.password, method, uri, undefined, nc.toString(16).padStart(8, "0")));
+      challenge.nc += 1;
+      setHeader(m, "Authorization", digestAuthorization(challenge.params, target.username, target.password, method, uri, undefined, challenge.nc.toString(16).padStart(8, "0")));
     }
   };
 
@@ -259,7 +269,8 @@ function relayConnection(client: net.Socket) {
       if (play && target!.startUtcMs !== undefined) setHeader(out, "Range", `clock=${clockTime(target!.startUtcMs)}-`);
     }
     // Other brands: the start time as a clock range too, for firmware that ignores it in the address.
-    const ranged = play && !target!.onvif && !unranged && target!.startUtcMs !== undefined;
+    const refusedAt = rangeRefusedAt.get(cameraKey);
+    const ranged = play && !target!.onvif && !unranged && target!.startUtcMs !== undefined && !(refusedAt && Date.now() - refusedAt < RANGE_REFUSAL_MS);
     if (ranged) setHeader(out, "Range", `clock=${clockTime(target!.startUtcMs!)}-`);
     const scaled = play && !unscaled && (target!.scale ?? 1) > 1;
     if (scaled) setHeader(out, "Scale", target!.scale!.toFixed(1));
@@ -290,7 +301,9 @@ function relayConnection(client: net.Socket) {
       const digest = offered.find((v) => /^digest\s/i.test(v));
       const basic = offered.find((v) => /^basic\b/i.test(v));
       if (digest || basic) {
-        challenge = digest ? { scheme: "digest", params: parseChallenge(digest) } : { scheme: "basic", params: {} };
+        challenge = { ...(digest ? { scheme: "digest" as const, params: parseChallenge(digest) } : { scheme: "basic" as const, params: {} }), nc: 0, at: Date.now() };
+        if (challenges.size > 5000) challenges.clear();
+        challenges.set(cameraKey, challenge);
         pending.set(cseq!, { message: request.message, retried: true });
         sendRequest(request.message, request.unscaled, request.unranged);
         return;
@@ -306,6 +319,8 @@ function relayConnection(client: net.Socket) {
     // The camera refused the clock range: play with the start time in the address only.
     if (request?.ranged && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
       logger.info({ status: m.first, host: target?.host }, "Recording playback: the camera refused a clock range; playing from the time in the address");
+      if (rangeRefusedAt.size > 5000) rangeRefusedAt.clear();
+      rangeRefusedAt.set(cameraKey, Date.now());
       pending.set(cseq!, { ...request, ranged: false, unranged: true });
       sendRequest(request.message, request.unscaled, true);
       return;
@@ -381,6 +396,9 @@ function relayConnection(client: net.Socket) {
       if (tr) tr.contacted = true;
       const host = net.isIP(found.host) === 6 ? `[${found.host}]` : found.host;
       cameraOrigin = `rtsp://${host}:${found.port}`;
+      cameraKey = `${found.host}:${found.port}`;
+      const known = challenges.get(cameraKey);
+      if (known && Date.now() - known.at < CHALLENGE_REUSE_MS) challenge = known;
       void connect(found).catch((err) => {
         logger.warn({ err: (err as Error).message, host: found.host }, "Recording playback: the camera cannot be contacted");
         const tr = traces.get(found.streamName);

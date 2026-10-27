@@ -157,16 +157,25 @@ async function putStream(name: string, src: string) {
 
 // ------------------------------------------------------------------ playback of recordings
 
-/** Per camera: the last day listed, to turn a chosen local time into the camera's playback time. */
-const lastListing = new Map<string, RecordingList>();
+/**
+ * Per camera: the days listed lately (by the day's start), to turn a chosen local time into the
+ * camera's playback time without searching the camera again (a Hikvision search takes seconds, and
+ * the player lists the days either side too, so one listing per camera was always the wrong day).
+ */
+const listings = new Map<string, Map<number, { list: RecordingList; at: number }>>();
 /** Per camera: its clock's offset from UTC, learned when its recordings are listed (camera time now vs ours). */
 const clockOffsets = new Map<string, number>();
-function rememberListing(key: string, list: RecordingList) {
-  if (lastListing.size > 5000) {
-    lastListing.clear();
+const LISTING_DAYS_KEPT = 7;
+function rememberListing(key: string, list: RecordingList, day: number) {
+  if (listings.size > 5000) {
+    listings.clear();
     clockOffsets.clear();
   }
-  lastListing.set(key, list);
+  const days = listings.get(key) ?? new Map<number, { list: RecordingList; at: number }>();
+  days.delete(day);
+  days.set(day, { list, at: Date.now() });
+  while (days.size > LISTING_DAYS_KEPT) days.delete(days.keys().next().value!);
+  listings.set(key, days);
   // Time zones are whole quarter hours; this also absorbs a camera clock a few minutes off.
   clockOffsets.set(key, Math.round((list.nowMs - Date.now()) / 900_000) * 900_000);
 }
@@ -204,7 +213,7 @@ export async function listRecordings(orgId: string, cameraId: string, date: stri
     if (adapter === own) throw err;
     throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `${own.meta.displayName} recordings are read over ONVIF (Profile G), which failed: ${(err as Error).message}. Turn on ONVIF in the camera.`);
   }
-  rememberListing(listingKey(cameraId, channel), result);
+  rememberListing(listingKey(cameraId, channel), result, from);
   const segments = result.segments
     .filter((s) => s.end > from && s.start < to)
     .map((s) => ({ start: wall(Math.max(s.start, from)), end: wall(Math.min(s.end, to)) }));
@@ -255,19 +264,29 @@ export async function oldestRecording(orgId: string, cameraId: string, channel?:
   return first ? wall(first.start) : null;
 }
 
-/** The day listing that covers `local` (camera local time): the last one listed, else that day's, read now. */
+/** A listing this recent is used even for a time after its last recording (the next one may not be in it yet). */
+const LISTING_FRESH_MS = 60_000;
+
+/**
+ * The day listing that covers `local` (camera local time): one listed lately (holding that time in a
+ * recording, or listed within the last minute), else that day's, read now.
+ */
 async function listingFor(adapter: CameraBrandAdapter, config: CameraConfig, cameraId: string, local: number, channel?: number): Promise<RecordingList | undefined> {
   const key = listingKey(cameraId, channel);
-  const known = lastListing.get(key);
   const day = Math.floor(local / DAY_MS) * DAY_MS;
-  if (known && known.segments.some((s) => s.start <= local && local < s.end)) return known;
-  // After a restart, or a time on another day than the one last listed: list that day.
+  const days = listings.get(key);
+  const known = days?.get(day);
+  if (known && (Date.now() - known.at < LISTING_FRESH_MS || known.list.segments.some((s) => s.start <= local && local < s.end))) return known.list;
+  // A recording that runs on from the day before, listed with that day.
+  const before = days?.get(day - DAY_MS);
+  if (before?.list.segments.some((s) => s.start <= local && local < s.end)) return before.list;
+  // After a restart, or a time not in any day listed lately: list that day.
   try {
     const list = await adapter.listRecordings!(config, day, day + DAY_MS, channel);
-    rememberListing(key, list);
+    rememberListing(key, list, day);
     return list;
   } catch {
-    return known;
+    return known?.list;
   }
 }
 

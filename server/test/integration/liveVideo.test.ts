@@ -145,8 +145,13 @@ describe("live video", () => {
     expect(days.every((d: string) => d.startsWith(today.slice(0, 7)))).toBe(true);
     await request(app).get(`/api/cameras/${id}/recordings/days?month=2026-13`).set("Cookie", admin.cookie).expect(400);
 
+    // The player lists the day before too; playing today must not search the camera again.
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    await request(app).get(`/api/cameras/${id}/recordings?date=${yesterday}`).set("Cookie", admin.cookie).expect(200);
+    cam.requests.length = 0;
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ start: `${today}T00:15:00` }).expect(200);
+    expect(cam.requests.filter((r) => r.path.includes("ContentMgmt/search"))).toEqual([]);
     const [name, src] = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))!;
     // Hikvision: through the relay, which also gives the start time as a clock range (firmware that
     // ignores starttime plays from the first recording on the card); the start and end in the address.
