@@ -345,7 +345,13 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
                 <ZoomIn className="h-4 w-4" />
               </PlayerButton>
             </div>
-            <PlayerButton label="Save picture (camera time in the file name)" onClick={() => void savePicture(frame.current, pictureFileName(name, position ?? localTimeText()))} disabled={!position}>
+            <PlayerButton label="Save picture (camera time in the file name)" onClick={() => {
+                const at = position ?? localTimeText();
+                void savePicture(frame.current, pictureFileName(name, at), {
+                  camera: name, time: at, label: "Playback",
+                  timeline: { time: head, span, min: timelineMin, max: timelineMax, segments: segs },
+                });
+              }} disabled={!position}>
               <Camera className="h-4 w-4" />
             </PlayerButton>
             <PlayerButton label="Full screen" onClick={() => void frame.current?.requestFullscreen?.()}><Maximize2 className="h-4 w-4" /></PlayerButton>

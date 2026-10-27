@@ -13,6 +13,8 @@ over ONVIF. If none works, the message says why (login refused, or no such strea
 **Save picture** downloads what is on screen as a PNG at the camera's full resolution (whatever
 the zoom), named after the camera and the time, e.g. `Lobby_2026-10-27_14-05-09.png`. In
 recordings it is the camera's time of the moment being played (the camera button by the zoom).
+A strip under the picture names the camera, the date and time, and (in recordings) shows the
+timeline as it was on screen, with the saved moment marked.
 
 Browsers cannot play **H.265**. If live view says the format is not supported, set the camera's
 second stream to H.264 in the camera's own video settings.

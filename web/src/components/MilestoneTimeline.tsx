@@ -21,10 +21,10 @@ export function zoomSpan(span: number, direction: -1 | 1): number {
   const at = i < 0 ? SPANS.length - 1 : i;
   return SPANS[Math.min(SPANS.length - 1, Math.max(0, at + direction))]!.ms;
 }
-const hhmm = (t: number, withSeconds = false) => new Date(t).toISOString().slice(11, withSeconds ? 19 : 16);
+export const hhmm = (t: number, withSeconds = false) => new Date(t).toISOString().slice(11, withSeconds ? 19 : 16);
 
 /** Labels on round times, about 8 across. */
-function ticks(from: number, to: number, span: number) {
+export function ticks(from: number, to: number, span: number) {
   const steps = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360].map((m) => m * 60_000);
   const step = steps.find((s) => span / s <= 8) ?? steps.at(-1)!;
   const minor = step / (step >= 10 * 60_000 ? 5 : step >= 2 * 60_000 ? 2 : 1);

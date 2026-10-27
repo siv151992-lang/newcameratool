@@ -172,7 +172,10 @@ function SavePictureButton({ frame, name, disabled }: { frame: RefObject<HTMLDiv
     <Button
       size="sm" icon={<Camera className="h-4 w-4" />} disabled={disabled}
       title={failed ? "No picture yet; try again once the video shows" : "Save the current picture as a PNG file"}
-      onClick={() => void savePicture(frame.current, pictureFileName(name, localTimeText())).then((ok) => setFailed(!ok))}
+      onClick={() => {
+        const at = localTimeText();
+        void savePicture(frame.current, pictureFileName(name, at), { camera: name, time: at, label: "Live" }).then((ok) => setFailed(!ok));
+      }}
     >
       Save picture
     </Button>
