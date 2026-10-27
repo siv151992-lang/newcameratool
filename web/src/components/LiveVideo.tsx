@@ -10,6 +10,14 @@ const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0",
  * Smooth video over a WebSocket (go2rtc's MSE stream, relayed by the server) into a <video>.
  * Stays near the live edge and drops old video so memory does not grow.
  */
+/** Recordings: seconds of video in hand before playing, and before playing on after running dry. */
+const START_SECONDS = 1;
+const REBUFFER_SECONDS = 1.5;
+/** At normal speed, recordings play this much slower (unnoticeably) while less than 1 s is in hand, to build it up. */
+const BUILD_RATE = 0.92;
+/** …but never wait longer than this for it (a slow camera still plays). */
+const START_WAIT_MS = 4000;
+
 export function LiveVideo({
   cameraId,
   name,
@@ -75,9 +83,36 @@ export function LiveVideo({
     let reconnects = 0;
     let retryTimer: number | undefined;
 
+    /**
+     * Recordings start (and start again after running dry) only with some video in hand: cameras send
+     * them at real-time pace, so playing each frame as it arrives freezes at every network hiccup.
+     */
+    let cushioned = false;
+    let firstDataAt = 0;
+    const cushion = (ranges: TimeRanges) => {
+      if (!playbackStart || ranges.length === 0) return;
+      const start = ranges.start(0);
+      if (el.currentTime < start) el.currentTime = start;
+      const ahead = ranges.end(ranges.length - 1) - el.currentTime;
+      firstDataAt ||= performance.now();
+      if (el.paused && (ahead >= (cushioned ? REBUFFER_SECONDS : START_SECONDS) || performance.now() - firstDataAt > START_WAIT_MS)) {
+        cushioned = true;
+        void el.play().catch(() => undefined);
+      }
+    };
+    const onWaiting = () => {
+      // Ran out of video: wait for a little in hand rather than stutter frame by frame.
+      if (playbackStart && cushioned && !stopped) {
+        el.pause();
+        firstDataAt = performance.now();
+      }
+    };
+    el.addEventListener("waiting", onWaiting);
+
     const flush = () => {
       if (!buffer || buffer.updating) return;
       const ranges = buffer.buffered;
+      cushion(ranges);
       if (ranges.length > 0) {
         const end = ranges.end(ranges.length - 1);
         if (!playbackStart && end - el.currentTime > 3) el.currentTime = end - 0.5; // fell behind: jump to live
@@ -222,7 +257,8 @@ export function LiveVideo({
       const end = buffer.buffered.end(buffer.buffered.length - 1);
       const { speed: wanted, onArrival: report } = rate.current;
       if (wanted <= 1 || fast <= 1) {
-        el.playbackRate = Math.min(wanted, 1);
+        const ahead = end - el.currentTime;
+        el.playbackRate = wanted < 1 ? wanted : ahead < 1 ? BUILD_RATE : ahead > 2 || el.playbackRate === 1 ? 1 : el.playbackRate;
         return;
       }
       const now = performance.now();
@@ -237,6 +273,7 @@ export function LiveVideo({
     }, 1000);
 
     return () => {
+      el.removeEventListener("waiting", onWaiting);
       clearInterval(pace);
       clearInterval(watchdog);
       window.clearTimeout(retryTimer);
@@ -253,7 +290,7 @@ export function LiveVideo({
         <video
           ref={video}
           className="h-full w-full object-contain"
-          autoPlay
+          autoPlay={!playbackStart}
           muted
           playsInline
           aria-label={`Live video from ${name}`}

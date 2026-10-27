@@ -223,6 +223,8 @@ function relayConnection(client: net.Socket) {
     client.destroy();
     camera?.destroy();
   };
+  // RTSP replies and video packets go out at once (no waiting to batch small packets).
+  client.setNoDelay(true);
   client.on("error", close).on("close", close);
   client.setTimeout(60_000, close);
 
@@ -329,7 +331,7 @@ function relayConnection(client: net.Socket) {
 
   const connect = async (t: ReplayTarget) => {
     const { address } = await hostGuard.resolve(t.host);
-    camera = net.connect({ host: address, port: t.port });
+    camera = net.connect({ host: address, port: t.port, noDelay: true });
     camera.setTimeout(CONNECT_TIMEOUT_MS, () => camera!.destroy(new Error("timed out")));
     camera.once("connect", () => {
       camera!.setTimeout(0);
@@ -337,7 +339,7 @@ function relayConnection(client: net.Socket) {
       queue = undefined;
     });
     camera.on("data", (chunk) => {
-      fromCamera = Buffer.concat([fromCamera, chunk]);
+      fromCamera = fromCamera.length ? Buffer.concat([fromCamera, chunk]) : chunk;
       try {
         fromCamera = readRtsp(fromCamera, onCameraMessage, (frame) => {
           const t = trace();
@@ -394,7 +396,7 @@ function relayConnection(client: net.Socket) {
   };
 
   client.on("data", (chunk) => {
-    fromClient = Buffer.concat([fromClient, chunk]);
+    fromClient = fromClient.length ? Buffer.concat([fromClient, chunk]) : chunk;
     try {
       fromClient = readRtsp(fromClient, onClientMessage, (frame) => (target ? toCamera(Buffer.from(frame)) : undefined));
     } catch {

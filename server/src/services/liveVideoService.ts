@@ -329,12 +329,16 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
     }
     const key = listingKey(cameraId, channel);
     const known = playbackVariants.get(key);
-    const preferred = known && Date.now() - known.at < PLAYBACK_VARIANT_TTL_MS ? known.variant : 0;
-    const pick = await pickPlaybackPath(
-      paths,
-      (path) => probeRtsp({ host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password }),
-      preferred,
-    );
+    const recent = known && Date.now() - known.at < PLAYBACK_VARIANT_TTL_MS && known.variant < paths.length;
+    // The address served a moment ago is used without asking the camera again (each seek, speed
+    // change and resume prepares playback anew); a refusal is still explained by the relay.
+    const pick: PlaybackPick & { variant?: number } = recent
+      ? { path: paths[known.variant]!, checked: false, variant: known.variant }
+      : await pickPlaybackPath(
+        paths,
+        (path) => probeRtsp({ host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password }),
+        0,
+      );
     if ("path" in pick) {
       if (pick.checked) {
         if (playbackVariants.size > 5000) playbackVariants.clear();
