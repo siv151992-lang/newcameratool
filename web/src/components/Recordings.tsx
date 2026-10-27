@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Camera, ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
+import { Camera, ChevronLeft, Layers, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { localTimeText, pictureFileName, savePicture } from "../lib/savePicture";
-import { LiveVideo } from "./LiveVideo";
+import { LiveVideo, PLAYBACK_BUFFERS, type PlaybackBuffer } from "./LiveVideo";
 import { RecordingCalendar } from "./RecordingCalendar";
 import { MilestoneTimeline, SPANS, zoomSpan } from "./MilestoneTimeline";
 import { Button, Dialog, EmptyState, ErrorMessage, Spinner } from "./ui";
@@ -38,6 +38,17 @@ function duration(a: string, b: string) {
 }
 
 /** The recordings on a camera's own storage: pick a day, see what was recorded, play from any time. */
+const BUFFER_KEY = "cctv-playback-buffer";
+function savedBuffer(): PlaybackBuffer {
+  try {
+    const v = localStorage.getItem(BUFFER_KEY);
+    if (v && v in PLAYBACK_BUFFERS) return v as PlaybackBuffer;
+  } catch {
+    // Storage blocked: the default.
+  }
+  return "normal";
+}
+
 export function RecordingsDialog({ camera, onClose }: { camera: { id: string; name: string; channel?: number } | null; onClose: () => void }) {
   return (
     <Dialog open={!!camera} onClose={onClose} title={camera ? `Recordings: ${camera.name}` : "Recordings"} size="xl">
@@ -51,6 +62,16 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const [date, setDate] = useState(today);
   const [start, setStart] = useState<string | null>(null);
   const [speed, setSpeed] = useState(1);
+  const [bufferLevel, setBufferLevel] = useState<PlaybackBuffer>(savedBuffer);
+  const [inHand, setInHand] = useState<number | null>(null);
+  const chooseBuffer = (v: PlaybackBuffer) => {
+    setBufferLevel(v);
+    try {
+      localStorage.setItem(BUFFER_KEY, v);
+    } catch {
+      // Not remembered (private window): applies to this viewing only.
+    }
+  };
   const [arrival, setArrival] = useState<number | null>(null);
   const [played, setPlayed] = useState(0);
   const [startedAt, setStartedAt] = useState<string | null>(null);
@@ -278,6 +299,8 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
               onTime={onTime}
               onPrepared={setStartedAt}
               onArrival={setArrival}
+              buffer={bufferLevel}
+              onBuffer={setInHand}
             />
           ) : (
             <button
@@ -331,6 +354,15 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
               <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))} className="rounded-full bg-transparent px-1 py-0.5 text-neutral-100 focus:outline-none">
                 {SPEEDS.map((v) => <option key={v} value={v} className="bg-neutral-800">{speedLabel(v)}</option>)}
               </select>
+            </label>
+            {/* Buffer: how much video is kept in hand, and how much is now */}
+            <label className="flex h-8 items-center gap-1.5 rounded-full border border-neutral-700 bg-neutral-800/60 pl-2.5 pr-1" title="Buffer: video kept in hand so playback does not freeze on a slow or uneven network. Larger is smoother on slow networks; it builds up while playing (a little slower than real time until full).">
+              <Layers className="h-4 w-4" aria-hidden />
+              <span className="sr-only">Buffer</span>
+              <select value={bufferLevel} onChange={(e) => chooseBuffer(e.target.value as PlaybackBuffer)} className="rounded-full bg-transparent px-1 py-0.5 text-neutral-100 focus:outline-none">
+                {(Object.keys(PLAYBACK_BUFFERS) as PlaybackBuffer[]).map((k) => <option key={k} value={k} className="bg-neutral-800">{PLAYBACK_BUFFERS[k].label}</option>)}
+              </select>
+              {start && inHand !== null && <span className="min-w-[2.5rem] pr-1.5 tabular text-neutral-300" aria-label={`${inHand.toFixed(1)} seconds of video in hand`}>{inHand.toFixed(1)} s</span>}
             </label>
             {/* Timeline zoom: − / span / + (also Ctrl + wheel and the + / - keys on the timeline) */}
             <div className="flex h-8 items-center rounded-full border border-neutral-700 bg-neutral-800/60" role="group" aria-label="Timeline zoom">

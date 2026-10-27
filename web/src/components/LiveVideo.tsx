@@ -10,13 +10,22 @@ const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0",
  * Smooth video over a WebSocket (go2rtc's MSE stream, relayed by the server) into a <video>.
  * Stays near the live edge and drops old video so memory does not grow.
  */
-/** Recordings: seconds of video in hand before playing, and before playing on after running dry. */
-const START_SECONDS = 1;
-const REBUFFER_SECONDS = 1.5;
-/** At normal speed, recordings play this much slower (unnoticeably) while less than 1 s is in hand, to build it up. */
-const BUILD_RATE = 0.92;
-/** …but never wait longer than this for it (a slow camera still plays). */
-const START_WAIT_MS = 4000;
+/**
+ * Recordings keep a reserve of video in hand (the buffer), so a network hiccup or a camera that
+ * sends unevenly does not freeze the picture:
+ * - start: seconds in hand before playing starts (kept short, so playback starts quickly);
+ * - target: the reserve built up while playing, by playing a little slower (unnoticeably) while
+ *   below it: 0.9x under half the target, 0.96x under the target;
+ * - refill: seconds in hand before playing on after running dry.
+ */
+export const PLAYBACK_BUFFERS = {
+  small: { label: "Small 2 s", start: 1, target: 2, refill: 1 },
+  normal: { label: "Normal 5 s", start: 1.5, target: 5, refill: 2.5 },
+  large: { label: "Large 10 s", start: 3, target: 10, refill: 5 },
+} as const;
+export type PlaybackBuffer = keyof typeof PLAYBACK_BUFFERS;
+/** Never wait longer than this for the start reserve (a slow camera still plays). */
+const START_WAIT_MS = 6000;
 
 export function LiveVideo({
   cameraId,
@@ -28,6 +37,8 @@ export function LiveVideo({
   speed = 1,
   onArrival,
   channel,
+  buffer: bufferLevel = "normal",
+  onBuffer,
 }: {
   cameraId: string;
   name: string;
@@ -47,13 +58,17 @@ export function LiveVideo({
   onArrival?: (rate: number) => void;
   /** An NVR channel to play instead of the device's own video. */
   channel?: number;
+  /** Recordings: how much video to keep in hand. */
+  buffer?: PlaybackBuffer;
+  /** Recordings: seconds of video in hand, about once a second. */
+  onBuffer?: (seconds: number) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   // Read at call time, so a new callback does not restart the stream.
   const prepared = useRef(onPrepared);
   prepared.current = onPrepared;
-  const rate = useRef({ speed, onArrival });
-  rate.current = { speed, onArrival };
+  const rate = useRef({ speed, onArrival, reserve: PLAYBACK_BUFFERS[bufferLevel], onBuffer });
+  rate.current = { speed, onArrival, reserve: PLAYBACK_BUFFERS[bufferLevel], onBuffer };
   const fast = speed > 1 ? speed : 1;
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +110,8 @@ export function LiveVideo({
       if (el.currentTime < start) el.currentTime = start;
       const ahead = ranges.end(ranges.length - 1) - el.currentTime;
       firstDataAt ||= performance.now();
-      if (el.paused && (ahead >= (cushioned ? REBUFFER_SECONDS : START_SECONDS) || performance.now() - firstDataAt > START_WAIT_MS)) {
+      const { reserve } = rate.current;
+      if (el.paused && (ahead >= (cushioned ? reserve.refill : reserve.start) || performance.now() - firstDataAt > Math.max(START_WAIT_MS, reserve.refill * 1500))) {
         cushioned = true;
         void el.play().catch(() => undefined);
       }
@@ -255,10 +271,13 @@ export function LiveVideo({
     const pace = setInterval(() => {
       if (!playbackStart || !buffer || buffer.buffered.length === 0) return;
       const end = buffer.buffered.end(buffer.buffered.length - 1);
-      const { speed: wanted, onArrival: report } = rate.current;
+      const { speed: wanted, onArrival: report, reserve, onBuffer: showBuffer } = rate.current;
+      showBuffer?.(Math.max(0, end - el.currentTime));
       if (wanted <= 1 || fast <= 1) {
+        // Build the reserve up while playing, a little slower; normal speed once it is there.
         const ahead = end - el.currentTime;
-        el.playbackRate = wanted < 1 ? wanted : ahead < 1 ? BUILD_RATE : ahead > 2 || el.playbackRate === 1 ? 1 : el.playbackRate;
+        const build = ahead < reserve.target / 2 ? 0.9 : ahead < reserve.target ? 0.96 : 1;
+        el.playbackRate = wanted < 1 ? wanted * build : build;
         return;
       }
       const now = performance.now();

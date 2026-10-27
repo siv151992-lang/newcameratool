@@ -29,6 +29,10 @@ second stream to H.264 in the camera's own video settings.
   next day.
 - **From start** plays the oldest recording on the camera; **Latest** the newest.
 - **Speed**: slower plays at once; faster asks the camera to send faster (where it supports it).
+- **Buffer** (Small 2 s, Normal 5 s, Large 10 s): video kept in hand so playback does not freeze on a
+  slow or uneven network; the seconds in hand show beside it. Playback starts with a little in hand
+  and builds the rest by playing slightly slower than real time (0.9–0.96×) until it is full. Use
+  Large over VPN or mobile links. The choice is remembered in the browser.
 
 Times are the camera's own clock. The app reads each camera's clock about once an hour and shows
 how far off it is on the camera page; a clock wrong by more than 5 minutes (Settings → Problem
