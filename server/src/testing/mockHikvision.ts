@@ -86,6 +86,8 @@ export class MockHikvisionCamera {
   searchRepliesUtc = false;
   /** Delay before every reply, to behave like a real camera on a network (load tests). */
   latencyMs = 0;
+  /** How far the camera's clock is off (ms, + ahead), as a camera without NTP drifts. */
+  clockSkewMs = 0;
   /** Search mode: how many days of recordings the card holds (the oldest segment starts then). */
   recordedDays = 30;
   /** Search mode: longest period (days) one search may cover; longer ones are refused, as some firmware does. */
@@ -196,7 +198,7 @@ export class MockHikvisionCamera {
   private searchRoutes(searchBody: string): Record<string, () => string> {
     const wall = (ms: number) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
     const offsetMs = this.utcOffsetMinutes * 60_000;
-    const now = Date.now() + offsetMs; // camera local wall clock
+    const now = Date.now() + this.clockSkewMs + offsetMs; // camera local wall clock
     const tz = `${this.utcOffsetMinutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(this.utcOffsetMinutes) / 60)).padStart(2, "0")}:${String(Math.abs(this.utcOffsetMinutes) % 60).padStart(2, "0")}`;
     const reply = (ms: number) => wall(this.searchRepliesUtc ? ms - offsetMs : ms);
     // recording: the current segment ends now; error: continuous recording stopped 2 hours ago;

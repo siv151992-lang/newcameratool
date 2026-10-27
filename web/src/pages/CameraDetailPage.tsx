@@ -17,7 +17,7 @@ import { CameraForecastPanel } from "./AiPage";
 import { Button, Card, Dialog, EmptyState, ErrorMessage, Spinner } from "../components/ui";
 import { useAuth } from "../hooks/auth";
 import { useCheckNow, useRemoveCameras, useSetMonitoring, useTestSavedCamera } from "../hooks/cameras";
-import { absoluteTime, ALERT_TYPE_LABELS, ERROR_LABELS, errorCategory, formatBytes, formatDays, formatPercent, relativeTime } from "../lib/format";
+import { absoluteTime, ALERT_TYPE_LABELS, describeClockOffset, ERROR_LABELS, errorCategory, formatBytes, formatDays, formatPercent, relativeTime } from "../lib/format";
 
 const RANGES = [
   { hours: 24, label: "24 hours" },
@@ -308,6 +308,20 @@ export function CameraDetailPage() {
                   )}
                   {s.recording.rangeCheckedAt && (
                     <span className="block text-xs text-ink-muted" title={absoluteTime(s.recording.rangeCheckedAt)}>Checked {relativeTime(s.recording.rangeCheckedAt)}</span>
+                  )}
+                </Info>
+              </div>
+            )}
+            {(s.clock.checkedAt || s.clock.error) && (
+              <div className="col-span-2">
+                <Info label="Camera clock">
+                  {s.clock.offsetSeconds !== null ? (
+                    <span className="font-medium">{describeClockOffset(s.clock.offsetSeconds)}</span>
+                  ) : (
+                    <span className="text-ink-secondary">Could not be read: {s.clock.error}</span>
+                  )}
+                  {s.clock.checkedAt && (
+                    <span className="block text-xs text-ink-muted" title={absoluteTime(s.clock.checkedAt)}>Checked {relativeTime(s.clock.checkedAt)}</span>
                   )}
                 </Info>
               </div>

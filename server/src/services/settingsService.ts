@@ -19,6 +19,8 @@ export const monitoringSettingsSchema = z
     recordingAlertsEnabled: z.boolean(),
     /** Days of recordings each camera must hold (on its SD card or disk); 0 turns the alert off. */
     minRecordingDays: z.number().int().min(0).max(3650),
+    /** Alert when a camera's clock is off by more than this many minutes; 0 turns the alert off. */
+    clockDriftAlertMinutes: z.number().int().min(0).max(1440),
     deviceInfoRefreshHours: z.number().int().min(1).max(720),
     historyRetentionDays: z.number().int().min(1).max(3650),
     /** Routine successful checks are kept in history at most this often per camera; 0 keeps every check. */
@@ -45,6 +47,7 @@ export const DEFAULT_MONITORING_SETTINGS: MonitoringSettings = {
   storageUsageAlertsEnabled: true,
   recordingAlertsEnabled: true,
   minRecordingDays: 0,
+  clockDriftAlertMinutes: 5,
   deviceInfoRefreshHours: 24,
   historyRetentionDays: 90,
   historyIntervalMinutes: 15,
@@ -66,7 +69,7 @@ function checkOrdering(s: MonitoringSettings) {
 export const ORGANIZATION_SETTING_KEYS = [
   "pollIntervalSeconds", "offlineFailureThreshold", "authFailureThreshold", "storageUnavailableMinutes",
   "warningThresholdPercent", "criticalThresholdPercent", "fullThresholdPercent", "recoveryHysteresisPercent",
-  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays",
+  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays", "clockDriftAlertMinutes",
 ] as const satisfies readonly (keyof MonitoringSettings)[];
 const isOrgKey = (k: string) => (ORGANIZATION_SETTING_KEYS as readonly string[]).includes(k);
 

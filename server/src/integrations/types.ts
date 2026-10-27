@@ -253,6 +253,8 @@ export interface CameraBrandAdapter {
   getChannels?(camera: CameraConfig): Promise<NvrChannel[]>;
   /** Optional: other RTSP paths to try for live video when rtspPath does not answer (other streams, models or firmware). */
   readonly rtspFallbacks?: readonly string[];
+  /** Optional: the camera's clock, as UTC epoch ms (to tell a camera whose time is wrong). */
+  getClock?(camera: CameraConfig): Promise<number>;
   /** Optional: the current picture, for the live view. */
   getSnapshot?(camera: CameraConfig, channel?: number): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
   /** Optional, for NVRs: the RTSP paths of a channel's live video, to try in order (sub stream first). */

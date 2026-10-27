@@ -151,6 +151,7 @@ const SELECT_CAMERA = `
          s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
          s.recording_state, s.recording_detail, s.recording_checked_at,
          s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least,
+         s.clock_offset_seconds, s.clock_checked_at, s.clock_error,
          s.channels_error, s.channels_at,
          (SELECT json_build_object('total', count(*), 'noVideo', count(*) FILTER (WHERE ch.online = false),
                                    'notRecording', count(*) FILTER (WHERE ch.online IS DISTINCT FROM false AND ch.recording IN ('idle', 'error')))
@@ -243,6 +244,8 @@ export function toCameraView(r: CameraRow) {
         rangeError: r.recording_range_error ?? null,
         daysAtLeast: r.recording_days_at_least ?? false,
       },
+      /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
+      clock: { offsetSeconds: r.clock_offset_seconds ?? null, checkedAt: r.clock_checked_at ?? null, error: r.clock_error ?? null },
     },
     device: {
       model: r.device_model ?? null,

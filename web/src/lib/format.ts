@@ -15,6 +15,18 @@ export function formatDays(days: number | null | undefined): string {
   return days < 10 ? `${days.toFixed(1)} days` : `${Math.round(days)} days`;
 }
 
+/** A camera clock offset: "Correct (within 2 s)", "12 min 30 s ahead", "2 h 5 min behind". */
+export function describeClockOffset(seconds: number): string {
+  const a = Math.abs(seconds);
+  if (a <= 2) return "Correct (within 2 s)";
+  const d = Math.floor(a / 86_400);
+  const h = Math.floor((a % 86_400) / 3600);
+  const m = Math.floor((a % 3600) / 60);
+  const s = a % 60;
+  const amount = d >= 1 ? `${d} day${d === 1 ? "" : "s"}${h ? ` ${h} h` : ""}` : h >= 1 ? `${h} h${m ? ` ${m} min` : ""}` : m >= 1 ? `${m} min${s ? ` ${s} s` : ""}` : `${s} s`;
+  return `${amount} ${seconds > 0 ? "ahead" : "behind"}`;
+}
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "—";
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
@@ -82,6 +94,7 @@ export const ALERT_TYPE_LABELS: Record<string, string> = {
   password_change_due: "Camera password change due",
   nvr_channel: "NVR channel problem",
   recording_retention: "Recordings shorter than required",
+  clock_wrong: "Camera clock is wrong",
 };
 
 /** Category of the last error, so users can tell unreachable vs auth vs API vs disk problems apart. */

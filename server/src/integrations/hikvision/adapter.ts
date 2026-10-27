@@ -272,6 +272,13 @@ export class HikvisionAdapter implements CameraBrandAdapter {
   /** Some firmware ignores starttime and plays from the first recording on the card; it honours a clock range on PLAY. */
   readonly playbackClockRange = true;
 
+  /** The camera's clock in UTC: its local time and time zone (/ISAPI/System/time). */
+  async getClock(camera: CameraConfig): Promise<number> {
+    const { nowMs, offsetMinutes } = parseCameraTime(await this.getXml(camera, HIKVISION_TIME_PATH));
+    if (offsetMinutes === undefined) throw new CameraApiError("INVALID_RESPONSE", "The camera did not report its time zone");
+    return nowMs - offsetMinutes * 60_000;
+  }
+
   /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */
   private async step<T>(what: string, run: () => Promise<T>): Promise<T> {
     try {

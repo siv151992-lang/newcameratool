@@ -160,6 +160,7 @@ export async function runCheck(
       if (row.device_type === "nvr") channels = await readChannels(adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
       if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);
+      await refreshClock(cameraId, adapter, cfg, trigger);
     } catch (err) {
       attempts = (err as { attempts?: number }).attempts ?? attempts;
       result = toFailure(err, [config?.password]);
@@ -241,6 +242,29 @@ async function refreshDeviceInfo(
   }
 }
 
+/** The camera's clock is read at most this often per camera (and on every manual check). */
+const CLOCK_REFRESH_MS = 3600_000;
+
+/**
+ * Measures how far the camera's clock is from ours (seconds, camera minus server; the request's
+ * own time is split evenly). Optional: brands without a clock leave it unknown, and a failure is
+ * kept as the reason.
+ */
+async function refreshClock(cameraId: string, adapter: CameraBrandAdapter, cfg: CameraConfig, trigger: "scheduled" | "manual") {
+  if (!adapter.getClock) return;
+  const { rows } = await pool.query("SELECT clock_checked_at FROM camera_status WHERE camera_id = $1", [cameraId]);
+  const last = rows[0]?.clock_checked_at as Date | null;
+  if (trigger === "scheduled" && last && Date.now() - last.getTime() < CLOCK_REFRESH_MS) return;
+  const sent = Date.now();
+  try {
+    const cameraUtc = await adapter.getClock(cfg);
+    const offset = Math.round((cameraUtc - (sent + Date.now()) / 2) / 1000);
+    await pool.query("UPDATE camera_status SET clock_offset_seconds = $2, clock_error = NULL, clock_checked_at = now() WHERE camera_id = $1", [cameraId, offset]);
+  } catch (err) {
+    await pool.query("UPDATE camera_status SET clock_offset_seconds = NULL, clock_error = $2, clock_checked_at = now() WHERE camera_id = $1", [cameraId, (err as Error).message.slice(0, 300)]);
+  }
+}
+
 /** Days of recordings are read at most this often per camera (and on every manual check). */
 const RECORDING_RANGE_REFRESH_MS = 6 * 3600_000;
 
@@ -289,7 +313,7 @@ async function persist(
               c.organization_id, c.brand_key, c.priority, cr.password_changed_at,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success,
-              s.recording_days, s.recording_days_at_least, s.recording_range_error
+              s.recording_days, s.recording_days_at_least, s.recording_range_error, s.clock_offset_seconds
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id
        LEFT JOIN camera_credentials cr ON cr.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
@@ -425,6 +449,7 @@ async function persist(
       recordingDays: result.ok && cam.recording_days !== null && !cam.recording_range_error
         ? { days: Number(cam.recording_days), atLeast: Boolean(cam.recording_days_at_least) }
         : undefined,
+      clockOffsetSeconds: result.ok && cam.clock_offset_seconds !== null ? Number(cam.clock_offset_seconds) : undefined,
       openTypes: await openAlertTypes(cameraId, db),
     });
     if (channels) {

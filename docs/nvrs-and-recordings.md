@@ -24,7 +24,9 @@ second stream to H.264 in the camera's own video settings.
 - **From start** plays the oldest recording on the camera; **Latest** the newest.
 - **Speed**: slower plays at once; faster asks the camera to send faster (where it supports it).
 
-Times are the camera's own clock.
+Times are the camera's own clock. The app reads each camera's clock about once an hour and shows
+how far off it is on the camera page; a clock wrong by more than 5 minutes (Settings → Problem
+detection) raises an alert. Set the camera to take its time from an NTP server.
 
 ### How playback finds the recording
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StorageReading } from "../../src/integrations/types.js";
-import { type CheckResult, type EvaluationInput, evaluateConditions, storageHealth, type Thresholds } from "../../src/monitoring/evaluate.js";
+import { type CheckResult, type EvaluationInput, describeOffset, evaluateConditions, storageHealth, type Thresholds } from "../../src/monitoring/evaluate.js";
 import { DEFAULT_MONITORING_SETTINGS } from "../../src/services/settingsService.js";
 
 const T: Thresholds = { warning: 80, critical: 90, full: 100, hysteresis: 2, usageAlertsEnabled: true };
@@ -136,5 +136,34 @@ describe("recording retention", () => {
   });
   it("is off at 0 days required", () => {
     expect(evaluateConditions(input(1, false, 0)).evaluated).not.toContain("recording_retention");
+  });
+});
+
+describe("camera clock", () => {
+  const input = (offsetSeconds: number, minutes = 5): EvaluationInput => ({
+    result: { ok: true, reading: { devices: [{ id: "sd", healthStatus: "healthy" }] } },
+    connectionStatus: "online", consecutiveFailures: 0, consecutiveAuthFailures: 0, minutesWithoutStorage: 0,
+    thresholds: { warning: 80, critical: 90, full: 98, hysteresis: 3, usageAlertsEnabled: true },
+    settings: { ...DEFAULT_MONITORING_SETTINGS, clockDriftAlertMinutes: minutes }, openTypes: new Set(),
+    clockOffsetSeconds: offsetSeconds,
+  });
+  it("warns when the clock is off by more than the setting, ahead or behind", () => {
+    expect(evaluateConditions(input(750)).active.find((a) => a.type === "clock_wrong")).toMatchObject({
+      severity: "warning", description: expect.stringContaining("12 min 30 s ahead"), context: { offsetSeconds: 750 },
+    });
+    expect(evaluateConditions(input(-7500)).active.find((a) => a.type === "clock_wrong")?.description).toContain("2 h 5 min behind");
+    expect(evaluateConditions(input(300)).active.some((a) => a.type === "clock_wrong")).toBe(false);
+    expect(evaluateConditions(input(-20)).evaluated).toContain("clock_wrong");
+  });
+  it("is off at 0 minutes", () => {
+    expect(evaluateConditions(input(99_999, 0)).evaluated).not.toContain("clock_wrong");
+  });
+});
+
+describe("describeOffset", () => {
+  it("names days, hours, minutes and seconds", () => {
+    expect(describeOffset(5)).toBe("5 s ahead");
+    expect(describeOffset(-90_000)).toBe("1 day 1 h behind");
+    expect(describeOffset(3600)).toBe("1 h ahead");
   });
 });

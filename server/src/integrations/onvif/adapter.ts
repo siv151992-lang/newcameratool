@@ -210,6 +210,13 @@ export class OnvifAdapter implements CameraBrandAdapter {
     return this.clockOffsets.get(cameraKey(camera)) ?? 0;
   }
 
+  /** The camera's clock in UTC (GetSystemDateAndTime, which needs no login). */
+  async getClock(camera: CameraConfig): Promise<number> {
+    const utc = parseOnvifSystemTime(await this.call(camera, ACTIONS.systemTime));
+    if (utc === undefined) throw new CameraApiError("INVALID_RESPONSE", "The camera did not report its UTC time");
+    return utc;
+  }
+
   async getStorageStatus(camera: CameraConfig): Promise<StorageReading> {
     return parseOnvifStorage(await this.authenticated(camera, ACTIONS.storage));
   }

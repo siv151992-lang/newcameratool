@@ -151,6 +151,8 @@ export interface Camera {
       /** The camera only answered a shorter search: at least daysAvailable. */
       daysAtLeast: boolean;
     };
+    /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
+    clock: { offsetSeconds: number | null; checkedAt: string | null; error: string | null };
   };
   device: { model: string | null; serialNumber: string | null; firmwareVersion: string | null };
 }
@@ -335,6 +337,7 @@ export interface MonitoringSettings {
   storageUsageAlertsEnabled: boolean;
   recordingAlertsEnabled: boolean;
   minRecordingDays: number;
+  clockDriftAlertMinutes: number;
   deviceInfoRefreshHours: number;
   historyRetentionDays: number;
   historyIntervalMinutes: number;

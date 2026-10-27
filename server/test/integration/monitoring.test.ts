@@ -392,6 +392,33 @@ describe("scheduler", () => {
     }
   });
 
+  it("measures the camera's clock and alerts when it is wrong", async () => {
+    try {
+      const id = await addCamera();
+      await runCheck(id, "manual", deps);
+      let s = await status(id);
+      expect(Math.abs(Number(s.clock_offset_seconds))).toBeLessThanOrEqual(2);
+      expect(s.clock_error).toBeNull();
+      expect((await alerts(id)).some((a) => a.type === "clock_wrong")).toBe(false);
+
+      cam.clockSkewMs = -20 * 60_000; // 20 minutes behind
+      await runCheck(id, "scheduled", deps);
+      expect(Math.abs(Number((await status(id)).clock_offset_seconds))).toBeLessThanOrEqual(2); // read at most hourly
+      await runCheck(id, "manual", deps);
+      s = await status(id);
+      expect(Number(s.clock_offset_seconds)).toBeGreaterThanOrEqual(-1202);
+      expect(Number(s.clock_offset_seconds)).toBeLessThanOrEqual(-1198);
+      const raised = (await pool.query("SELECT severity, description FROM alerts WHERE camera_id = $1 AND type = 'clock_wrong' AND status <> 'resolved'", [id])).rows;
+      expect(raised).toEqual([{ severity: "warning", description: expect.stringMatching(/^The camera's clock is (19|20) min( \d+ s)? behind/) }]);
+
+      cam.clockSkewMs = 0;
+      await runCheck(id, "manual", deps);
+      expect((await alerts(id)).filter((a) => a.type === "clock_wrong").map((a) => a.status)).toEqual(["resolved"]);
+    } finally {
+      cam.clockSkewMs = 0;
+    }
+  });
+
   it("falls back to shorter searches, and shows why when none is answered", async () => {
     cam.recordingStatusApi = false;
     cam.recordedDays = 45;

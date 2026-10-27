@@ -22,6 +22,7 @@ export const ALERT_TYPES = [
   "password_change_due",
   "nvr_channel",
   "recording_retention",
+  "clock_wrong",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";
@@ -94,6 +95,8 @@ export interface EvaluationInput {
   localStorage?: boolean;
   /** An NVR's channels as read in this check; absent when not an NVR or not read. */
   channels?: NvrChannel[];
+  /** How far the camera's clock is from the server's, in seconds (camera minus server); absent when unknown. */
+  clockOffsetSeconds?: number;
   /** How many days of recordings the camera holds (atLeast: the search stopped, there are more); absent when unknown. */
   recordingDays?: { days: number; atLeast: boolean };
 }
@@ -230,6 +233,21 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
     }
   }
 
+  // A camera whose clock is wrong stamps its recordings with the wrong time (evidence, playback by time).
+  if (settings.clockDriftAlertMinutes > 0 && input.clockOffsetSeconds !== undefined) {
+    evaluated.push("clock_wrong");
+    const off = input.clockOffsetSeconds;
+    if (Math.abs(off) > settings.clockDriftAlertMinutes * 60) {
+      active.push({
+        type: "clock_wrong",
+        severity: "warning",
+        title: "Camera clock is wrong",
+        description: `The camera's clock is ${describeOffset(off)}, so its recordings carry the wrong time. Set the camera to take its time from an NTP server (and the right time zone).`,
+        context: { offsetSeconds: off },
+      });
+    }
+  }
+
   // Recordings held for fewer days than required (retention policy). Unknown days neither raise nor resolve it.
   if (settings.minRecordingDays > 0 && input.recordingDays) {
     evaluated.push("recording_retention");
@@ -263,6 +281,17 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   }
 
   return { active, evaluated };
+}
+
+/** "12 min 30 s ahead", "2 h 5 min behind", "3 days ahead". */
+export function describeOffset(seconds: number): string {
+  const a = Math.abs(seconds);
+  const d = Math.floor(a / 86_400);
+  const h = Math.floor((a % 86_400) / 3600);
+  const m = Math.floor((a % 3600) / 60);
+  const s = a % 60;
+  const amount = d >= 1 ? `${d} day${d === 1 ? "" : "s"}${h ? ` ${h} h` : ""}` : h >= 1 ? `${h} h${m ? ` ${m} min` : ""}` : m >= 1 ? `${m} min${s ? ` ${s} s` : ""}` : `${s} s`;
+  return `${amount} ${seconds > 0 ? "ahead" : "behind"}`;
 }
 
 const DAY_MS = 86_400_000;

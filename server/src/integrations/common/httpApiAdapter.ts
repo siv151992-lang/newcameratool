@@ -105,6 +105,10 @@ export abstract class HttpApiAdapter implements CameraBrandAdapter {
     return this.onvif.replayRtspUrl(camera, segment);
   }
 
+  getClock(camera: CameraConfig): Promise<number> {
+    return this.onvif.getClock(camera);
+  }
+
   liveRtspUrl(camera: CameraConfig): Promise<string> {
     return this.onvif.liveRtspUrl(camera);
   }
