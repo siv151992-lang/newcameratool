@@ -7,6 +7,7 @@ import { CameraHttpClient } from "./http/cameraHttpClient.js";
 import { OnvifAdapter } from "./onvif/adapter.js";
 import { PanasonicAdapter } from "./panasonic/adapter.js";
 import { PramaAdapter } from "./prama/adapter.js";
+import { ReolinkAdapter } from "./reolink/adapter.js";
 import { UniviewAdapter } from "./uniview/adapter.js";
 import { pool, type Queryable } from "../db/pool.js";
 import { ConfigurableAdapter, type ConfigurableMeta } from "./configurable/adapter.js";
@@ -174,6 +175,28 @@ export class BrandRegistry {
       panasonic: "panasonic",
       ipro: "panasonic",
       panasonicipro: "panasonic",
+      reolink: "reolink",
+      // Brands sold on Hikvision firmware (the same API).
+      hilook: "hikvision",
+      hiwatch: "hikvision",
+      annke: "hikvision",
+      lts: "hikvision",
+      ltsecurity: "hikvision",
+      // Brands sold on Dahua firmware.
+      lorex: "dahua",
+      icrealtime: "dahua",
+      imou: "dahua",
+      // Brands without an API of their own here: their cameras are read over ONVIF.
+      bosch: "onvif",
+      vivotek: "onvif",
+      sony: "onvif",
+      avigilon: "onvif",
+      milesight: "onvif",
+      tiandy: "onvif",
+      tplink: "onvif",
+      tplinkvigi: "onvif",
+      vigi: "onvif",
+      mobotix: "onvif",
     };
     const key = aliases[s] ?? s;
     if (this.adapters.has(key) || this.planned.has(key) || this.states.has(key)) return key;
@@ -203,6 +226,7 @@ export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandReg
   registry.register(new OnvifAdapter(http));
   registry.register(new HanwhaAdapter(http));
   registry.register(new PanasonicAdapter(http));
+  registry.register(new ReolinkAdapter(http));
   for (const p of PLANNED) registry.registerPlanned(p);
   return registry;
 }
