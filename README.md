@@ -50,7 +50,7 @@ Axis `Storage.S<n>.RecordingStatus` parameters, Hanwha (inferred from `recording
 `/cgi-bin/record.cgi?action=getRecordStatus`, ONVIF `GetRecordingJobs` on `/onvif/recording_service`. A failed
 recording read never fails the storage check; the state just shows as *Unknown*.
 
-Also included: CSV bulk import (parsed in the browser; preview, per-row validation, duplicate detection,
+Also included: bulk import from CSV, Excel or Bosch Project Assistant lists (parsed in the browser; preview, per-row validation, duplicate detection,
 shared credentials, optional rate-limited connectivity tests), camera detail page with usage history chart,
 alert center (acknowledge / resolve, history), brand integrations page, monitoring settings, email
 notifications with cooldowns and recovery notices, users with roles (admin / operator / viewer), audit log,
@@ -187,7 +187,7 @@ cameras are needed: tests use the simulated camera and mocked responses.
   storage usage* in **Settings → Thresholds** (or raise per-camera thresholds) so only real faults alert.
 - Email is the only notification channel so far. The notifier has a driver interface ready for
   Slack/Teams/Telegram.
-- CSV import only (no Excel yet), up to 500 rows per file.
+- Import from CSV, Excel (.xlsx) or tab-separated text (including Bosch Project Assistant lists), up to 500 rows per file.
 - Docker images and the Compose file were written but could not be built in the development environment used
   to create this project; the compiled production build was run directly instead.
 
