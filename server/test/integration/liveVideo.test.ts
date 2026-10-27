@@ -193,8 +193,9 @@ describe("live video", () => {
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ start: `${localToday}T05:30:00` }).expect(200);
     const src = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))![1];
-    // 05:30 in India is 00:00 UTC.
-    expect(src).toBe(`rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/recording/${localToday.replace(/-/g, "")}000000-${localToday.replace(/-/g, "")}120000/play.smp`);
+    // 05:30 in India is 00:00 UTC. Through the relay, which holds the login (go2rtc never gets it).
+    expect(src).toMatch(new RegExp(`^rtsp://127\\.0\\.0\\.1:8554/r/[A-Za-z0-9_-]{24}/recording/${localToday.replace(/-/g, "")}000000-${localToday.replace(/-/g, "")}120000/play\\.smp$`));
+    expect(src).not.toContain("Cam");
   });
 
   it("plays an NVR's channels: live and recordings of channel 3 through the NVR", async () => {

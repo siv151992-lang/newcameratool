@@ -345,10 +345,9 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
       const offset = clockOffsets.get(listingKey(cameraId, channel));
       const clockStart = adapter.playbackClockRange && offset !== undefined ? playFrom - offset : undefined;
       // Also every address with a query (a start time): go2rtc appends the stream part after the query,
-      // which the relay puts back before it (otherwise the camera misreads the time).
-      const src = speed > 1 || clockStart !== undefined || pick.path.includes("?")
-        ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path: pick.path, username: config.username, password: config.password, onvif: false, scale: speed > 1 ? speed : undefined, startUtcMs: clockStart })
-        : rtspUrl(config, pick.path);
+      // which the relay puts back before it (otherwise the camera misreads the time). Always through
+      // the relay, so a recording that does not play can be explained from what the camera answered.
+      const src = registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path: pick.path, username: config.username, password: config.password, onvif: false, scale: speed > 1 ? speed : undefined, startUtcMs: clockStart });
       await putStream(name, src);
       return startedAt(pick.path.split("?")[0]!);
     }

@@ -5,7 +5,7 @@ import { OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { parseOnvifRecordingResults, parseOnvifSearchToken } from "../../src/integrations/onvif/parser.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
-import { clockTime, controlBeforeQuery, lastRefusal, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
+import { clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
 
 const envelope = (body: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`;
 const results = (state: string, ...recs: [string, string, string][]) =>
@@ -259,6 +259,36 @@ describe("Replay relay", () => {
     expect(lastRefusal("refused_stream")).toBeUndefined();
     c.close();
     cam.options.refuseSetup = false;
+  });
+
+  it("explains why a recording did not play, from what the camera did", async () => {
+    const base = `rtsp://127.0.0.1:${relayPort}`;
+    const target = { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101?starttime=20261024T101500Z", username: "admin", password: "secret", onvif: false };
+    // go2rtc never came: the relay address is wrong for it.
+    registerReplay(base, "diag", target);
+    expect(playbackDiagnosis("diag")).toMatch(/did not connect to the server's playback relay/);
+
+    // The camera refused SETUP.
+    cam.options.refuseSetup = true;
+    let url = registerReplay(base, "diag", target);
+    let c = rtspClient(relayPort);
+    await c.request("DESCRIBE", url);
+    await c.request("SETUP", `${url}/trackID=1`);
+    expect(playbackDiagnosis("diag")).toBe('The camera answered "400 Bad Request" to SETUP /Streaming/tracks/101/trackID=1?starttime=20261024T101500Z: the camera did not accept the request; its firmware may need another playback address.');
+    c.close();
+    cam.options.refuseSetup = false;
+
+    // Nothing listens on the camera's RTSP port.
+    const closed = net.createServer();
+    await new Promise<void>((r) => closed.listen(0, "127.0.0.1", r));
+    const deadPort = (closed.address() as net.AddressInfo).port;
+    await new Promise<void>((r) => closed.close(() => r()));
+    url = registerReplay(base, "diag", { ...target, port: deadPort });
+    c = rtspClient(relayPort);
+    c.request("DESCRIBE", url).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(playbackDiagnosis("diag")).toBe(`The camera could not be reached on its RTSP port ${deadPort}: connection refused (RTSP is turned off in the camera, or on another port).`);
+    c.close();
   });
 
   it("refuses unknown playback addresses", async () => {
