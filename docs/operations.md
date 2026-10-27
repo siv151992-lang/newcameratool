@@ -182,9 +182,14 @@ search used by most IP cameras) on a 4-core, 16 GB machine:
 | Two workers, 300 concurrent checks each | ~10 000–14 000 per minute: every camera checked every 2 minutes |
 | History written, keeping every check | ~8 GB per day (14 million rows) |
 | History written, one point per 15 minutes | ~1 GB per day |
-| Camera list, filters, summary, camera page | 10–350 ms |
+| Camera list, filters, summary, camera page | 10–350 ms (also while a worker checks 11 000 cameras a minute) |
 | "Select all N matching" (20 000 cameras) | 0.06 s |
-| AI insights | first analysis after a restart ~1 minute (in the background), then 0.2 s; refreshed every 10 minutes |
+| AI insights | first analysis after a restart ~15–25 s (in the background), then 0.03 s; refreshed every 10 minutes |
+| One worker after a restart, 300 concurrent checks | caught up 20 000 cameras 5 days overdue in 3 minutes (8 400–11 600 checks per minute) |
+
+Re-measured on 27 October 2026 with NVR channels, camera clock checks and recording days added. The
+app turns off PostgreSQL's JIT compilation on its connections: it compiled the dashboard summary on
+every call (0.5 s, up to 5 s while the worker was busy) for a query that runs in 0.1 s.
 
 Recommended settings for 5 000+ cameras:
 

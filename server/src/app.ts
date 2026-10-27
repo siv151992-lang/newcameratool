@@ -87,6 +87,11 @@ export function createApp() {
   // Serve the built web app in production (same origin keeps cookies and CSRF simple).
   const webDist = config.WEB_DIST_DIR ? resolve(config.WEB_DIST_DIR) : undefined;
   if (webDist && existsSync(join(webDist, "index.html"))) {
+    // Built files under /assets/ have their content hash in the name, so browsers keep them for a
+    // year (a new version has new names); index.html is always checked, so updates show at once.
+    app.use("/assets", express.static(join(webDist, "assets"), { index: false, maxAge: "365d", immutable: true }));
+    // A file from an older version that is gone: not found (not the app's page, which would not run as a script).
+    app.use("/assets", (_req, res) => res.status(404).end());
     app.use(express.static(webDist, { index: false, maxAge: "1h" }));
     app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(join(webDist, "index.html")));
   }
