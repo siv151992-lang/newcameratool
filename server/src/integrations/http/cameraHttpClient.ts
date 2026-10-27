@@ -2,7 +2,7 @@ import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
-import { checkServerIdentity } from "node:tls";
+import tls, { checkServerIdentity } from "node:tls";
 import { HostNotAllowedError } from "../../security/hostGuard.js";
 import { CameraApiError, type CameraConfig } from "../types.js";
 
@@ -175,10 +175,26 @@ export class CameraHttpClient {
         (options as https.RequestOptions & { allowPartialTrustChain?: boolean }).allowPartialTrustChain = true;
       }
       // Verify the certificate against the configured host, not the pinned address.
-      // The camera's own certificate, trusted on purpose (pinned): the exact certificate is what counts,
-      // since such certificates rarely name the address the camera is reached at.
-      const pinned = pinnedFingerprint(camera.caCertificate);
-      options.checkServerIdentity = (_h, cert) => (pinned && cert.fingerprint256 === pinned ? undefined : checkServerIdentity(camera.host, cert));
+      const fingerprint = pinnedFingerprint(camera.caCertificate);
+      options.checkServerIdentity = (_h, cert) => checkServerIdentity(camera.host, cert);
+      if (fingerprint) {
+        // The camera's own certificate, trusted on purpose (pinned): only that exact certificate is
+        // accepted, whatever it names and whatever its dates (cameras' own certificates rarely name the
+        // address they are reached at, and often expire: CERT_HAS_EXPIRED). It is checked as soon as
+        // the handshake completes, before the request (and any login) is sent.
+        const servername = isIP(camera.host) ? undefined : camera.host;
+        // Node uses createConnection only without an agent (agent: false would create one).
+        delete options.agent;
+        options.createConnection = () => {
+          const socket = tls.connect({ host: pinned.address, port: camera.port, servername, rejectUnauthorized: false });
+          socket.once("secureConnect", () => {
+            if (socket.getPeerCertificate().fingerprint256 !== fingerprint) {
+              socket.destroy(Object.assign(new Error("The camera presented a different certificate from the one trusted for it"), { code: "ERR_TLS_CERT_PINNED_MISMATCH" }));
+            }
+          });
+          return socket;
+        };
+      }
     }
 
     return new Promise<RawResponse>((resolve, reject) => {
@@ -240,6 +256,10 @@ export function classifyNetworkError(err: Error & { code?: string }): CameraApiE
   if (TLS_CODES.test(code) || /certificate|ssl|tls|wrong version number/i.test(err.message)) {
     const hint = /wrong version number|EPROTO/i.test(code + err.message)
       ? " The port may not be serving HTTPS — check the protocol and port."
+      : code === "ERR_TLS_CERT_PINNED_MISMATCH"
+        ? " The camera presented a different certificate from the one trusted for it (a new certificate on the camera, or another device at its address). If the camera's certificate was renewed, edit the camera and use \u201cGet the camera's certificate\u201d again."
+      : code === "CERT_HAS_EXPIRED" || code === "CERT_NOT_YET_VALID"
+        ? ` The camera's own certificate ${code === "CERT_HAS_EXPIRED" ? "has expired" : "is not valid yet (check the camera's clock)"}, which is common. Edit the camera and use \u201cGet the camera's certificate\u201d under TLS CA certificate: a certificate trusted that way is accepted whatever its dates.`
       : " The camera's certificate is not trusted (cameras usually make their own, self-signed). Edit the camera and use " +
         "\u201cGet the camera's certificate\u201d under TLS CA certificate to trust it.";
     return new CameraApiError("TLS_ERROR", `Secure connection failed (${code || "TLS error"}).${hint}`);

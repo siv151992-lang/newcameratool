@@ -429,7 +429,10 @@ function CameraCertificate({ host, port, onTrust }: { host: string; port: string
             <dt className="text-ink-secondary">Issued to</dt>
             <dd className="break-all">{c.subject}{c.selfSigned && <span className="ml-2 text-xs text-ink-muted">(self-signed)</span>}</dd>
             <dt className="text-ink-secondary">Valid</dt>
-            <dd>{c.validFrom.slice(0, 10)} to {c.validTo.slice(0, 10)}</dd>
+            <dd>
+              {c.validFrom.slice(0, 10)} to {c.validTo.slice(0, 10)}
+              {Date.parse(c.validTo) < Date.now() && <span className="ml-1 text-ink-secondary">(expired, as cameras' own certificates often are: trusting it here still works)</span>}
+            </dd>
             <dt className="text-ink-secondary">SHA-256 fingerprint</dt>
             <dd className="break-all font-mono text-xs">{c.fingerprint256}</dd>
           </dl>
