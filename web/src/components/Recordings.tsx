@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, SkipBack, SkipForward } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
@@ -56,7 +56,13 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const [error, setError] = useState<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const video = useQuery({ queryKey: ["live-video"], queryFn: () => api<{ enabled: boolean }>("/cameras/live-video"), staleTime: 5 * 60_000 });
-  const day = useQuery({ queryKey: ["recordings", cameraId, channel, date], queryFn: () => api<Day>(`/cameras/${cameraId}/recordings?date=${date}${ch}`) });
+  const fetchDay = (d: string) => api<Day>(`/cameras/${cameraId}/recordings?date=${d}${ch}`);
+  const day = useQuery({ queryKey: ["recordings", cameraId, channel, date], queryFn: () => fetchDay(date) });
+  // The days either side too (once this one is in), so the timeline runs on across midnight.
+  const prevDate = text(ms(`${date}T00:00:00`) - DAY).slice(0, 10);
+  const nextDate = text(ms(`${date}T00:00:00`) + DAY).slice(0, 10);
+  const prevDay = useQuery({ queryKey: ["recordings", cameraId, channel, prevDate], queryFn: () => fetchDay(prevDate), enabled: !!day.data, staleTime: 60_000 });
+  const nextDay = useQuery({ queryKey: ["recordings", cameraId, channel, nextDate], queryFn: () => fetchDay(nextDate), enabled: !!day.data && nextDate <= today(), staleTime: 60_000 });
   // A stream that drops while playing (the camera closed it, the network blinked, or the stretch of
   // recording it was asked for ended) goes on by itself from where it was, at the next recording if
   // that one ended; only a stream that will not play is reported.
@@ -130,6 +136,17 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
       setFinding(false);
     }
   };
+  // Go to: a date and time typed in plays from there (or the next recording after it).
+  const [search, setSearch] = useState("");
+  const goToTime = (value: string) => {
+    setError(null);
+    // datetime-local leaves seconds out when they are 0.
+    const t = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) ? `${value}:00` : value;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(t)) return setError("Enter a date and time.");
+    if (day.data && t > day.data.cameraNow) return setError("That time is still to come on the camera's clock.");
+    setCursor(t);
+    goTo({ kind: "oldest", at: t });
+  };
   const playLatest = () => {
     setError(null);
     goTo({ kind: "latest", date: (day.data?.cameraNow ?? today()).slice(0, 10) });
@@ -164,16 +181,22 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
     if (!start && day.data?.date === date && (!cursor || cursor.slice(0, 10) !== date)) setCursor(day.data.segments[0]?.start ?? `${date}T00:00:00`);
   }, [day.data, date, start, cursor]);
   const head = scrub ?? (position ? ms(position) : cursor ? ms(cursor) : dayStart);
-  const segs = daySegs.map((x) => ({ start: ms(x.start), end: ms(x.end), title: `${clock(x.start)} – ${clock(x.end)}` }));
+  // The timeline's recordings: this day and the days either side.
+  const segs = [...(prevDay.data?.segments ?? []), ...daySegs, ...(nextDay.data?.segments ?? [])]
+    .map((x) => ({ start: ms(x.start), end: ms(x.end), title: `${x.start.slice(5, 10).split("-").reverse().join("-")} ${clock(x.start)} – ${clock(x.end)}` }))
+    .sort((a, b) => a.start - b.start);
+  const timelineMin = prevDay.data ? dayStart - DAY : dayStart;
+  const latest = day.data ? ms(nextDay.data?.cameraNow ?? day.data.cameraNow) : dayStart + DAY;
+  const timelineMax = Math.min(dayStart + (nextDay.data ? 2 : 1) * DAY, latest);
   // Playing from a time in a gap starts at the next recording.
   const seek = (at: number) => {
     const inside = segs.find((x) => x.start <= at && at < x.end);
     const next = segs.find((x) => x.start > at);
     const t = inside ? at : next?.start;
     if (t !== undefined) return play(text(t));
-    // Nothing more this day: go on with the next day's first recording.
-    const nextDay = text(dayStart + DAY).slice(0, 10);
-    if (nextDay <= today()) return goTo({ kind: "oldest", at: `${nextDay}T00:00:00` });
+    // Nothing more in the days loaded: go on with the first recording of the day after them.
+    const after = text(dayStart + (nextDay.data ? 2 : 1) * DAY).slice(0, 10);
+    if (after <= today()) return goTo({ kind: "oldest", at: `${after}T00:00:00` });
     setError("No recordings after this time.");
   };
   const pause = () => {
@@ -189,7 +212,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const nextRecording = () => {
     const next = segs.find((x) => x.start > head + 1000);
     if (next) play(text(next.start));
-    else setError("This is the last recording of the day.");
+    else setError("No later recordings.");
   };
   resume.current.position = position;
   resume.current.played = played;
@@ -211,6 +234,28 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
         <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => shiftDay(1)} disabled={date >= today()} aria-label="Next day" />
         <Button size="sm" icon={<SkipBack className="h-4 w-4" />} onClick={() => void playOldest()} loading={finding} title="Play from the oldest recording on the camera">From start</Button>
         <Button size="sm" icon={<SkipForward className="h-4 w-4" />} onClick={playLatest} title="Play the newest recording on the camera">Latest</Button>
+        <form
+          className="flex items-center gap-1.5"
+          role="search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            goToTime(search);
+          }}
+        >
+          <label htmlFor="recordings-go-to" className="text-xs text-ink-secondary">Go to</label>
+          <input
+            id="recordings-go-to"
+            type="datetime-local"
+            step={1}
+            value={search}
+            max={(day.data?.cameraNow ?? "").slice(0, 19) || undefined}
+            onFocus={() => !search && setSearch(readout)}
+            onChange={(e) => setSearch(e.target.value)}
+            className="tabular rounded-md border border-line bg-surface px-2 py-1 text-sm"
+            aria-label="Date and time to play from"
+          />
+          <Button size="sm" type="submit" icon={<Search className="h-4 w-4" />} disabled={!search}>Go</Button>
+        </form>
         <span className="text-xs text-ink-secondary">
           Times are the camera's clock{day.data ? ` (camera time now ${day.data.cameraNow.replace("T", " ")})` : ""}.
           {fromStartOnly && " This camera plays each recording from its beginning."}
@@ -237,7 +282,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
             <button
               type="button"
               onClick={() => seek(head)}
-              disabled={!daySegs.length}
+              disabled={!segs.length}
               className="flex flex-col items-center gap-2 text-neutral-300 hover:text-white disabled:opacity-40"
             >
               <span className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-current">
@@ -259,8 +304,8 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
         <MilestoneTimeline
           time={head}
           span={span}
-          min={dayStart}
-          max={Math.min(dayStart + DAY, day.data ? ms(day.data.cameraNow) : dayStart + DAY)}
+          min={timelineMin}
+          max={timelineMax}
           segments={segs}
           onSeek={seek}
           onScrub={setScrub}
