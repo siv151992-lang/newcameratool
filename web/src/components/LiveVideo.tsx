@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { Spinner } from "./ui";
+import { ZoomPan } from "./ZoomPan";
 
 /** Codecs go2rtc may send; the browser says which it can play (H.265 only where supported). */
 const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0", "mp4a.40.2", "mp4a.40.5", "flac", "opus"];
@@ -237,16 +238,18 @@ export function LiveVideo({
 
   return (
     <div className="relative flex h-full w-full items-center justify-center">
-      <video
-        ref={video}
-        className="h-full w-full object-contain"
-        autoPlay
-        muted
-        playsInline
-        aria-label={`Live video from ${name}`}
-        onPlaying={() => setPlaying(true)}
-        onTimeUpdate={(e) => onTime?.(e.currentTarget.currentTime)}
-      />
+      <ZoomPan>
+        <video
+          ref={video}
+          className="h-full w-full object-contain"
+          autoPlay
+          muted
+          playsInline
+          aria-label={`Live video from ${name}`}
+          onPlaying={() => setPlaying(true)}
+          onTimeUpdate={(e) => onTime?.(e.currentTarget.currentTime)}
+        />
+      </ZoomPan>
       {!playing && !error && <div className="absolute inset-0 flex items-center justify-center"><Spinner label="Starting video" /></div>}
     </div>
   );

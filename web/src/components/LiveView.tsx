@@ -4,6 +4,7 @@ import { Image, Maximize2, Pause, Play, Video } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
+import { ZoomPan } from "./ZoomPan";
 import { Button, Dialog, ErrorMessage, Spinner } from "./ui";
 
 /** Time between pictures, and before trying again after an error. */
@@ -131,7 +132,9 @@ function LivePicture({ cameraId, name, channel }: { cameraId: string; name: stri
     <div className="space-y-3">
       <div ref={frame} className="relative mx-auto flex aspect-video max-h-[55vh] items-center justify-center overflow-hidden rounded-md bg-black">
         {src ? (
-          <img src={src} alt={`Live picture from ${name}`} className="h-full w-full object-contain" />
+          <ZoomPan>
+            <img src={src} alt={`Live picture from ${name}`} className="h-full w-full object-contain" draggable={false} />
+          </ZoomPan>
         ) : error ? (
           <Video className="h-10 w-10 text-white/40" aria-hidden />
         ) : (
