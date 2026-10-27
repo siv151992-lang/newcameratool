@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StorageReading } from "../../src/integrations/types.js";
-import { type CheckResult, evaluateConditions, storageHealth, type Thresholds } from "../../src/monitoring/evaluate.js";
+import { type CheckResult, type EvaluationInput, evaluateConditions, storageHealth, type Thresholds } from "../../src/monitoring/evaluate.js";
 import { DEFAULT_MONITORING_SETTINGS } from "../../src/services/settingsService.js";
 
 const T: Thresholds = { warning: 80, critical: 90, full: 100, hysteresis: 2, usageAlertsEnabled: true };
@@ -118,5 +118,23 @@ describe("recording alerts", () => {
     const off = evalWith(ok, { recording: rec("idle"), settings: { ...DEFAULT_MONITORING_SETTINGS, recordingAlertsEnabled: false } });
     expect(off.active).toEqual([]);
     expect(off.evaluated).toContain("not_recording");
+  });
+});
+
+describe("recording retention", () => {
+  const input = (days: number, atLeast = false, min = 30): EvaluationInput => ({
+    result: { ok: true, reading: { devices: [{ id: "sd", healthStatus: "healthy" }] } },
+    connectionStatus: "online", consecutiveFailures: 0, consecutiveAuthFailures: 0, minutesWithoutStorage: 0,
+    thresholds: { warning: 80, critical: 90, full: 98, hysteresis: 3, usageAlertsEnabled: true },
+    settings: { ...DEFAULT_MONITORING_SETTINGS, minRecordingDays: min }, openTypes: new Set(),
+    recordingDays: { days, atLeast },
+  });
+  it("warns below the required days, not at or above, nor when only a minimum is known", () => {
+    expect(evaluateConditions(input(12.5)).active.find((a) => a.type === "recording_retention")).toMatchObject({ severity: "warning", context: { days: 12.5, required: 30 } });
+    expect(evaluateConditions(input(30)).active.some((a) => a.type === "recording_retention")).toBe(false);
+    expect(evaluateConditions(input(20, true)).active.some((a) => a.type === "recording_retention")).toBe(false);
+  });
+  it("is off at 0 days required", () => {
+    expect(evaluateConditions(input(1, false, 0)).evaluated).not.toContain("recording_retention");
   });
 });

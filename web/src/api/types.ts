@@ -334,6 +334,7 @@ export interface MonitoringSettings {
   recoveryHysteresisPercent: number;
   storageUsageAlertsEnabled: boolean;
   recordingAlertsEnabled: boolean;
+  minRecordingDays: number;
   deviceInfoRefreshHours: number;
   historyRetentionDays: number;
   historyIntervalMinutes: number;

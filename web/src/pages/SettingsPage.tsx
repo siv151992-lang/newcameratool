@@ -140,7 +140,7 @@ function SectionLayout({ sections, current }: { sections: Section[]; current: Se
 const ORGANIZATION_KEYS = new Set<keyof MonitoringSettings>([
   "pollIntervalSeconds", "offlineFailureThreshold", "authFailureThreshold", "storageUnavailableMinutes",
   "warningThresholdPercent", "criticalThresholdPercent", "fullThresholdPercent", "recoveryHysteresisPercent",
-  "storageUsageAlertsEnabled", "recordingAlertsEnabled",
+  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays",
 ]);
 
 type NumKey = { [K in keyof MonitoringSettings]: MonitoringSettings[K] extends number ? K : never }[keyof MonitoringSettings];
@@ -174,6 +174,12 @@ const GROUPS: { key: string; title: string; fields: { key: NumKey; label: string
       { key: "offlineFailureThreshold", label: "Failures before offline", hint: "Consecutive failed checks before a camera is marked offline" },
       { key: "authFailureThreshold", label: "Auth failures before alert" },
       { key: "storageUnavailableMinutes", label: "Storage unavailable alert after", unit: "minutes" },
+      {
+        key: "minRecordingDays",
+        label: "Required days of recordings",
+        unit: "days",
+        hint: "Alert when a camera's SD card or disk holds fewer days of recordings (your retention policy, e.g. 30). 0 turns it off.",
+      },
       { key: "deviceInfoRefreshHours", label: "Refresh device info every", unit: "hours" },
     ],
   },

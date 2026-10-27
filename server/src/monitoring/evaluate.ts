@@ -21,6 +21,7 @@ export const ALERT_TYPES = [
   "not_recording",
   "password_change_due",
   "nvr_channel",
+  "recording_retention",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";
@@ -93,6 +94,8 @@ export interface EvaluationInput {
   localStorage?: boolean;
   /** An NVR's channels as read in this check; absent when not an NVR or not read. */
   channels?: NvrChannel[];
+  /** How many days of recordings the camera holds (atLeast: the search stopped, there are more); absent when unknown. */
+  recordingDays?: { days: number; atLeast: boolean };
 }
 
 export interface Evaluation {
@@ -224,6 +227,22 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
     } else if (usage >= t.warning || (open && usage >= t.warning - t.hysteresis)) {
       // Hysteresis: an open alert stays open until usage drops clearly below the warning level.
       active.push({ type: "storage_usage", severity: "warning", title: "Storage usage high", description: `Usage above ${t.warning}%: ${detail}`, context: { usage, level: "warning" } });
+    }
+  }
+
+  // Recordings held for fewer days than required (retention policy). Unknown days neither raise nor resolve it.
+  if (settings.minRecordingDays > 0 && input.recordingDays) {
+    evaluated.push("recording_retention");
+    const { days, atLeast } = input.recordingDays;
+    if (!atLeast && days < settings.minRecordingDays) {
+      const held = Math.round(days * 10) / 10;
+      active.push({
+        type: "recording_retention",
+        severity: "warning",
+        title: "Recordings shorter than required",
+        description: `The camera holds ${held} day${held === 1 ? "" : "s"} of recordings; ${settings.minRecordingDays} are required. A larger card or disk, a lower bit rate, or recording on motion only keeps more days.`,
+        context: { days: held, required: settings.minRecordingDays },
+      });
     }
   }
 

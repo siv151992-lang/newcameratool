@@ -288,7 +288,8 @@ async function persist(
       `SELECT c.id, c.name, c.host, c.created_at, c.warning_threshold, c.critical_threshold, c.local_storage,
               c.organization_id, c.brand_key, c.priority, cr.password_changed_at,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
-              s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success
+              s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success,
+              s.recording_days, s.recording_days_at_least, s.recording_range_error
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id
        LEFT JOIN camera_credentials cr ON cr.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
@@ -421,6 +422,9 @@ async function persist(
       settings,
       localStorage,
       channels: result.ok ? channels?.list : undefined,
+      recordingDays: result.ok && cam.recording_days !== null && !cam.recording_range_error
+        ? { days: Number(cam.recording_days), atLeast: Boolean(cam.recording_days_at_least) }
+        : undefined,
       openTypes: await openAlertTypes(cameraId, db),
     });
     if (channels) {

@@ -368,6 +368,30 @@ describe("scheduler", () => {
     }
   });
 
+  it("raises a retention alert when a camera holds fewer days of recordings than required", async () => {
+    cam.recordingStatusApi = false;
+    cam.recordedDays = 12.5;
+    try {
+      const id = await addCamera();
+      await runCheck(id, "manual", deps);
+      // Off by default (0 days required).
+      expect((await alerts(id)).some((a) => a.type === "recording_retention")).toBe(false);
+
+      await updateMonitoringSettings(testOrgId, { minRecordingDays: 30 }, null);
+      await runCheck(id, "manual", deps);
+      const raised = (await pool.query("SELECT severity, description FROM alerts WHERE camera_id = $1 AND type = 'recording_retention' AND status <> 'resolved'", [id])).rows;
+      expect(raised).toEqual([{ severity: "warning", description: expect.stringMatching(/^The camera holds 12\.5 days of recordings; 30 are required\./) }]);
+
+      cam.recordedDays = 31; // enough again: resolved
+      await runCheck(id, "manual", deps);
+      expect((await alerts(id)).filter((a) => a.type === "recording_retention").map((a) => a.status)).toEqual(["resolved"]);
+    } finally {
+      await updateMonitoringSettings(testOrgId, { minRecordingDays: 0 }, null);
+      cam.recordingStatusApi = true;
+      cam.recordedDays = 30;
+    }
+  });
+
   it("falls back to shorter searches, and shows why when none is answered", async () => {
     cam.recordingStatusApi = false;
     cam.recordedDays = 45;
