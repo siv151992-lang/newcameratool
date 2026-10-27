@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LiveVideo } from "./LiveVideo";
 import { RecordingCalendar } from "./RecordingCalendar";
-import { MilestoneTimeline, SPANS } from "./MilestoneTimeline";
+import { MilestoneTimeline, SPANS, zoomSpan } from "./MilestoneTimeline";
 import { Button, Dialog, EmptyState, ErrorMessage, Spinner } from "./ui";
 
 interface Segment {
@@ -175,7 +175,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const daySegs = day.data?.segments ?? [];
   const [cursor, setCursor] = useState<string | null>(null);
   const [scrub, setScrub] = useState<number | null>(null);
-  const [span, setSpan] = useState(SPANS[1]!.ms);
+  const [span, setSpan] = useState(3_600_000); // 1 hour
   useEffect(() => {
     // A new day starts paused at its first recording.
     if (!start && day.data?.date === date && (!cursor || cursor.slice(0, 10) !== date)) setCursor(day.data.segments[0]?.start ?? `${date}T00:00:00`);
@@ -309,6 +309,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
           segments={segs}
           onSeek={seek}
           onScrub={setScrub}
+          onZoom={(d) => setSpan((v) => zoomSpan(v, d))}
         />
 
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -321,19 +322,28 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
             {!fromStartOnly && <PlayerButton label="1 minute ahead" onClick={() => seek(head + 60_000)} disabled={!segs.length}><FastForward className="h-4 w-4" /></PlayerButton>}
             <PlayerButton label="Next recording" onClick={nextRecording} disabled={!segs.length}><SkipForward className="h-4 w-4" /></PlayerButton>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400">
-            <label className="flex items-center gap-1.5">
-              <Gauge className="h-4 w-4" aria-hidden /> Speed
-              <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))} className="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-neutral-100">
-                {SPEEDS.map((v) => <option key={v} value={v}>{speedLabel(v)}</option>)}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400">
+            {/* Speed */}
+            <label className="flex h-8 items-center gap-1.5 rounded-full border border-neutral-700 bg-neutral-800/60 pl-2.5 pr-1" title="Playback speed">
+              <Gauge className="h-4 w-4" aria-hidden />
+              <span className="sr-only">Speed</span>
+              <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))} className="rounded-full bg-transparent px-1 py-0.5 text-neutral-100 focus:outline-none">
+                {SPEEDS.map((v) => <option key={v} value={v} className="bg-neutral-800">{speedLabel(v)}</option>)}
               </select>
             </label>
-            <label className="flex items-center gap-1.5">
-              <Clock className="h-4 w-4" aria-hidden /> Time span
-              <select value={span} onChange={(e) => setSpan(Number(e.target.value))} className="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-neutral-100">
-                {SPANS.map((o) => <option key={o.ms} value={o.ms}>{o.label}</option>)}
-              </select>
-            </label>
+            {/* Timeline zoom: − / span / + (also Ctrl + wheel and the + / - keys on the timeline) */}
+            <div className="flex h-8 items-center rounded-full border border-neutral-700 bg-neutral-800/60" role="group" aria-label="Timeline zoom">
+              <PlayerButton label="Zoom out (show more time)" onClick={() => setSpan((v) => zoomSpan(v, 1))} disabled={span >= SPANS.at(-1)!.ms}>
+                <ZoomOut className="h-4 w-4" />
+              </PlayerButton>
+              <span className="flex min-w-[4.75rem] items-center justify-center gap-1 tabular text-neutral-200" aria-live="polite">
+                <Clock className="h-3.5 w-3.5 text-neutral-400" aria-hidden />
+                {SPANS.find((o) => o.ms === span)?.label ?? ""}
+              </span>
+              <PlayerButton label="Zoom in (show less time)" onClick={() => setSpan((v) => zoomSpan(v, -1))} disabled={span <= SPANS[0]!.ms}>
+                <ZoomIn className="h-4 w-4" />
+              </PlayerButton>
+            </div>
             <PlayerButton label="Full screen" onClick={() => void frame.current?.requestFullscreen?.()}><Maximize2 className="h-4 w-4" /></PlayerButton>
           </div>
         </div>

@@ -3,17 +3,29 @@ import { useEffect, useRef, useState } from "react";
 const HOUR = 3_600_000;
 /** Time spans the timeline can show across its width. */
 export const SPANS = [
+  { label: "5 min", ms: HOUR / 12 },
   { label: "15 min", ms: HOUR / 4 },
+  { label: "30 min", ms: HOUR / 2 },
   { label: "1 hour", ms: HOUR },
+  { label: "2 hours", ms: 2 * HOUR },
   { label: "4 hours", ms: 4 * HOUR },
   { label: "8 hours", ms: 8 * HOUR },
+  { label: "12 hours", ms: 12 * HOUR },
   { label: "24 hours", ms: 24 * HOUR },
+  { label: "2 days", ms: 48 * HOUR },
 ];
+
+/** The next span in (direction -1, zoom in) or out (+1), or the same at either end. */
+export function zoomSpan(span: number, direction: -1 | 1): number {
+  const i = SPANS.findIndex((s) => s.ms >= span);
+  const at = i < 0 ? SPANS.length - 1 : i;
+  return SPANS[Math.min(SPANS.length - 1, Math.max(0, at + direction))]!.ms;
+}
 const hhmm = (t: number, withSeconds = false) => new Date(t).toISOString().slice(11, withSeconds ? 19 : 16);
 
 /** Labels on round times, about 8 across. */
 function ticks(from: number, to: number, span: number) {
-  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 180].map((m) => m * 60_000);
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360].map((m) => m * 60_000);
   const step = steps.find((s) => span / s <= 8) ?? steps.at(-1)!;
   const minor = step / (step >= 10 * 60_000 ? 5 : step >= 2 * 60_000 ? 2 : 1);
   const out: { t: number; major: boolean }[] = [];
@@ -34,6 +46,7 @@ export function MilestoneTimeline({
   segments,
   onSeek,
   onScrub,
+  onZoom,
 }: {
   /** The time under the playhead (camera wall-clock, as UTC ms). */
   time: number;
@@ -46,12 +59,24 @@ export function MilestoneTimeline({
   onSeek: (t: number) => void;
   /** The time under the playhead while dragging (null when done). */
   onScrub: (t: number | null) => void;
+  /** Zoom in (-1) or out (+1): Ctrl + wheel (or a pinch), and the + and - keys. */
+  onZoom?: (direction: -1 | 1) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [scrub, setScrub] = useState<number | null>(null);
   const drag = useRef<{ x: number; time: number; moved: boolean } | null>(null);
   const wheel = useRef<{ time: number; timer: ReturnType<typeof setTimeout> } | null>(null);
+
+  // Ctrl + wheel over the timeline zooms the timeline, not the page (React's wheel listener is passive).
+  const zooms = Boolean(onZoom);
+  useEffect(() => {
+    const el = box.current;
+    if (!el || !zooms) return;
+    const stop = (e: WheelEvent) => e.ctrlKey && e.preventDefault();
+    el.addEventListener("wheel", stop, { passive: false });
+    return () => el.removeEventListener("wheel", stop);
+  }, [zooms]);
 
   useEffect(() => {
     const el = box.current;
@@ -78,7 +103,7 @@ export function MilestoneTimeline({
       ref={box}
       role="slider"
       tabIndex={0}
-      aria-label="Timeline: drag to move through time, click to play from a time"
+      aria-label="Timeline: drag to move through time, click to play from a time, + and - to zoom"
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={center}
@@ -108,6 +133,11 @@ export function MilestoneTimeline({
         }
       }}
       onWheel={(e) => {
+        // Ctrl + wheel (and a touchpad pinch, which browsers send as one) zooms.
+        if (e.ctrlKey && onZoom) {
+          if (Math.abs(e.deltaY) > 2) onZoom(e.deltaY < 0 ? -1 : 1);
+          return;
+        }
         // The wheel moves through time; playback follows once it stops turning.
         const base = wheel.current?.time ?? center;
         const t = clamp(base + (e.deltaY + e.deltaX) * perPx);
@@ -124,6 +154,8 @@ export function MilestoneTimeline({
       }}
       onKeyDown={(e) => {
         if (e.key === "ArrowLeft" || e.key === "ArrowRight") onSeek(clamp(center + (e.key === "ArrowLeft" ? -1 : 1) * span * 0.05));
+        if ((e.key === "+" || e.key === "=") && onZoom) onZoom(-1);
+        if ((e.key === "-" || e.key === "_") && onZoom) onZoom(1);
       }}
     >
       {/* Outside the day: dimmed. */}
