@@ -234,6 +234,12 @@ export interface CameraBrandAdapter {
    */
   playbackRtspFallbacks?(startMs: number, segment?: RecordedSegment, channel?: number): string[];
   /**
+   * Optional: also give the start time on PLAY (RTSP Range: clock=, UTC), through the replay relay.
+   * For brands whose firmware may ignore the time in the playback address and play from the first
+   * recording on the card.
+   */
+  readonly playbackClockRange?: boolean;
+  /**
    * Optional: the replay address (without credentials) of the recording holding `segment`, asked from
    * the camera (ONVIF Profile G GetReplayUri). It plays through the replay relay, which adds the
    * start time; used by brands without playbackRtspPath.

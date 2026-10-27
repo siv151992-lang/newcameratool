@@ -201,8 +201,9 @@ camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), l
     }).strict(),
     req.body,
   );
-  const from = await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start, speed, channel);
-  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from, ...(speed && speed > 1 ? { speed } : {}), ...(channel ? { channel } : {}) } });
+  const { start: from, via } = await preparePlayback(orgOf(req), param(req), req.auth!.sessionId, start, speed, channel);
+  // `via`: how the recording was opened (the playback address, or ONVIF replay), to explain a camera that misplays.
+  await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from, ...(speed && speed > 1 ? { speed } : {}), ...(channel ? { channel } : {}), via } });
   res.json({ ok: true, start: from });
 });
 

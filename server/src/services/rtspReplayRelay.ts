@@ -28,7 +28,10 @@ export interface ReplayTarget {
   password: string;
   /** ONVIF replay: adds Require: onvif-replay, and Range from startUtcMs. */
   onvif: boolean;
-  /** Where ONVIF playback starts, in UTC epoch ms. */
+  /**
+   * Where playback starts, in UTC epoch ms: sent on PLAY as Range: clock=…, for ONVIF replay and for
+   * brands whose firmware may ignore the start time in the address (played again without it if refused).
+   */
   startUtcMs?: number;
   /** Playback speed asked of the camera (RTSP Scale), above 1. */
   scale?: number;
@@ -122,7 +125,7 @@ function relayConnection(client: net.Socket) {
   let challenge: { scheme: "digest" | "basic"; params: Record<string, string> } | undefined;
   let nc = 0;
   /** Requests waiting for the camera to answer, by CSeq, to resend once after a login challenge. */
-  const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean }>();
+  const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean; ranged?: boolean; unranged?: boolean }>();
   /** Messages for the camera before its connection is up. */
   let queue: Buffer[] | undefined = [];
   let fromClient: Buffer = Buffer.alloc(0);
@@ -156,7 +159,7 @@ function relayConnection(client: net.Socket) {
   };
 
   /** Sends a request on to the camera: its address, the login, the replay headers and the speed. */
-  const sendRequest = (m: RtspMessage, unscaled = false) => {
+  const sendRequest = (m: RtspMessage, unscaled = false, unranged = false) => {
     const [method = "", uri = "", version = "RTSP/1.0"] = m.first.split(" ");
     const cameraUri = uri === "*" ? uri : cameraOrigin + (uri.slice(relayPrefix.length) || "/");
     const out: RtspMessage = { first: `${method} ${cameraUri} ${version}`, headers: m.headers.filter(([k]) => k.toLowerCase() !== "authorization"), body: m.body };
@@ -165,11 +168,14 @@ function relayConnection(client: net.Socket) {
       if (["DESCRIBE", "SETUP", "PLAY", "PAUSE"].includes(method.toUpperCase())) setHeader(out, "Require", "onvif-replay");
       if (play && target!.startUtcMs !== undefined) setHeader(out, "Range", `clock=${clockTime(target!.startUtcMs)}-`);
     }
+    // Other brands: the start time as a clock range too, for firmware that ignores it in the address.
+    const ranged = play && !target!.onvif && !unranged && target!.startUtcMs !== undefined;
+    if (ranged) setHeader(out, "Range", `clock=${clockTime(target!.startUtcMs!)}-`);
     const scaled = play && !unscaled && (target!.scale ?? 1) > 1;
     if (scaled) setHeader(out, "Scale", target!.scale!.toFixed(1));
     authorize(out, method, cameraUri);
     const cseq = header(m, "CSeq");
-    if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled });
+    if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled, ranged, unranged });
     toCamera(serialize(out));
   };
 
@@ -187,7 +193,7 @@ function relayConnection(client: net.Socket) {
       if (digest || basic) {
         challenge = digest ? { scheme: "digest", params: parseChallenge(digest) } : { scheme: "basic", params: {} };
         pending.set(cseq!, { message: request.message, retried: true });
-        sendRequest(request.message, request.unscaled);
+        sendRequest(request.message, request.unscaled, request.unranged);
         return;
       }
     }
@@ -195,7 +201,14 @@ function relayConnection(client: net.Socket) {
     if (request?.scaled && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
       logger.info({ status: m.first, host: target?.host }, "Recording playback: the camera refused fast playback; playing at normal speed");
       pending.set(cseq!, { ...request, scaled: false, unscaled: true });
-      sendRequest(request.message, true);
+      sendRequest(request.message, true, request.unranged);
+      return;
+    }
+    // The camera refused the clock range: play with the start time in the address only.
+    if (request?.ranged && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
+      logger.info({ status: m.first, host: target?.host }, "Recording playback: the camera refused a clock range; playing from the time in the address");
+      pending.set(cseq!, { ...request, ranged: false, unranged: true });
+      sendRequest(request.message, request.unscaled, true);
       return;
     }
     for (const name of ["Content-Base", "Content-Location", "RTP-Info"]) {

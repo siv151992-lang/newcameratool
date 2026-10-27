@@ -33,8 +33,8 @@ describe("choosing a playback address", () => {
     const http = {} as CameraHttpClient;
     const t = Date.UTC(2026, 9, 26, 8, 0, 0);
     expect(new HikvisionAdapter(http).playbackRtspFallbacks(t, undefined, 2)).toEqual([
-      "/Streaming/tracks/202?starttime=20261026T080000Z",
-      "/ISAPI/Streaming/tracks/201?starttime=20261026T080000Z",
+      "/Streaming/tracks/202?starttime=20261026T080000Z&endtime=20261026T200000Z",
+      "/ISAPI/Streaming/tracks/201?starttime=20261026T080000Z&endtime=20261026T200000Z",
     ]);
     expect(new DahuaAdapter(http).playbackRtspFallbacks(t)[0]).toContain("/cam/playback?channel=1&subtype=1&starttime=2026_10_26_08_00_00");
   });

@@ -148,11 +148,15 @@ describe("live video", () => {
     await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ start: `${today}T00:15:00` }).expect(200);
     const [name, src] = [...go2rtc.streams].find(([n]) => n.startsWith(`playback_${id}_`))!;
-    expect(src).toBe(`rtsp://admin:Cam%20P%40ss%3A1@127.0.0.1:554/Streaming/tracks/101?starttime=${today.replace(/-/g, "")}T001500Z`);
+    // Hikvision: through the relay, which also gives the start time as a clock range (firmware that
+    // ignores starttime plays from the first recording on the card); the start and end in the address.
+    const d = today.replace(/-/g, "");
+    expect(src).toMatch(new RegExp(`^rtsp://127\\.0\\.0\\.1:8554/r/[A-Za-z0-9_-]{24}/Streaming/tracks/101\\?starttime=${d}T001500Z&endtime=${d}T121500Z$`));
+    expect(src).not.toContain("Cam");
     const reply = await upgrade(`/api/cameras/${id}/playback/ws`, { Cookie: admin.cookie, Origin: `http://127.0.0.1:${port}` });
     expect(reply).toMatch(/^HTTP\/1\.1 101 /);
     expect(go2rtc.wsPaths).toEqual([`/api/ws?src=${name}`]);
-    expect((await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.playback'")).rows).toEqual([{ details: { start: `${today}T00:15:00` } }]);
+    expect((await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.playback'")).rows).toEqual([{ details: { start: `${today}T00:15:00`, via: "/Streaming/tracks/101" } }]);
 
     // A time in a gap plays from the next recording (the simulated camera has none from 00:30 until the last hour).
     const gap = (await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)

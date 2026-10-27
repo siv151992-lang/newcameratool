@@ -56,7 +56,7 @@ describe("ONVIF recordings (Profile G)", () => {
 
 /** A replay server that insists on digest login, Require: onvif-replay and a clock Range. */
 function fakeReplayCamera() {
-  const options = { refuseScale: false };
+  const options = { refuseScale: false, refuseRange: false };
   const requests: { first: string; headers: Record<string, string> }[] = [];
   const md5 = (s: string) => createHash("md5").update(s).digest("hex");
   const server = net.createServer((socket) => {
@@ -83,6 +83,7 @@ function fakeReplayCamera() {
         if (method === "PLAY") {
           if (onvif && !/^clock=\d{8}T\d{6}Z-$/.test(headers.range ?? "")) return send("457 Invalid Range");
           if (headers.scale && options.refuseScale) return send("551 Option not supported");
+          if (headers.range?.startsWith("clock=") && !headers.require && options.refuseRange) return send("457 Invalid Range");
           send("200 OK", ["Session: 1234", ...(headers.scale ? [`Scale: ${headers.scale}`] : [])]);
           socket.write(Buffer.from([0x24, 0, 0, 3, 1, 2, 3]));
           return;
@@ -209,6 +210,26 @@ describe("Replay relay", () => {
       expect(plays.every((r) => !r.headers.require && !r.headers.range)).toBe(true);
       c.close();
     }
+  });
+
+  it("gives other brands the start time as a clock range too, and plays without it when refused", async () => {
+    for (const refuse of [false, true]) {
+      cam.options.refuseRange = refuse;
+      cam.requests.length = 0;
+      const start = Date.parse("2026-10-24T04:45:00Z");
+      const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, `clock_${refuse}`, { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101?starttime=20261024T101500Z", username: "admin", password: "secret", onvif: false, startUtcMs: start });
+      const c = rtspClient(relayPort);
+      expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
+      expect((await c.request("SETUP", `${url}/track1`)).first).toBe("RTSP/1.0 200 OK");
+      expect((await c.request("PLAY", url, ["Session: 1234", "Range: npt=0.000-"])).first).toBe("RTSP/1.0 200 OK");
+      await c.until(() => c.frames.length > 0);
+      const plays = cam.requests.filter((r) => r.first.startsWith("PLAY") && r.headers.authorization);
+      // UTC, not the camera's local time in the address; never the ONVIF requirement (not every camera has it).
+      expect(plays.map((r) => r.headers.range)).toEqual(refuse ? ["clock=20261024T044500Z-", "npt=0.000-"] : ["clock=20261024T044500Z-"]);
+      expect(plays.every((r) => !r.headers.require)).toBe(true);
+      c.close();
+    }
+    cam.options.refuseRange = false;
   });
 
   it("refuses unknown playback addresses", async () => {

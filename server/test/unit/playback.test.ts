@@ -37,7 +37,7 @@ describe("recordings for playback", () => {
 
   it("builds each brand's playback address", () => {
     const start = t("2026-10-24T08:15:30");
-    expect(new HikvisionAdapter(http).playbackRtspPath(start)).toBe("/Streaming/tracks/101?starttime=20261024T081530Z");
+    expect(new HikvisionAdapter(http).playbackRtspPath(start)).toBe("/Streaming/tracks/101?starttime=20261024T081530Z&endtime=20261024T201530Z");
     expect(new DahuaAdapter(http).playbackRtspPath(start)).toBe("/cam/playback?channel=1&subtype=0&starttime=2026_10_24_08_15_30&endtime=2026_10_24_20_15_30");
     expect(new HanwhaAdapter(http).playbackRtspPath(start)).toBe("/recording/20261024081530-20261024201530/play.smp");
     expect(new UniviewAdapter(http).playbackRtspPath(start)).toBe(`/c1/b${start / 1000}/e${start / 1000 + 43200}/replay/`);

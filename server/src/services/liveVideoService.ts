@@ -159,6 +159,17 @@ async function putStream(name: string, src: string) {
 
 /** Per camera: the last day listed, to turn a chosen local time into the camera's playback time. */
 const lastListing = new Map<string, RecordingList>();
+/** Per camera: its clock's offset from UTC, learned when its recordings are listed (camera time now vs ours). */
+const clockOffsets = new Map<string, number>();
+function rememberListing(key: string, list: RecordingList) {
+  if (lastListing.size > 5000) {
+    lastListing.clear();
+    clockOffsets.clear();
+  }
+  lastListing.set(key, list);
+  // Time zones are whole quarter hours; this also absorbs a camera clock a few minutes off.
+  clockOffsets.set(key, Math.round((list.nowMs - Date.now()) / 900_000) * 900_000);
+}
 const DAY_MS = 86_400_000;
 const wall = (ms: number) => new Date(ms).toISOString().slice(0, 19);
 
@@ -193,7 +204,7 @@ export async function listRecordings(orgId: string, cameraId: string, date: stri
     if (adapter === own) throw err;
     throw new HttpError(422, "PLAYBACK_UNAVAILABLE", `${own.meta.displayName} recordings are read over ONVIF (Profile G), which failed: ${(err as Error).message}. Turn on ONVIF in the camera.`);
   }
-  lastListing.set(listingKey(cameraId, channel), result);
+  rememberListing(listingKey(cameraId, channel), result);
   const segments = result.segments
     .filter((s) => s.end > from && s.start < to)
     .map((s) => ({ start: wall(Math.max(s.start, from)), end: wall(Math.min(s.end, to)) }));
@@ -253,7 +264,7 @@ async function listingFor(adapter: CameraBrandAdapter, config: CameraConfig, cam
   // After a restart, or a time on another day than the one last listed: list that day.
   try {
     const list = await adapter.listRecordings!(config, day, day + DAY_MS, channel);
-    lastListing.set(key, list);
+    rememberListing(key, list);
     return list;
   } catch {
     return known;
@@ -294,7 +305,7 @@ export async function pickPlaybackPath(paths: string[], probe: (path: string) =>
  * addresses (the sub stream, other firmware), then ONVIF replay, so a camera that refuses one way
  * still plays, and one that refuses all is explained instead of failing in the player.
  */
-export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string, speed = 1, channel?: number): Promise<string> {
+export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string, speed = 1, channel?: number): Promise<{ start: string; via: string }> {
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Playing recordings needs the live video service (go2rtc), which is not set up on this server");
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
   const local = Date.parse(`${start}Z`);
@@ -306,7 +317,7 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
   const playFrom = segment && segment.start > local ? segment.start : local;
   const utcSegment = segment && { ...segment, start: segment.start - shift, end: segment.end - shift };
   const name = playbackStreamName(cameraId, sessionId);
-  const startedAt = () => wall(fromStart ? segment.start : playFrom);
+  const startedAt = (via: string) => ({ start: wall(fromStart ? segment.start : playFrom), via });
 
   let refused: { path: string; status: number }[] = [];
   if (adapter.playbackRtspPath && !(listing?.viaOnvif && adapter.replayRtspUrl)) {
@@ -329,12 +340,15 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
         if (playbackVariants.size > 5000) playbackVariants.clear();
         playbackVariants.set(key, { variant: pick.variant ?? 0, at: Date.now() });
       }
-      // Faster than normal: through the relay, which asks the camera for it (RTSP Scale).
-      const src = speed > 1
-        ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path: pick.path, username: config.username, password: config.password, onvif: false, scale: speed })
+      // Through the relay when faster than normal (it asks the camera for it: RTSP Scale), and for
+      // brands whose firmware may ignore the start time in the address (it adds it as a clock range).
+      const offset = clockOffsets.get(listingKey(cameraId, channel));
+      const clockStart = adapter.playbackClockRange && offset !== undefined ? playFrom - offset : undefined;
+      const src = speed > 1 || clockStart !== undefined
+        ? registerReplay(relayBase(), name, { host: config.host, port: RTSP_PORT, path: pick.path, username: config.username, password: config.password, onvif: false, scale: speed > 1 ? speed : undefined, startUtcMs: clockStart })
         : rtspUrl(config, pick.path);
       await putStream(name, src);
-      return startedAt();
+      return startedAt(pick.path.split("?")[0]!);
     }
     refused = pick.refused;
     logger.warn({ cameraId, refused }, "Playback: the camera served none of its playback addresses");
@@ -370,5 +384,5 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
     scale: speed > 1 ? speed : undefined,
   });
   await putStream(name, relayed);
-  return wall(startUtc + shift);
+  return { start: wall(startUtc + shift), via: "ONVIF replay" };
 }

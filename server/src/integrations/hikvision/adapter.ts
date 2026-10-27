@@ -54,6 +54,12 @@ const RANGE_LOOKBACK_DAYS = [400, 90, 30];
 /** A camera without Recording/status is not asked again for this long (saves two requests a check). */
 const NO_STATUS_TTL_MS = 6 * 3600_000;
 
+/** The playback period in the address: from the start, 12 hours on (both are needed by some firmware). */
+const playbackTimes = (startMs: number) => {
+  const t = (ms: number) => `${wallClockText(ms).replace(/[-:]/g, "")}Z`;
+  return `starttime=${t(startMs)}&endtime=${t(startMs + 12 * 3_600_000)}`;
+};
+
 export class HikvisionAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
     key: "hikvision",
@@ -254,14 +260,17 @@ export class HikvisionAdapter implements CameraBrandAdapter {
 
   /** Recordings of track N01 (channel N) from a camera time (YYYYMMDDTHHMMSSZ, the camera's own clock). */
   playbackRtspPath(startMs: number, _segment?: RecordedSegment, channel = 1): string {
-    return `/Streaming/tracks/${channel}01?starttime=${wallClockText(startMs).replace(/[-:]/g, "")}Z`;
+    return `/Streaming/tracks/${channel}01?${playbackTimes(startMs)}`;
   }
 
   /** The sub stream's recordings (H.264 on most models, when the main stream is H.265), and the ISAPI-prefixed path of some firmware. */
   playbackRtspFallbacks(startMs: number, _segment?: RecordedSegment, channel = 1): string[] {
-    const t = `starttime=${wallClockText(startMs).replace(/[-:]/g, "")}Z`;
+    const t = playbackTimes(startMs);
     return [`/Streaming/tracks/${channel}02?${t}`, `/ISAPI/Streaming/tracks/${channel}01?${t}`];
   }
+
+  /** Some firmware ignores starttime and plays from the first recording on the card; it honours a clock range on PLAY. */
+  readonly playbackClockRange = true;
 
   /** Names the step that failed, and what a refused one needs, in the error shown on the camera page. */
   private async step<T>(what: string, run: () => Promise<T>): Promise<T> {
