@@ -143,7 +143,7 @@ function savedBuffer(): PlaybackBuffer {
 
 export function RecordingsDialog({ camera, onClose }: { camera: { id: string; name: string; channel?: number } | null; onClose: () => void }) {
   return (
-    <Dialog open={!!camera} onClose={onClose} title={camera ? `Recordings: ${camera.name}` : "Recordings"} size="xl">
+    <Dialog open={!!camera} onClose={onClose} title={camera ? `Recordings: ${camera.name}` : "Recordings"} size="full">
       {camera && <RecordingsBody key={`${camera.id}:${camera.channel ?? ""}`} cameraId={camera.id} name={camera.name} channel={camera.channel} />}
     </Dialog>
   );
@@ -395,7 +395,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
 
       {/* The player: video, the time, the timeline and the controls, dark like a recorder's. */}
       <div ref={frame} className="space-y-2 rounded-lg bg-neutral-900 p-2 text-neutral-100 [&:fullscreen]:flex [&:fullscreen]:flex-col [&:fullscreen]:justify-end">
-        <div className="relative mx-auto flex aspect-video max-h-[46vh] w-full items-center justify-center overflow-hidden rounded bg-black [:fullscreen_&]:max-h-none [:fullscreen_&]:flex-1">
+        <div className="relative mx-auto flex aspect-video max-h-[calc(96vh-26rem)] w-full items-center justify-center overflow-hidden rounded bg-black [:fullscreen_&]:max-h-none [:fullscreen_&]:flex-1">
           {playing ? (
             <LiveVideo
               key={`${start}|${Math.max(speed, 1)}|${attempt}`}

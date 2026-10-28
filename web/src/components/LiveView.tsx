@@ -18,7 +18,7 @@ const RETRY_MS = 5000;
  */
 export function LiveViewDialog({ camera, onClose }: { camera: { id: string; name: string; channel?: number } | null; onClose: () => void }) {
   return (
-    <Dialog open={!!camera} onClose={onClose} title={camera ? `Live view: ${camera.name}` : "Live view"} size="xl">
+    <Dialog open={!!camera} onClose={onClose} title={camera ? `Live view: ${camera.name}` : "Live view"} size="full">
       {camera && <LiveViewBody key={`${camera.id}:${camera.channel ?? ""}`} cameraId={camera.id} name={camera.name} channel={camera.channel} />}
     </Dialog>
   );
@@ -67,7 +67,7 @@ function VideoFrame({ cameraId, name, channel, onFailed }: { cameraId: string; n
   const frame = useRef<HTMLDivElement>(null);
   return (
     <div className="space-y-3">
-      <div ref={frame} className="relative mx-auto flex aspect-video max-h-[55vh] items-center justify-center overflow-hidden rounded-md bg-black">
+      <div ref={frame} className="relative mx-auto flex aspect-video max-h-[calc(96vh-16rem)] items-center justify-center overflow-hidden rounded-md bg-black">
         <LiveVideo cameraId={cameraId} name={name} channel={channel} onFailed={onFailed} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">

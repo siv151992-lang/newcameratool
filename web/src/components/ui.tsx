@@ -206,7 +206,7 @@ export function Dialog({
   title: string;
   children: ReactNode;
   footer?: ReactNode;
-  size?: "md" | "lg" | "xl";
+  size?: "md" | "lg" | "xl" | "full";
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -226,7 +226,7 @@ export function Dialog({
       aria-labelledby="dialog-title"
       className={clsx(
         "w-[calc(100%-2rem)] rounded-lg border border-line bg-surface p-0 text-ink shadow-xl backdrop:bg-black/50",
-        size === "xl" ? "max-w-5xl" : size === "lg" ? "max-w-2xl" : "max-w-md",
+        size === "full" ? "max-h-[96vh] max-w-[min(96vw,1800px)]" : size === "xl" ? "max-w-5xl" : size === "lg" ? "max-w-2xl" : "max-w-md",
       )}
     >
       {open && (
@@ -237,7 +237,7 @@ export function Dialog({
             </h2>
             <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close dialog" icon={<X className="h-4 w-4" />} />
           </div>
-          <div className="max-h-[70vh] overflow-y-auto px-5 py-4 text-sm">{children}</div>
+          <div className={clsx("overflow-y-auto px-5 py-4 text-sm", size === "full" ? "max-h-[calc(96vh-8rem)]" : "max-h-[70vh]")}>{children}</div>
           {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
         </div>
       )}
