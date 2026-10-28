@@ -118,6 +118,15 @@ export class MilestoneAdapter extends OnvifAdapter {
         : `Connected to ${at}`);
       step("authentication", "passed", "Authentication", "Signed in to the Open Network Bridge");
       const cams = await this.cameras(camera);
+      // The bridge reports Milestone as the maker; a camera's own ONVIF service reports the camera's.
+      const name = deviceInfo.deviceName ?? "";
+      if (name && !/milestone|xprotect/i.test(name)) {
+        step("api", "warning", "Cameras",
+          `This is ${name}, a camera, not the Milestone Open Network Bridge: only its own video (${cams.map((c) => c.name).join(", ")}) and its own storage are seen here, not the recordings in XProtect. ` +
+          "Enter the address of the XProtect server running the Open Network Bridge instead (Management Client: Servers → Recording Servers shows it).");
+        step("storage", "skipped", "Storage", "XProtect keeps its own storage; its disk health stays in XProtect");
+        return { ok: true, reachable: true, steps, deviceInfo, storage: { devices: [] } };
+      }
       step("api", "passed", "Cameras", `${cams.length} camera${cams.length === 1 ? "" : "s"}: ${cams.slice(0, 5).map((c) => c.name).join(", ")}${cams.length > 5 ? ", …" : ""}`);
       step("storage", "skipped", "Storage", "XProtect keeps its own storage; its disk health stays in XProtect");
       return { ok: true, reachable: true, steps, deviceInfo, storage: { devices: [] } };

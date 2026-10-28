@@ -34,7 +34,7 @@ const results = envelope(`<tse:GetRecordingSearchResultsResponse xmlns:tse="http
   ${recording("rec-dock", "", iso(5 * 86_400_000), iso(2000), "Recording", true)}
 </tse:ResultList></tse:GetRecordingSearchResultsResponse>`);
 
-function bridge() {
+function bridge(identity = "<tds:Manufacturer>Milestone</tds:Manufacturer><tds:Model>Open Network Bridge</tds:Model>") {
   const calls: CameraRequest[] = [];
   const http = {
     request: async (_cfg: CameraConfig, req: CameraRequest) => {
@@ -43,7 +43,7 @@ function bridge() {
       const reply = (x: string) => ({ status: 200, headers: { "content-type": "application/soap+xml" }, body: x });
       if (b.includes("GetServices")) return reply(envelope("<tds:GetServicesResponse xmlns:tds='x'/>"));
       if (b.includes("GetSystemDateAndTime")) return reply(envelope(`<tds:GetSystemDateAndTimeResponse xmlns:tds="x"><tds:SystemDateAndTime><tt:UTCDateTime><tt:Date><tt:Year>${now.getUTCFullYear()}</tt:Year><tt:Month>${now.getUTCMonth() + 1}</tt:Month><tt:Day>${now.getUTCDate()}</tt:Day></tt:Date><tt:Time><tt:Hour>${now.getUTCHours()}</tt:Hour><tt:Minute>${now.getUTCMinutes()}</tt:Minute><tt:Second>${now.getUTCSeconds()}</tt:Second></tt:Time></tt:UTCDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>`));
-      if (b.includes("GetDeviceInformation")) return reply(envelope(`<tds:GetDeviceInformationResponse xmlns:tds="x"><tds:Manufacturer>Milestone</tds:Manufacturer><tds:Model>Open Network Bridge</tds:Model><tds:FirmwareVersion>2025R1</tds:FirmwareVersion><tds:SerialNumber>ONB-1</tds:SerialNumber></tds:GetDeviceInformationResponse>`));
+      if (b.includes("GetDeviceInformation")) return reply(envelope(`<tds:GetDeviceInformationResponse xmlns:tds="x">${identity}<tds:FirmwareVersion>2025R1</tds:FirmwareVersion><tds:SerialNumber>ONB-1</tds:SerialNumber></tds:GetDeviceInformationResponse>`));
       if (b.includes("GetProfiles")) return reply(profiles);
       if (b.includes("GetStreamUri")) {
         const token = /<trt:ProfileToken>([^<]+)</.exec(b)![1];
@@ -98,6 +98,14 @@ describe("Milestone XProtect through the Open Network Bridge", () => {
     expect(r.steps.find((s) => s.key === "storage")!.status).toBe("skipped");
     expect(await adapter.getStorageStatus(cfg)).toEqual({ devices: [] });
     expect(adapter.meta).toMatchObject({ key: "milestone", recordsElsewhere: true, defaultPorts: { http: 580 } });
+  });
+
+  it("says so when the address is a camera, not the bridge", async () => {
+    const { adapter } = bridge("<tds:Manufacturer>FLIR Systems</tds:Manufacturer><tds:Model>CM-3102-01-I</tds:Model>");
+    const r = await adapter.testConnection(cfg);
+    const api = r.steps.find((s) => s.key === "api")!;
+    expect(api.status).toBe("warning");
+    expect(api.message).toMatch(/^This is FLIR Systems CM-3102-01-I, a camera, not the Milestone Open Network Bridge/);
   });
 
   it("matches recordings by source, then name, then order", () => {
