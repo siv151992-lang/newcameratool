@@ -30,7 +30,7 @@ second stream to H.264 in the camera's own video settings.
 - **From start** plays the oldest recording on the camera; **Latest** the newest.
 - **Speed**: slower plays at once; faster asks the camera to send faster (where it supports it).
 - **Buffer** (Small 2 s, Normal 5 s, Large 10 s): video kept in hand so playback does not freeze on a
-  slow or uneven network; the seconds in hand show beside it. Playback starts with a little in hand
+  slow or uneven network; the seconds in hand show beside it. Playback starts with half a second in hand (Large: 3 s)
   and builds the rest by playing slightly slower than real time (0.9–0.96×) until it is full. Use
   Large over VPN or mobile links. The choice is remembered in the browser.
 

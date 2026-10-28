@@ -19,8 +19,8 @@ const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0",
  * - refill: seconds in hand before playing on after running dry.
  */
 export const PLAYBACK_BUFFERS = {
-  small: { label: "Small 2 s", start: 1, target: 2, refill: 1 },
-  normal: { label: "Normal 5 s", start: 1.5, target: 5, refill: 2.5 },
+  small: { label: "Small 2 s", start: 0.5, target: 2, refill: 1 },
+  normal: { label: "Normal 5 s", start: 0.5, target: 5, refill: 2.5 },
   large: { label: "Large 10 s", start: 3, target: 10, refill: 5 },
 } as const;
 export type PlaybackBuffer = keyof typeof PLAYBACK_BUFFERS;
@@ -117,8 +117,12 @@ export function LiveVideo({
       }
     };
     const onWaiting = () => {
-      // Ran out of video: wait for a little in hand rather than stutter frame by frame.
-      if (playbackStart && cushioned && !stopped) {
+      // Ran out of video: wait for a little in hand rather than stutter frame by frame. Only when
+      // really out of video: the browser also says "waiting" while it moves to the start of the
+      // video at the beginning, which must not hold playback back for a refill.
+      const ranges = buffer?.buffered;
+      const ahead = ranges && ranges.length > 0 ? ranges.end(ranges.length - 1) - el.currentTime : 0;
+      if (playbackStart && cushioned && !stopped && !el.seeking && ahead < 0.3) {
         el.pause();
         firstDataAt = performance.now();
       }
