@@ -22,8 +22,12 @@ describe("timeline kept inside the day", () => {
   it("starts the view at 00:00 with the playhead at the left edge, not in the day before", () => {
     timeline(day);
     expect(playheadAt()).toBeLessThanOrEqual(1);
-    expect(labels()[0]).toBe("29-10");
+    // The date band names only this day; the scale starts at its first minute.
+    expect(labels()[0]).toBe("Thu 29-10-2026");
+    expect(labels()).not.toContain("Wed 28-10-2026");
     expect(labels()).not.toContain("23:50");
+    // The playhead shows its time.
+    expect(labels().at(-1)).toBe("00:00:00");
   });
 
   it("keeps the playhead in the middle during the day, and at the right edge at its end", () => {
@@ -37,5 +41,6 @@ describe("timeline kept inside the day", () => {
   it("without a day, stays centred (the day before shows)", () => {
     timeline(day, false);
     expect(playheadAt()).toBe(400);
+    expect(labels()).toEqual(expect.arrayContaining(["Wed 28-10-2026", "Thu 29-10-2026"]));
   });
 });

@@ -23,6 +23,17 @@ export function zoomSpan(span: number, direction: -1 | 1): number {
   return SPANS[Math.min(SPANS.length - 1, Math.max(0, at + direction))]!.ms;
 }
 export const hhmm = (t: number, withSeconds = false) => new Date(t).toISOString().slice(11, withSeconds ? 19 : 16);
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** A day's name for the date band: Wed 28-10-2026. */
+export const dayLabel = (t: number) => `${WEEKDAYS[new Date(t).getUTCDay()]} ${new Date(t).toISOString().slice(0, 10).split("-").reverse().join("-")}`;
+
+/** The days a view covers, each with where it starts and ends across the width (px). */
+export function dayBands(from: number, to: number, x: (t: number) => number, width: number) {
+  const DAY = 86_400_000;
+  const out: { day: number; left: number; right: number }[] = [];
+  for (let d = Math.floor(from / DAY) * DAY; d < to; d += DAY) out.push({ day: d, left: Math.max(0, x(d)), right: Math.min(width, x(d + DAY)) });
+  return out;
+}
 
 /** Labels on round times, about 8 across. */
 export function ticks(from: number, to: number, span: number) {
@@ -73,6 +84,8 @@ export function MilestoneTimeline({
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [scrub, setScrub] = useState<number | null>(null);
+  /** Where the mouse is over the timeline (px), to show the time there. */
+  const [hover, setHover] = useState<number | null>(null);
   /** pinnedFrom: the view was held at the day's edge when the drag began, so the playhead follows the pointer. */
   const drag = useRef<{ x: number; time: number; moved: boolean; pinnedFrom: number | null } | null>(null);
   const wheel = useRef<{ time: number; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -122,12 +135,14 @@ export function MilestoneTimeline({
       aria-valuemax={max}
       aria-valuenow={center}
       aria-valuetext={hhmm(center, true)}
-      className="relative h-20 cursor-grab touch-none select-none overflow-hidden rounded-md bg-neutral-950 active:cursor-grabbing"
+      className="relative h-24 cursor-grab touch-none select-none overflow-hidden rounded-md bg-neutral-950 active:cursor-grabbing"
       onPointerDown={(e) => {
         drag.current = { x: e.clientX, time: center, moved: false, pinnedFrom: pinned ? from : null };
         e.currentTarget.setPointerCapture(e.pointerId);
       }}
+      onPointerLeave={() => setHover(null)}
       onPointerMove={(e) => {
+        if (e.pointerType === "mouse") setHover(drag.current?.moved ? null : e.clientX - e.currentTarget.getBoundingClientRect().left);
         const d = drag.current;
         if (!d) return;
         if (Math.abs(e.clientX - d.x) > 3) d.moved = true;
@@ -176,8 +191,17 @@ export function MilestoneTimeline({
       {from < min && <div className="absolute inset-y-0 left-0 bg-neutral-800/60" style={{ width: Math.max(0, x(min)) }} />}
       {to > max && <div className="absolute inset-y-0 right-0 bg-neutral-800/60" style={{ left: Math.min(width, x(max)) }} />}
 
+      {/* Date band: each day's name across its part of the view */}
+      <div className="absolute inset-x-0 top-0 h-5 border-b border-neutral-800 text-[11px] text-neutral-300" aria-hidden>
+        {dayBands(from, to, x, width).map((b) => (
+          <div key={b.day} className="absolute inset-y-0 overflow-hidden border-l border-neutral-700 first:border-l-0" style={{ left: b.left, width: Math.max(0, b.right - b.left) }}>
+            {b.right - b.left > 70 && <span className="absolute left-1.5 top-0.5 whitespace-nowrap font-medium">{dayLabel(b.day)}</span>}
+          </div>
+        ))}
+      </div>
+
       {/* Recordings */}
-      <div className="absolute inset-x-0 top-3 h-7">
+      <div className="absolute inset-x-0 top-7 h-7">
         {segments
           .filter((s) => s.end > from && s.start < to)
           .map((s) => (
@@ -200,9 +224,20 @@ export function MilestoneTimeline({
         ))}
       </div>
 
-      {/* The playhead: in the middle, or towards the edge at the start or end of the day */}
+      {/* The time under the mouse */}
+      {hover !== null && Math.abs(hover - x(center)) > 40 && (
+        <div className="pointer-events-none absolute bottom-9 top-5 w-px bg-white/40" style={{ left: hover }} aria-hidden>
+          <span className={clsx("absolute top-0 whitespace-nowrap rounded bg-neutral-700 px-1 text-[10px] text-white tabular", hover < 30 ? "left-0" : hover > width - 30 ? "right-0" : "left-1/2 -translate-x-1/2")}>
+            {hhmm(clamp(from + hover * perPx), true)}
+          </span>
+        </div>
+      )}
+
+      {/* The playhead: in the middle, or towards the edge at the start or end of the day, with its time */}
       <div className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-amber-400" style={{ left: Math.min(width - 1, Math.max(1, x(center))) }} aria-hidden>
-        <div className="absolute -top-0.5 left-1/2 h-0 w-0 -translate-x-1/2 border-x-[6px] border-t-[7px] border-x-transparent border-t-amber-400" />
+        <span className={clsx("absolute top-0 whitespace-nowrap rounded bg-amber-400 px-1 text-[10px] font-semibold text-black tabular", x(center) < 32 ? "left-0" : x(center) > width - 32 ? "right-0" : "left-1/2 -translate-x-1/2")}>
+          {hhmm(center, true)}
+        </span>
       </div>
     </div>
   );
