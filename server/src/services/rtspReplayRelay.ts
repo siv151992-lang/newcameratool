@@ -169,6 +169,46 @@ const connectReason = (err: Error & { code?: string }) =>
   : err.code === "EHOSTUNREACH" || err.code === "ENETUNREACH" ? "no route to the camera"
   : err.code === "ECONNRESET" ? "the camera dropped the connection"
   : err.message;
+/** Playback sessions kept open a moment after go2rtc let go (a seek), by stream: the next start reuses them. */
+const parked = new Map<string, {
+  timer: ReturnType<typeof setTimeout>;
+  /** Ends the kept session now (the relay stopping). */
+  end: () => void;
+  matches: (t: ReplayTarget) => boolean;
+  adopt: (client: net.Socket, target: ReplayTarget & { streamName: string }, relayPrefix: string) => (m: RtspMessage) => void;
+}>();
+/** How long a session is kept for a seek. Tunable for tests. */
+export const parkTime = { ms: 8000 };
+/** Cameras that did not confirm a seek on an open session: their seeks open a new one, for an hour. */
+const seekRefusedAt = new Map<string, number>();
+const SEEK_REFUSAL_MS = 3_600_000;
+const seekRefused = (cameraKey: string) => {
+  const at = seekRefusedAt.get(cameraKey);
+  return at !== undefined && Date.now() - at < SEEK_REFUSAL_MS;
+};
+/** How far the camera's confirmed start may be from the time asked (it starts at a full picture). */
+const SEEK_TOLERANCE_MS = 120_000;
+
+const parseClockTime = (s: string) =>
+  Date.parse(`${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T${s.slice(9, 11)}:${s.slice(11, 13)}:${s.slice(13, 15)}${s.slice(15).replace(/Z$/i, "")}Z`);
+
+/** Where a playback starts (UTC ms): its clock range, or the start time in its address (Hikvision: starttime=…Z). */
+export function targetStartUtc(t: ReplayTarget): number | undefined {
+  if (t.startUtcMs !== undefined) return t.startUtcMs;
+  const m = /[?&]starttime=(\d{8}T\d{6}Z)/i.exec(t.path);
+  return m ? parseClockTime(m[1]!) : undefined;
+}
+
+/** The camera moved the session to the time asked: it said so in its answer (Range: clock=…). */
+export function seekHonoured(m: { first: string; headers: [string, string][] }, atMs: number): boolean {
+  if (!/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) return false;
+  const range = m.headers.find(([k]) => k.toLowerCase() === "range")?.[1] ?? "";
+  const clock = /clock=(\d{8}T\d{6}(?:\.\d+)?Z)/i.exec(range)?.[1];
+  if (!clock) return false;
+  const t = parseClockTime(clock);
+  return Number.isFinite(t) && Math.abs(t - atMs) <= SEEK_TOLERANCE_MS;
+}
+
 /** The token each playback stream uses now, so choosing a new time retires the old one. */
 const byStream = new Map<string, string>();
 
@@ -269,8 +309,27 @@ export function readRtsp(buf: Buffer, onMessage: (m: RtspMessage) => void, onFra
   return buf.subarray(offset);
 }
 
+type Pending = {
+  message: RtspMessage;
+  retried: boolean;
+  scaled?: boolean;
+  unscaled?: boolean;
+  ranged?: boolean;
+  unranged?: boolean;
+  busyTries?: number;
+  /** A seek on the open session: the time asked for (UTC ms). */
+  seek?: number;
+  /** Sent by the relay itself (reopening a session): the answer goes here, not to go2rtc. */
+  silent?: (m: RtspMessage) => void;
+};
+
+const ok2xx = (m: RtspMessage) => /^RTSP\/\S+\s+2\d\d\b/.test(m.first);
+const cloneMessage = (m: RtspMessage): RtspMessage => ({ first: m.first, headers: m.headers.map(([k, v]) => [k, v]), body: Buffer.from(m.body) });
+
 /** Handles one connection from go2rtc. */
-function relayConnection(client: net.Socket) {
+function relayConnection(socket: net.Socket) {
+  /** go2rtc's connection: a seek hands a new one to this playback (see parked). */
+  let client = socket;
   let target: (ReplayTarget & { streamName?: string }) | undefined;
   let camera: net.Socket | undefined;
   let cameraOrigin = "";
@@ -280,21 +339,114 @@ function relayConnection(client: net.Socket) {
   /** The video track: its codec and control name (from DESCRIBE), and its interleaved channel (from SETUP). */
   let video: { codec: VideoCodec; control?: string; channel?: number } | undefined;
   /** Requests waiting for the camera to answer, by CSeq, to resend once after a login challenge. */
-  const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean; ranged?: boolean; unranged?: boolean; busyTries?: number }>();
+  const pending = new Map<string, Pending>();
   /** Messages for the camera before its connection is up. */
   let queue: Buffer[] | undefined = [];
   let fromClient: Buffer = Buffer.alloc(0);
   let fromCamera: Buffer = Buffer.alloc(0);
+  /** Another connection took this one's place (a seek on an open session): its messages go there. */
+  let handedTo: ((m: RtspMessage) => void) | undefined;
 
   const trace = () => (target?.streamName ? traces.get(target.streamName) : undefined);
+  /** The camera's playback session, to end it properly (TEARDOWN) when the video service goes. */
+  let session: { id: string; uri: string } | undefined;
+  let tornDown = false;
+  /** Video sent on this session: only a session that played is kept for a seek. */
+  let frames = 0;
+  /** The camera's answers to DESCRIBE and SETUP, to answer them again when a seek reuses the session. */
+  const cache: { describe?: RtspMessage; setups: RtspMessage[] } = { setups: [] };
+  /** Reusing the session for a seek: SETUPs answered from the cache (kept to reopen it if needed). */
+  let resumed: { setups: RtspMessage[] } | undefined;
+  /** Kept open after go2rtc let go, waiting for the seek that usually follows. */
+  let parkedNow = false;
+  /** Reopening the session (the camera did not move to the time): its video until then is dropped. */
+  let reopening = false;
+  /** go2rtc knows the session by the id it was first given; the reopened one has another. */
+  let alias: { client: string; camera: string } | undefined;
+
+  const endSession = (cam: net.Socket) => {
+    if (!session || tornDown || !cam.writable || queue) return false;
+    tornDown = true;
+    const m: RtspMessage = { first: `TEARDOWN ${session.uri} RTSP/1.0`, headers: [["CSeq", "999"], ["Session", session.id]], body: Buffer.alloc(0) };
+    authorize(m, "TEARDOWN", session.uri);
+    cam.end(serialize(m));
+    setTimeout(() => cam.destroy(), 1000).unref();
+    return true;
+  };
+
   const close = () => {
     client.destroy();
-    camera?.destroy();
+    if (parkedNow) return;
+    const cam = camera;
+    if (!cam || cam.destroyed) return;
+    if (park(cam)) return;
+    // Some cameras (Hikvision among them) keep a dropped playback's connection slot until its session
+    // times out (about a minute), so the next playback (a seek) is refused with 453. Ending the
+    // session frees it at once.
+    if (!endSession(cam)) cam.destroy();
   };
-  // RTSP replies and video packets go out at once (no waiting to batch small packets).
-  client.setNoDelay(true);
-  client.on("error", close).on("close", close);
-  client.setTimeout(60_000, close);
+
+  /**
+   * Seeking like a video management system: go2rtc lets go of the playback when the viewer picks
+   * another time, and comes back for the new time a moment later. The camera's session is paused
+   * and kept for that, so the seek moves the open session (PLAY with the new time) instead of
+   * opening a second one, which cameras with few connections refuse (453 Not Enough Bandwidth).
+   */
+  const parkable = (cam: net.Socket | undefined): cam is net.Socket => {
+    const name = target?.streamName;
+    if (!cam || cam.destroyed || !name || !session || tornDown || !cam.writable || queue || !frames || alias || reopening) return false;
+    return targetStartUtc(target!) !== undefined && !seekRefused(cameraKey) && !parked.has(name);
+  };
+  const park = (cam: net.Socket) => {
+    if (!parkable(cam) || !session) return false;
+    const name = target!.streamName!;
+    parkedNow = true;
+    const pause: RtspMessage = { first: `PAUSE ${session.uri} RTSP/1.0`, headers: [["CSeq", "998"], ["Session", session.id]], body: Buffer.alloc(0) };
+    if (target!.onvif) setHeader(pause, "Require", "onvif-replay");
+    authorize(pause, "PAUSE", session.uri);
+    cam.write(serialize(pause));
+    const parkedTarget = target!;
+    const timer = setTimeout(() => {
+      if (parked.get(name)?.timer !== timer) return;
+      parked.delete(name);
+      parkedNow = false;
+      if (!endSession(cam)) cam.destroy();
+    }, parkTime.ms);
+    timer.unref();
+    parked.set(name, {
+      timer,
+      end: () => {
+        clearTimeout(timer);
+        parked.delete(name);
+        parkedNow = false;
+        if (!endSession(cam)) cam.destroy();
+      },
+      matches: (t) =>
+        t.host === parkedTarget.host && t.port === parkedTarget.port && t.username === parkedTarget.username && t.password === parkedTarget.password &&
+        t.onvif === parkedTarget.onvif && t.path.split("?")[0] === parkedTarget.path.split("?")[0] && targetStartUtc(t) !== undefined,
+      adopt: (s, t, prefix) => {
+        clearTimeout(timer);
+        parked.delete(name);
+        parkedNow = false;
+        client = s;
+        target = t;
+        relayPrefix = prefix;
+        resumed = { setups: [] };
+        frames = 0;
+        pending.clear();
+        fromClient = Buffer.alloc(0);
+        const tr = traces.get(t.streamName);
+        if (tr) {
+          tr.contacted = true;
+          tr.at = { contact: Date.now(), connected: Date.now(), sent: {}, accepted: {}, keyframes: [] };
+        }
+        attach(s);
+        return onClientMessage;
+      },
+    });
+    logger.debug({ host: target?.host }, "Recording playback: session kept for a seek");
+    return true;
+  };
 
   const reply = (m: RtspMessage, status: string) => {
     const cseq = header(m, "CSeq");
@@ -303,7 +455,7 @@ function relayConnection(client: net.Socket) {
 
   const toCamera = (data: Buffer) => {
     if (queue) queue.push(data);
-    else camera!.write(data);
+    else camera?.write(data);
   };
 
   const authorize = (m: RtspMessage, method: string, uri: string) => {
@@ -332,9 +484,12 @@ function relayConnection(client: net.Socket) {
     if (ranged) setHeader(out, "Range", `clock=${clockTime(target!.startUtcMs!)}-`);
     const scaled = play && !unscaled && (target!.scale ?? 1) > 1;
     if (scaled) setHeader(out, "Scale", target!.scale!.toFixed(1));
+    // The reopened session's id, where go2rtc still uses the first one.
+    if (alias && header(out, "Session")?.split(";")[0]?.trim() === alias.client) setHeader(out, "Session", alias.camera);
     authorize(out, method, cameraUri);
+    if (method.toUpperCase() === "TEARDOWN") tornDown = true;
     const cseq = header(m, "CSeq");
-    if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled, ranged, unranged, busyTries: pending.get(cseq)?.busyTries });
+    if (cseq) pending.set(cseq, { ...pending.get(cseq), message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled, ranged, unranged });
     const t = trace();
     if (t) {
       t.unanswered = `${method} ${uri === "*" ? uri : controlBeforeQuery(uri.slice(relayPrefix.length) || "/")}`.slice(0, 300);
@@ -346,19 +501,42 @@ function relayConnection(client: net.Socket) {
   /** The camera's addresses in its replies point back here. */
   const toRelay = (s: string) => s.replace(/rtsps?:\/\/[^/\s"';,]+/gi, relayPrefix);
 
+  /** A camera's answer, on to go2rtc: addresses pointing here, the video track noted. */
+  const forward = (m: RtspMessage, request: Pending | undefined) => {
+    for (const name of ["Content-Base", "Content-Location", "RTP-Info"]) {
+      const v = header(m, name);
+      if (v) setHeader(m, name, toRelay(v));
+    }
+    if (/sdp/i.test(header(m, "Content-Type") ?? "")) {
+      video = videoTrack(m.body.toString("utf8")) ?? video;
+      m.body = Buffer.from(toRelay(m.body.toString("utf8")), "utf8");
+    }
+    // The channel the video comes on: the SETUP of the video track (or the first SETUP).
+    if (request && video && /^SETUP\b/i.test(request.message.first) && ok2xx(m)) {
+      const uri = request.message.first.split(" ")[1] ?? "";
+      const isVideo = video.control ? uri.split("?")[0]!.endsWith(video.control.replace(/^.*\//, "")) : false;
+      const ch = interleavedChannel(header(m, "Transport") ?? header(request.message, "Transport"));
+      if (ch !== undefined && (isVideo || video.channel === undefined)) video.channel = ch;
+    }
+    const s = header(m, "Session");
+    if (alias && s?.startsWith(alias.camera)) setHeader(m, "Session", alias.client + s.slice(alias.camera.length));
+    client.write(serialize(m));
+  };
+
   const onCameraMessage = (m: RtspMessage) => {
+    if (parkedNow) return; // the PAUSE's answer
     const cseq = header(m, "CSeq");
     const request = cseq ? pending.get(cseq) : undefined;
     if (request) pending.delete(cseq!);
     const t = trace();
-    if (t && request) {
+    if (t && request && !request.silent) {
       const [method = "", uri = ""] = request.message.first.split(" ");
       t.lastAnswered = `${method} ${uri.startsWith(relayPrefix) ? controlBeforeQuery(uri.slice(relayPrefix.length)) : uri}`.slice(0, 300);
       if (t.unanswered === t.lastAnswered) t.unanswered = undefined;
-      if (/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) t.at.accepted[method.toUpperCase()] = Date.now();
-      if (method.toUpperCase() === "PLAY" && /^RTSP\/\S+\s+2\d\d\b/.test(m.first)) t.played = true;
+      if (ok2xx(m)) t.at.accepted[method.toUpperCase()] = Date.now();
+      if (method.toUpperCase() === "PLAY" && ok2xx(m) && request.seek === undefined) t.played = true;
     }
-    if (/^RTSP\/\S+\s+401\b/.test(m.first) && request && !request.retried) {
+    if (/^RTSP\/\S+\s+401\b/.test(m.first) && request && !request.retried && request.seek === undefined) {
       const offered = m.headers.filter(([k]) => k.toLowerCase() === "www-authenticate").map(([, v]) => v);
       const digest = offered.find((v) => /^digest\s/i.test(v));
       const basic = offered.find((v) => /^basic\b/i.test(v));
@@ -366,20 +544,20 @@ function relayConnection(client: net.Socket) {
         challenge = { ...(digest ? { scheme: "digest" as const, params: parseChallenge(digest) } : { scheme: "basic" as const, params: {} }), nc: 0, at: Date.now() };
         if (challenges.size > 5000) challenges.clear();
         challenges.set(cameraKey, challenge);
-        pending.set(cseq!, { message: request.message, retried: true });
+        pending.set(cseq!, { ...request, retried: true });
         sendRequest(request.message, request.unscaled, request.unranged);
         return;
       }
     }
     // The camera refused to play faster: play at normal speed instead.
-    if (request?.scaled && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
+    if (request?.scaled && !ok2xx(m)) {
       logger.info({ status: m.first, host: target?.host }, "Recording playback: the camera refused fast playback; playing at normal speed");
       pending.set(cseq!, { ...request, scaled: false, unscaled: true });
       sendRequest(request.message, true, request.unranged);
       return;
     }
     // The camera refused the clock range: play with the start time in the address only.
-    if (request?.ranged && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
+    if (request?.ranged && !ok2xx(m)) {
       logger.info({ status: m.first, host: target?.host }, "Recording playback: the camera refused a clock range; playing from the time in the address");
       if (rangeRefusedAt.size > 5000) rangeRefusedAt.clear();
       rangeRefusedAt.set(cameraKey, Date.now());
@@ -389,17 +567,49 @@ function relayConnection(client: net.Socket) {
     }
     // All the camera's connections in use (Hikvision: 453 Not Enough Bandwidth): usually the playback
     // just replaced by a seek, which the camera frees a moment later. Ask again, a few times.
-    if (request && /^RTSP\/\S+\s+453\b/.test(m.first) && (request.busyTries ?? 0) < BUSY_RETRIES) {
+    if (request && request.seek === undefined && /^RTSP\/\S+\s+453\b/.test(m.first) && (request.busyTries ?? 0) < BUSY_RETRIES) {
       const tries = (request.busyTries ?? 0) + 1;
+      const cam = camera;
       logger.info({ status: m.first, host: target?.host, tries }, "Recording playback: the camera has no free connection; asking again");
       setTimeout(() => {
-        if (client.destroyed || camera?.destroyed) return;
+        if (client.destroyed || !cam || cam !== camera || cam.destroyed) return;
         pending.set(cseq!, { ...request, busyTries: tries });
         sendRequest(request.message, request.unscaled, request.unranged);
       }, busyRetry.ms * tries);
       return;
     }
-    if (request && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
+    // The session: to end it (TEARDOWN), and to seek on it. Its address: the whole presentation's
+    // (as PLAY asks for it), else the track's from SETUP.
+    const sessionId = header(m, "Session")?.split(";")[0]?.trim();
+    if (request && sessionId && ok2xx(m) && request.seek === undefined && (!session || /^PLAY\b/i.test(request.message.first))) {
+      const uri = request.message.first.split(" ")[1] ?? "";
+      session = { id: sessionId, uri: controlBeforeQuery(cameraOrigin + (uri.slice(relayPrefix.length) || "/")) };
+    }
+    if (request?.silent) {
+      request.silent(m);
+      return;
+    }
+    if (request?.seek !== undefined) {
+      if (seekHonoured(m, request.seek)) {
+        logger.info({ host: target?.host }, "Recording playback: moved the open session to the new time");
+        const tr = trace();
+        if (tr) tr.played = true;
+        forward(m, request);
+      } else {
+        // The camera did not confirm the new time: never risk showing another time. Reopen the
+        // session at the time asked, and open new sessions for this camera's seeks for a while.
+        logger.info({ status: m.first, range: header(m, "Range"), host: target?.host }, "Recording playback: the camera did not move the session to the time; reopening it");
+        if (seekRefusedAt.size > 5000) seekRefusedAt.clear();
+        seekRefusedAt.set(cameraKey, Date.now());
+        reopen(request.message);
+      }
+      return;
+    }
+    if (!resumed && request && ok2xx(m)) {
+      if (/^DESCRIBE\b/i.test(request.message.first)) cache.describe = cloneMessage(m);
+      if (/^SETUP\b/i.test(request.message.first)) cache.setups.push(cloneMessage(m));
+    }
+    if (request && !ok2xx(m)) {
       // The request as the camera got it (its path, without the relay's token or any credentials).
       const [method = "", uri = ""] = request.message.first.split(" ");
       const path = uri.startsWith(relayPrefix) ? controlBeforeQuery(uri.slice(relayPrefix.length)) : uri;
@@ -410,37 +620,112 @@ function relayConnection(client: net.Socket) {
         refusals.set(target.streamName, refusal);
       }
     }
-    for (const name of ["Content-Base", "Content-Location", "RTP-Info"]) {
-      const v = header(m, name);
-      if (v) setHeader(m, name, toRelay(v));
+    forward(m, request);
+  };
+
+  /** go2rtc came back for a new time on the kept session: its DESCRIBE and SETUP are answered as before, PLAY moves it. */
+  const answerOnSession = (m: RtspMessage): boolean => {
+    const method = (m.first.split(" ")[0] ?? "").toUpperCase();
+    const cseq = header(m, "CSeq");
+    if (method === "DESCRIBE" && cache.describe) {
+      const r = cloneMessage(cache.describe);
+      setHeader(r, "CSeq", cseq);
+      forward(r, { message: m, retried: true });
+      return true;
     }
-    if (/sdp/i.test(header(m, "Content-Type") ?? "")) {
-      video = videoTrack(m.body.toString("utf8")) ?? video;
-      m.body = Buffer.from(toRelay(m.body.toString("utf8")), "utf8");
+    if (method === "SETUP" && cache.setups[resumed!.setups.length]) {
+      const r = cloneMessage(cache.setups[resumed!.setups.length]!);
+      resumed!.setups.push(m);
+      setHeader(r, "CSeq", cseq);
+      forward(r, { message: m, retried: true });
+      return true;
     }
-    // The channel the video comes on: the SETUP of the video track (or the first SETUP).
-    if (request && video && /^SETUP\b/i.test(request.message.first) && /^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
-      const uri = request.message.first.split(" ")[1] ?? "";
-      const isVideo = video.control ? uri.split("?")[0]!.endsWith(video.control.replace(/^.*\//, "")) : false;
-      const ch = interleavedChannel(header(m, "Transport") ?? header(request.message, "Transport"));
-      if (ch !== undefined && (isVideo || video.channel === undefined)) video.channel = ch;
+    if (method === "PLAY" && session && resumed!.setups.length) {
+      const at = targetStartUtc(target!)!;
+      const out: RtspMessage = { first: `PLAY ${session.uri} RTSP/1.0`, headers: [["CSeq", cseq ?? "1"], ["Session", session.id], ["Range", `clock=${clockTime(at)}-`]], body: Buffer.alloc(0) };
+      if (target!.onvif) setHeader(out, "Require", "onvif-replay");
+      if ((target!.scale ?? 1) > 1) setHeader(out, "Scale", target!.scale!.toFixed(1));
+      authorize(out, "PLAY", session.uri);
+      if (cseq) pending.set(cseq, { message: m, retried: true, seek: at });
+      const t = trace();
+      if (t) t.at.sent.PLAY ??= Date.now();
+      toCamera(serialize(out));
+      return true;
     }
-    client.write(serialize(m));
+    return false;
+  };
+
+  /**
+   * Ends the kept session and opens a new one at the time asked, out of go2rtc's sight (it already
+   * has its answers to DESCRIBE and SETUP), then sends its PLAY on.
+   */
+  const reopen = (play: RtspMessage) => {
+    const old = camera;
+    reopening = true;
+    const firstId = session!.id;
+    if (old && !endSession(old)) old.destroy();
+    camera = undefined;
+    queue = [];
+    fromCamera = Buffer.alloc(0);
+    session = undefined;
+    tornDown = false;
+    const setups = resumed!.setups;
+    resumed = undefined;
+    let n = 0;
+    const silently = (m: RtspMessage, then: (answer: RtspMessage) => void) => {
+      const cseq = `r${++n}`;
+      setHeader(m, "CSeq", cseq);
+      pending.set(cseq, { message: m, retried: false, silent: (answer) => {
+        if (!ok2xx(answer)) {
+          reopening = false;
+          const [method = ""] = m.first.split(" ");
+          const status = answer.first.replace(/^RTSP\/\S+\s+/, "").slice(0, 100);
+          if (target?.streamName) refusals.set(target.streamName, { request: `${method} ${controlBeforeQuery(target.path)}`.slice(0, 300), status, at: Date.now() });
+          reply(play, status);
+          return;
+        }
+        then(answer);
+      } });
+      sendRequest(m);
+    };
+    const setupAt = (i: number, cameraId?: string) => {
+      if (i >= setups.length) {
+        reopening = false;
+        alias = { client: firstId, camera: cameraId! };
+        sendRequest(play);
+        return;
+      }
+      const s = cloneMessage(setups[i]!);
+      setHeader(s, "Session", cameraId);
+      silently(s, (a) => setupAt(i + 1, header(a, "Session")?.split(";")[0]?.trim() ?? cameraId));
+    };
+    void connect(target!).catch((err) => {
+      reopening = false;
+      reply(play, "503 Service Unavailable");
+      logger.warn({ err: (err as Error).message }, "Recording playback: the camera cannot be contacted again");
+      close();
+    });
+    silently({ first: `DESCRIBE ${relayPrefix}${target!.path.startsWith("/") ? "" : "/"}${target!.path} RTSP/1.0`, headers: [["Accept", "application/sdp"]], body: Buffer.alloc(0) }, () => setupAt(0));
   };
 
   const connect = async (t: ReplayTarget) => {
     const { address } = await hostGuard.resolve(t.host);
-    camera = net.connect({ host: address, port: t.port, noDelay: true });
-    camera.setTimeout(CONNECT_TIMEOUT_MS, () => camera!.destroy(new Error("timed out")));
-    camera.once("connect", () => {
-      camera!.setTimeout(0);
-      for (const data of queue ?? []) camera!.write(data);
+    const sock = net.connect({ host: address, port: t.port, noDelay: true });
+    camera = sock;
+    sock.setTimeout(CONNECT_TIMEOUT_MS, () => sock.destroy(new Error("timed out")));
+    sock.once("connect", () => {
+      if (sock !== camera) return;
+      sock.setTimeout(0);
+      for (const data of queue ?? []) sock.write(data);
       queue = undefined;
     });
-    camera.on("data", (chunk) => {
+    sock.on("data", (chunk) => {
+      if (sock !== camera) return;
       fromCamera = fromCamera.length ? Buffer.concat([fromCamera, chunk]) : chunk;
       try {
         fromCamera = readRtsp(fromCamera, onCameraMessage, (frame) => {
+          if (parkedNow || reopening) return;
+          frames += 1;
           const t = trace();
           if (t) {
             t.frames += 1;
@@ -460,24 +745,36 @@ function relayConnection(client: net.Socket) {
       }
       // The video service is not keeping up (overloaded, restarting): stop reading the camera until
       // it has caught up, so video does not pile up in memory (TCP then slows the camera down).
-      if (client.writableLength > MAX_QUEUED_BYTES && !camera!.isPaused()) {
-        camera!.pause();
-        client.once("drain", () => camera?.resume());
+      if (!parkedNow && client.writableLength > MAX_QUEUED_BYTES && !sock.isPaused()) {
+        sock.pause();
+        client.once("drain", () => sock.resume());
       }
     });
     let connected = false;
-    camera.once("connect", () => {
+    sock.once("connect", () => {
       connected = true;
       const tr = trace();
-      if (tr) tr.at.connected = Date.now();
+      if (tr && sock === camera) tr.at.connected ??= Date.now();
     });
-    camera.on("error", (err) => {
+    sock.on("error", (err) => {
+      if (sock !== camera) return;
       logger.warn({ err: err.message, host: t.host }, "Recording playback: the camera connection failed");
       const tr = trace();
       if (tr && !connected) tr.connectError = connectReason(err);
       close();
     });
-    camera.on("close", () => {
+    sock.on("close", () => {
+      if (sock !== camera) return;
+      if (parkedNow) {
+        // The camera ended the kept session itself: nothing to seek on.
+        const name = target?.streamName;
+        if (name && parked.get(name)) {
+          clearTimeout(parked.get(name)!.timer);
+          parked.delete(name);
+        }
+        parkedNow = false;
+        return;
+      }
       const tr = trace();
       if (tr && connected && !client.destroyed) tr.cameraClosed = true;
       close();
@@ -485,12 +782,22 @@ function relayConnection(client: net.Socket) {
   };
 
   const onClientMessage = (m: RtspMessage) => {
+    if (handedTo) return handedTo(m);
     const uri = m.first.split(" ")[1] ?? "";
     if (!target) {
       const match = /^rtsp:\/\/[^/]+\/r\/([A-Za-z0-9_-]{24})(?=\/|$)/.exec(uri);
       const found = match ? targets.get(match[1]!) : undefined;
       if (!found || found.expires < Date.now()) {
         reply(m, "404 Not Found");
+        return;
+      }
+      // The same viewer's playback, a moment after a seek: carry on the kept session.
+      const keep = parked.get(found.streamName);
+      if (keep?.matches(found)) {
+        client.removeAllListeners("data").removeAllListeners("error").removeAllListeners("close").removeAllListeners("timeout");
+        client.setTimeout(0);
+        handedTo = keep.adopt(client, found, match![0]);
+        handedTo(m);
         return;
       }
       target = found;
@@ -517,17 +824,33 @@ function relayConnection(client: net.Socket) {
       reply(m, "404 Not Found");
       return;
     }
+    if (resumed && answerOnSession(m)) return;
+    // go2rtc ending the playback (a seek, usually): keep the session for the new time instead.
+    if (/^TEARDOWN\b/i.test(m.first) && parkable(camera)) {
+      reply(m, "200 OK");
+      return;
+    }
     sendRequest(m);
   };
 
-  client.on("data", (chunk) => {
-    fromClient = fromClient.length ? Buffer.concat([fromClient, chunk]) : chunk;
-    try {
-      fromClient = readRtsp(fromClient, onClientMessage, (frame) => (target ? toCamera(Buffer.from(frame)) : undefined));
-    } catch {
-      close();
-    }
-  });
+  /** Listens to a connection from go2rtc (the first one, or one taking over after a seek). */
+  const attach = (s: net.Socket) => {
+    // RTSP replies and video packets go out at once (no waiting to batch small packets).
+    s.setNoDelay(true);
+    const gone = () => s === client && close();
+    s.on("error", gone).on("close", gone);
+    s.setTimeout(60_000, gone);
+    s.on("data", (chunk) => {
+      if (s !== client) return;
+      fromClient = fromClient.length ? Buffer.concat([fromClient, chunk]) : chunk;
+      try {
+        fromClient = readRtsp(fromClient, onClientMessage, (frame) => (target && !handedTo ? toCamera(Buffer.from(frame)) : undefined));
+      } catch {
+        close();
+      }
+    });
+  };
+  attach(socket);
 }
 
 let server: net.Server | undefined;
@@ -548,6 +871,7 @@ export function startReplayRelay(port: number, host = "0.0.0.0"): Promise<net.Se
 }
 
 export function stopReplayRelay(): Promise<void> {
+  for (const p of [...parked.values()]) p.end();
   const s = server;
   server = undefined;
   return new Promise((resolve) => (s ? s.close(() => resolve()) : resolve()));

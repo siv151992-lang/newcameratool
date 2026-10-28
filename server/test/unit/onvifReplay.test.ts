@@ -5,7 +5,7 @@ import { OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { parseOnvifRecordingResults, parseOnvifSearchToken } from "../../src/integrations/onvif/parser.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
-import { busyRetry, clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, playbackTimings, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
+import { busyRetry, parkTime, seekHonoured, targetStartUtc, clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, playbackTimings, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
 
 const envelope = (body: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`;
 const results = (state: string, ...recs: [string, string, string][]) =>
@@ -56,10 +56,12 @@ describe("ONVIF recordings (Profile G)", () => {
 
 /** A replay server that insists on digest login, Require: onvif-replay and a clock Range. */
 function fakeReplayCamera() {
-  const options = { refuseScale: false, refuseRange: false, refuseSetup: false, busySetups: 0 };
+  const options = { refuseScale: false, refuseRange: false, refuseSetup: false, busySetups: 0, confirmSeek: false };
+  let connections = 0;
   const requests: { first: string; headers: Record<string, string> }[] = [];
   const md5 = (s: string) => createHash("md5").update(s).digest("hex");
   const server = net.createServer((socket) => {
+    const sessionId = String(1233 + ++connections);
     let buf: Buffer = Buffer.alloc(0);
     socket.on("data", (chunk) => {
       buf = readRtsp(Buffer.concat([buf, chunk]), (m) => {
@@ -84,12 +86,14 @@ function fakeReplayCamera() {
           options.busySetups -= 1;
           return send("453 Not Enough Bandwidth");
         }
-        if (method === "SETUP") return send("200 OK", ["Session: 1234", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
+        if (method === "SETUP") return send("200 OK", [`Session: ${sessionId}`, "Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
         if (method === "PLAY") {
           if (onvif && !/^clock=\d{8}T\d{6}Z-$/.test(headers.range ?? "")) return send("457 Invalid Range");
           if (headers.scale && options.refuseScale) return send("551 Option not supported");
           if (headers.range?.startsWith("clock=") && !headers.require && options.refuseRange) return send("457 Invalid Range");
-          send("200 OK", ["Session: 1234", ...(headers.scale ? [`Scale: ${headers.scale}`] : [])]);
+          // A seek on the open session (PLAY with a clock range, after PAUSE): confirmed when the camera supports it.
+          const confirm = options.confirmSeek && headers.range?.startsWith("clock=") ? [`Range: ${headers.range}`] : [];
+          send("200 OK", [`Session: ${sessionId}`, ...(headers.scale ? [`Scale: ${headers.scale}`] : []), ...confirm]);
           socket.write(Buffer.from([0x24, 0, 0, 3, 1, 2, 3]));
           return;
         }
@@ -97,7 +101,7 @@ function fakeReplayCamera() {
       }, () => undefined);
     });
   });
-  return { server, requests, options };
+  return { server, requests, options, connections: () => connections };
 }
 
 /** A minimal RTSP client, like go2rtc: sends requests one at a time and collects replies and data. */
@@ -266,7 +270,8 @@ describe("Replay relay", () => {
     const c = rtspClient(relayPort);
     expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
     // One DESCRIBE reached the camera, already signed in (earlier playbacks learned its challenge).
-    expect(cam.requests.map((r) => [r.first.split(" ")[0], Boolean(r.headers.authorization)])).toEqual([["DESCRIBE", true]]);
+    // (Sessions of earlier playbacks ending meanwhile aside.)
+    expect(cam.requests.filter((r) => !/^(TEARDOWN|PAUSE)\b/.test(r.first)).map((r) => [r.first.split(" ")[0], Boolean(r.headers.authorization)])).toEqual([["DESCRIBE", true]]);
     c.close();
   });
 
@@ -307,6 +312,93 @@ describe("Replay relay", () => {
     c.close();
     cam.options.busySetups = 0;
     busyRetry.ms = 1000;
+  });
+
+  const waitFor = (ok: () => boolean) => new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timed out")), 3000);
+    const poll = setInterval(() => ok() && (clearInterval(poll), clearTimeout(t), resolve()), 5);
+  });
+  const hik = (start: string) => ({ host: "127.0.0.1", port: camPort, path: `/Streaming/tracks/101?starttime=${start}&endtime=20261025T101500Z`, username: "admin", password: "secret", onvif: false });
+  /** Plays from `start` like go2rtc: DESCRIBE, SETUP, PLAY, until video comes. */
+  const playFrom = async (name: string, start: string) => {
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, name, hik(start));
+    const c = rtspClient(relayPort);
+    expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
+    const setup = await c.request("SETUP", `${url}/trackID=1`, ["Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
+    expect(setup.first).toBe("RTSP/1.0 200 OK");
+    const play = await c.request("PLAY", url, [`Session: ${setup.headers.session}`]);
+    expect(play.first).toBe("RTSP/1.0 200 OK");
+    await c.until(() => c.frames.length > 0);
+    return { c, session: setup.headers.session!, play };
+  };
+
+  it("reads where a playback starts and whether the camera confirmed a seek", () => {
+    expect(targetStartUtc(hik("20261024T101500Z"))).toBe(Date.parse("2026-10-24T10:15:00Z"));
+    expect(targetStartUtc({ ...hik("x"), path: "/Streaming/tracks/101", startUtcMs: 5 })).toBe(5);
+    expect(targetStartUtc({ ...hik("x"), path: "/Streaming/tracks/101" })).toBeUndefined();
+    const at = Date.parse("2026-10-24T10:30:00Z");
+    const answer = (range?: string, status = "200 OK") => ({ first: `RTSP/1.0 ${status}`, headers: range ? [["Range", range]] as [string, string][] : [] });
+    expect(seekHonoured(answer("clock=20261024T102958Z-"), at)).toBe(true); // from the full picture just before
+    expect(seekHonoured(answer("clock=20261024T101500.000Z-"), at)).toBe(false); // still at the old time
+    expect(seekHonoured(answer(), at)).toBe(false); // not said: not trusted
+    expect(seekHonoured(answer("clock=20261024T103000Z-", "457 Invalid Range"), at)).toBe(false);
+  });
+
+  it("seeks like a video management system: the open session moves to the new time, no new connection", async () => {
+    cam.options.confirmSeek = true;
+    const first = await playFrom("seek", "20261024T101500Z");
+    const before = cam.connections();
+    first.c.close(); // the viewer picked another time: go2rtc lets go …
+    await waitFor(() => cam.requests.at(-1)?.first.startsWith("PAUSE") ?? false);
+    cam.requests.length = 0;
+    // … and comes back for the new time.
+    const second = await playFrom("seek", "20261024T103000Z");
+    expect(second.session).toBe(first.session);
+    expect(cam.connections()).toBe(before);
+    expect(cam.requests.map((r) => r.first.split(" ")[0])).toEqual(["PLAY"]);
+    expect(cam.requests[0]!.headers).toMatchObject({ session: first.session, range: "clock=20261024T103000Z-" });
+    second.c.close();
+    cam.options.confirmSeek = false;
+    await waitFor(() => cam.requests.some((r) => r.first.startsWith("PAUSE")));
+  });
+
+  it("opens a new session out of go2rtc's sight when the camera does not confirm the seek", async () => {
+    parkTime.ms = 8000;
+    const first = await playFrom("seek2", "20261024T101500Z");
+    first.c.close();
+    await waitFor(() => cam.requests.at(-1)?.first.startsWith("PAUSE") ?? false);
+    cam.requests.length = 0;
+    const second = await playFrom("seek2", "20261024T103000Z");
+    // go2rtc keeps the session id it was given; the camera gets its new one.
+    expect(second.session).toBe(first.session);
+    expect(second.play.headers.session).toBe(first.session);
+    expect(cam.requests.filter((r) => r.headers.authorization).map((r) => r.first.replace(`127.0.0.1:${camPort}`, "cam"))).toEqual([
+      "PLAY rtsp://cam/Streaming/tracks/101?starttime=20261024T101500Z&endtime=20261025T101500Z RTSP/1.0",
+      "TEARDOWN rtsp://cam/Streaming/tracks/101?starttime=20261024T101500Z&endtime=20261025T101500Z RTSP/1.0",
+      "DESCRIBE rtsp://cam/Streaming/tracks/101?starttime=20261024T103000Z&endtime=20261025T101500Z RTSP/1.0",
+      "SETUP rtsp://cam/Streaming/tracks/101/trackID=1?starttime=20261024T103000Z&endtime=20261025T101500Z RTSP/1.0",
+      "PLAY rtsp://cam/Streaming/tracks/101?starttime=20261024T103000Z&endtime=20261025T101500Z RTSP/1.0",
+    ]);
+    const newSession = cam.requests.find((r) => r.first.startsWith("PLAY") && r.headers.session !== first.session)!.headers.session;
+    expect(newSession).not.toBe(first.session);
+    // That camera's next seek opens a new session directly (no kept session to try first).
+    second.c.close();
+    await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN") && r.headers.session === newSession));
+  });
+
+  it("ends the camera's session when the playback cannot be kept for a seek, so the camera frees the connection", async () => {
+    cam.requests.length = 0;
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "teardown", { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101", username: "admin", password: "secret", onvif: false });
+    const c = rtspClient(relayPort);
+    await c.request("DESCRIBE", url);
+    const setup = await c.request("SETUP", `${url}/trackID=1`);
+    await c.request("PLAY", url, [`Session: ${setup.headers.session}`]);
+    c.close(); // without a TEARDOWN from go2rtc
+    await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN")));
+    const teardown = cam.requests.find((r) => r.first.startsWith("TEARDOWN"))!;
+    expect(teardown.first).toBe(`TEARDOWN rtsp://127.0.0.1:${camPort}/Streaming/tracks/101 RTSP/1.0`);
+    expect(teardown.headers.session).toBe(setup.headers.session);
+    expect(teardown.headers.authorization).toMatch(/^Digest /);
   });
 
   it("explains why a recording did not play, from what the camera did", async () => {
