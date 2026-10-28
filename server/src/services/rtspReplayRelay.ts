@@ -184,6 +184,15 @@ export function controlBeforeQuery(uri: string): string {
   return `${base}/${uri.slice(slash + 1)}?${uri.slice(q + 1, slash)}`;
 }
 
+/** Forgets a playback that is over (a downloaded clip's one-off stream): its address stops working. */
+export function releaseReplay(streamName: string): void {
+  const token = byStream.get(streamName);
+  if (token) targets.delete(token);
+  byStream.delete(streamName);
+  refusals.delete(streamName);
+  traces.delete(streamName);
+}
+
 /** Registers a playback and returns the address go2rtc should play (relayBase: rtsp://host:port). */
 export function registerReplay(relayBase: string, streamName: string, target: ReplayTarget): string {
   const now = Date.now();

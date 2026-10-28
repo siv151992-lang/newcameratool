@@ -12,7 +12,7 @@ import { MockVendorCamera } from "../../src/testing/mockVendor.js";
 import { createTestUser, PASSWORD, prepareDb, resetData } from "../helpers.js";
 
 /** Stands in for go2rtc: records registered streams and answers the WebSocket with one text frame. */
-const go2rtc = { streams: new Map<string, string>(), wsPaths: [] as string[], readOnlyConfig: false };
+const go2rtc = { streams: new Map<string, string>(), wsPaths: [] as string[], readOnlyConfig: false, mp4: [] as string[], deleted: [] as string[] };
 const fake = http.createServer((req, res) => {
   const url = new URL(req.url!, "http://x");
   if (url.pathname === "/api/streams" && req.method === "PUT") {
@@ -21,7 +21,18 @@ const fake = http.createServer((req, res) => {
     if (go2rtc.readOnlyConfig) res.statusCode = 400;
     return res.end(go2rtc.readOnlyConfig ? "open /config/go2rtc.yaml: read-only file system" : "");
   }
+  if (url.pathname === "/api/streams" && req.method === "DELETE") {
+    go2rtc.deleted.push(url.searchParams.get("src")!);
+    go2rtc.streams.delete(url.searchParams.get("src")!);
+    return res.end();
+  }
   if (url.pathname === "/api/streams") return res.end(JSON.stringify(Object.fromEntries(go2rtc.streams)));
+  // A recorded clip: an MP4 file of the stream for `duration` seconds.
+  if (url.pathname === "/api/stream.mp4") {
+    go2rtc.mp4.push(`${url.searchParams.get("src")}|${url.searchParams.get("duration")}`);
+    res.setHeader("Content-Type", 'video/mp4; codecs="avc1.640029"');
+    return res.end(Buffer.from("....ftypisom-fake-mp4-clip"));
+  }
   res.statusCode = 404;
   res.end();
 });
@@ -186,6 +197,31 @@ describe("live video", () => {
 
     const viewer = await sessionCookie("viewer");
     await request(app).get(`/api/cameras/${id}/recordings?date=${today}`).set("Cookie", viewer.cookie).expect(403);
+  });
+
+  it("downloads a clip of the recording as an MP4 file, with its own stream", async () => {
+    const admin = await sessionCookie("admin");
+    const id = (await request(app).post("/api/cameras").set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ name: "Lobby Gate", host: "127.0.0.1", port: camPort, protocol: "http", brand: "Hikvision", username: "admin", password: "Cam P@ss:1" }).expect(201)).body.id as string;
+    const today = new Date().toISOString().slice(0, 10);
+    cam.clockSkewMs = Date.parse(`${today}T12:00:00Z`) - Date.now();
+    onTestFinished(() => void (cam.clockSkewMs = 0));
+    const res = await request(app).get(`/api/cameras/${id}/recordings/clip?start=${today}T00:15:00&seconds=120`).set("Cookie", admin.cookie)
+      .buffer(true).parse((r, cb) => { const chunks: Buffer[] = []; r.on("data", (c: Buffer) => chunks.push(c)); r.on("end", () => cb(null, Buffer.concat(chunks))); }).expect(200);
+    expect(res.headers["content-type"]).toMatch(/^video\/mp4/);
+    expect(res.headers["content-disposition"]).toContain(`filename="Lobby-Gate_${today}_00-15-00_120s.mp4"`);
+    expect((res.body as Buffer).toString()).toBe("....ftypisom-fake-mp4-clip");
+    // Its own stream, through the relay (not the viewer's playback), recorded for the length asked, then removed.
+    const [name, duration] = go2rtc.mp4.at(-1)!.split("|");
+    expect(name).toMatch(new RegExp(`^clip_${id}_[0-9a-f]{12}$`));
+    expect(duration).toBe("120");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(go2rtc.deleted).toContain(name);
+    expect((await pool.query("SELECT details FROM audit_logs WHERE action = 'camera.recording_exported'")).rows).toEqual([{ details: { start: `${today}T00:15:00`, seconds: 120, via: "/Streaming/tracks/101" } }]);
+
+    await request(app).get(`/api/cameras/${id}/recordings/clip?start=${today}T00:15:00&seconds=7200`).set("Cookie", admin.cookie).expect(400);
+    const viewer = await sessionCookie("viewer");
+    await request(app).get(`/api/cameras/${id}/recordings/clip?start=${today}T00:15:00&seconds=60`).set("Cookie", viewer.cookie).expect(403);
   });
 
   it("plays Hanwha recordings: the timeline in UTC shown in local time, playback in UTC", async () => {

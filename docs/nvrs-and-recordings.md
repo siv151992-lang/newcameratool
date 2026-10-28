@@ -10,6 +10,14 @@ The app asks the camera whether it serves each of the brand's stream addresses (
 first, which is usually H.264) and uses the first that answers, then the address the camera gives
 over ONVIF. If none works, the message says why (login refused, or no such stream).
 
+**Download a clip** (the download button by Full screen) saves part of a recording as an MP4 file
+for evidence: choose the start (camera time; the current position by default) and the length (30
+seconds to 30 minutes). The camera sends recordings at normal speed, so the download takes about as
+long as the clip and shows in the browser's downloads as it comes in; closing it stops it. The file
+plays in VLC, Windows Media Player and browsers, starts at the camera's first full picture from that
+time, and is named after the camera, the start and the length. Each download is in the audit log
+(`camera.recording_exported`); Operators and Org Admins can download clips, Viewers cannot.
+
 **Save picture** downloads what is on screen as a PNG at the camera's full resolution (whatever
 the zoom), named after the camera and the time, e.g. `Lobby_2026-10-27_14-05-09.png`. In
 recordings it is the camera's time of the moment being played (the camera button by the zoom).

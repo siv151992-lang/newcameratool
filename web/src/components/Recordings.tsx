@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Camera, ChevronLeft, Layers, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
+import { Camera, ChevronLeft, Download, Layers, ChevronRight, Clock, Film, Gauge, Maximize2, Pause, Play, Rewind, FastForward, Search, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { localTimeText, pictureFileName, savePicture } from "../lib/savePicture";
 import { LiveVideo, PLAYBACK_BUFFERS, type PlaybackBuffer, type StartTimings } from "./LiveVideo";
 import { RecordingCalendar } from "./RecordingCalendar";
 import { MilestoneTimeline, SPANS, zoomSpan } from "./MilestoneTimeline";
-import { Button, Dialog, EmptyState, ErrorMessage, Spinner } from "./ui";
+import { Button, Dialog, EmptyState, ErrorMessage, Field, Input, Select, Spinner } from "./ui";
 
 interface Segment {
   start: string;
@@ -73,6 +73,63 @@ export function describeStart(t: StartTimings, cam: CameraTimings | null): strin
   return `Started in ${sec(t.playing)}: ${parts.join(" · ")}${hint}`;
 }
 
+const CLIP_LENGTHS = [
+  { seconds: 30, label: "30 seconds" }, { seconds: 60, label: "1 minute" }, { seconds: 120, label: "2 minutes" },
+  { seconds: 300, label: "5 minutes" }, { seconds: 600, label: "10 minutes" }, { seconds: 900, label: "15 minutes" }, { seconds: 1800, label: "30 minutes" },
+];
+
+/**
+ * Download a clip of the recording as an MP4 file (evidence). The camera sends recordings at normal
+ * speed, so the download takes about as long as the clip; the browser shows it as it comes in.
+ */
+function ClipDialog({ cameraId, channel, from, onClose }: { cameraId: string; channel?: number; from: string | null; onClose: () => void }) {
+  const [start, setStart] = useState("");
+  const [seconds, setSeconds] = useState(120);
+  useEffect(() => {
+    if (from) setStart(from.slice(0, 19));
+  }, [from]);
+  const valid = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(start);
+  const download = () => {
+    const at = start.length === 16 ? `${start}:00` : start;
+    const a = document.createElement("a");
+    a.href = `/api/cameras/${cameraId}/recordings/clip?start=${encodeURIComponent(at)}&seconds=${seconds}${channel ? `&channel=${channel}` : ""}`;
+    a.download = "";
+    document.body.append(a);
+    a.click();
+    a.remove();
+    onClose();
+  };
+  const length = CLIP_LENGTHS.find((l) => l.seconds === seconds)?.label ?? `${seconds} s`;
+  return (
+    <Dialog
+      open={!!from}
+      onClose={onClose}
+      title="Download a clip"
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" icon={<Download className="h-4 w-4" />} disabled={!valid} onClick={download}>Download MP4</Button></>}
+    >
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="From (camera time)">
+            {(id) => <Input id={id} type="datetime-local" step={1} value={start} onChange={(e) => setStart(e.target.value)} />}
+          </Field>
+          <Field label="Length">
+            {(id) => (
+              <Select id={id} value={seconds} onChange={(e) => setSeconds(Number(e.target.value))}>
+                {CLIP_LENGTHS.map((l) => <option key={l.seconds} value={l.seconds}>{l.label}</option>)}
+              </Select>
+            )}
+          </Field>
+        </div>
+        <p className="text-sm text-ink-secondary">
+          The camera sends its recordings at normal speed, so this download takes about {length}; it appears in the browser&apos;s downloads as it
+          comes in. The file plays in VLC, Windows Media Player and browsers. The clip starts at the camera&apos;s first full picture from that time,
+          and the download is recorded in the audit log.
+        </p>
+      </div>
+    </Dialog>
+  );
+}
+
 const BUFFER_KEY = "cctv-playback-buffer";
 function savedBuffer(): PlaybackBuffer {
   try {
@@ -99,6 +156,8 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const [speed, setSpeed] = useState(1);
   const [bufferLevel, setBufferLevel] = useState<PlaybackBuffer>(savedBuffer);
   const [inHand, setInHand] = useState<number | null>(null);
+  /** The clip being chosen for download (its start, camera time), or null. */
+  const [clipFrom, setClipFrom] = useState<string | null>(null);
   /** Where the last start's time went: the browser's steps and the camera's (seen by the server's relay). */
   const [startInfo, setStartInfo] = useState<string | null>(null);
   /** Which start the line is about: a later start's line is not overwritten by an earlier one. */
@@ -437,9 +496,13 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
               }} disabled={!position}>
               <Camera className="h-4 w-4" />
             </PlayerButton>
+            <PlayerButton label="Download a clip (MP4)" onClick={() => setClipFrom(text(head))} disabled={!segs.length}>
+              <Download className="h-4 w-4" />
+            </PlayerButton>
             <PlayerButton label="Full screen" onClick={() => void frame.current?.requestFullscreen?.()}><Maximize2 className="h-4 w-4" /></PlayerButton>
           </div>
         </div>
+        <ClipDialog cameraId={cameraId} channel={channel} from={clipFrom} onClose={() => setClipFrom(null)} />
         {start && startInfo && <p className="text-xs text-neutral-400 tabular" title="Where the time to start went, to find what is slow">{startInfo}</p>}
         {speed > 1 && arrival !== null && arrival < speed * 0.6 && played > 8 && (
           <p className="text-xs text-amber-300">

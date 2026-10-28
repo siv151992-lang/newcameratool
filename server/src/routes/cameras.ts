@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { Router } from "express";
 import { z } from "zod";
 import { actorOf, orgOf, requirePermission } from "../auth/middleware.js";
@@ -30,7 +32,7 @@ import { testCameraConfig, testSavedCamera } from "../services/connectionService
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
-import { listRecordings, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, prepareStream } from "../services/liveVideoService.js";
+import { CLIP_MAX_SECONDS, listRecordings, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, recordingClip, prepareStream } from "../services/liveVideoService.js";
 import { lastRefusal, playbackDiagnosis, playbackTimings } from "../services/rtspReplayRelay.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
@@ -214,6 +216,40 @@ camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), l
   // `via`: how the recording was opened (the playback address, or ONVIF replay), to explain a camera that misplays.
   await audit({ actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.playback", entityType: "camera", entityId: param(req), details: { start: from, ...(speed && speed > 1 ? { speed } : {}), ...(channel ? { channel } : {}), via } });
   res.json({ ok: true, start: from });
+});
+
+// A clip of the recording as an MP4 download (evidence). The camera sends it at normal speed, so the
+// download takes about as long as the clip; closing it stops the recording.
+camerasRouter.get("/:id/recordings/clip", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+  const { start, seconds, channel } = parse(
+    z.object({
+      start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS"),
+      seconds: z.coerce.number().int().min(5).max(CLIP_MAX_SECONDS),
+      channel: z.coerce.number().int().min(1).max(256).optional(),
+    }).strict(),
+    req.query,
+  );
+  const row = await getCameraRow(param(req), orgOf(req));
+  const abort = new AbortController();
+  const clip = await recordingClip(orgOf(req), param(req), start, seconds, channel, abort.signal);
+  await audit({
+    actor: actorOf(req), ip: req.ip, organizationId: orgOf(req), action: "camera.recording_exported", entityType: "camera", entityId: param(req),
+    details: { start: clip.start, seconds, ...(channel ? { channel } : {}), via: clip.via },
+  });
+  const safe = (row.name as string).trim().replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "") || "camera";
+  const file = `${safe}${channel ? `-ch${channel}` : ""}_${clip.start.replace("T", "_").replace(/:/g, "-")}_${seconds}s.mp4`;
+  res.setHeader("Content-Type", clip.contentType);
+  res.setHeader("Content-Disposition", `attachment; filename="${file}"; filename*=UTF-8''${encodeURIComponent(file)}`);
+  res.setHeader("Cache-Control", "no-store");
+  const body = Readable.fromWeb(clip.body as unknown as WebReadableStream);
+  const finish = () => {
+    abort.abort();
+    body.destroy();
+    clip.done();
+  };
+  res.on("close", finish);
+  body.on("error", () => res.destroy());
+  body.pipe(res);
 });
 
 // Live view: the current picture. `start=1` on the first picture of a viewing records it in the audit log.

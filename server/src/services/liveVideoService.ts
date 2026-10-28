@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "../config.js";
 import { registry } from "../integrations/registry.js";
@@ -8,7 +8,7 @@ import { logger } from "../lib/logger.js";
 import { getCameraConfig, getCameraRow } from "./cameraService.js";
 import { onvifAdapter } from "./liveViewService.js";
 import { getMonitoringSettings } from "./settingsService.js";
-import { registerReplay } from "./rtspReplayRelay.js";
+import { registerReplay, releaseReplay } from "./rtspReplayRelay.js";
 import { probeReason, probeRtsp } from "./rtspProbe.js";
 
 /**
@@ -324,7 +324,9 @@ export async function pickPlaybackPath(paths: string[], probe: (path: string) =>
  * addresses (the sub stream, other firmware), then ONVIF replay, so a camera that refuses one way
  * still plays, and one that refuses all is explained instead of failing in the player.
  */
-export async function preparePlayback(orgId: string, cameraId: string, sessionId: string, start: string, speed = 1, channel?: number): Promise<{ start: string; via: string }> {
+export async function preparePlayback(
+  orgId: string, cameraId: string, sessionId: string, start: string, speed = 1, channel?: number, opts: { streamName?: string } = {},
+): Promise<{ start: string; via: string }> {
   if (!liveVideoEnabled()) throw new HttpError(404, "LIVE_VIDEO_OFF", "Playing recordings needs the live video service (go2rtc), which is not set up on this server");
   const { adapter, config } = await playbackAdapter(orgId, cameraId);
   const local = Date.parse(`${start}Z`);
@@ -335,7 +337,7 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
   // A time in a gap (or before the first recording of the day) plays from the next recording.
   const playFrom = segment && segment.start > local ? segment.start : local;
   const utcSegment = segment && { ...segment, start: segment.start - shift, end: segment.end - shift };
-  const name = playbackStreamName(cameraId, sessionId);
+  const name = opts.streamName ?? playbackStreamName(cameraId, sessionId);
   const startedAt = (via: string) => ({ start: wall(fromStart ? segment.start : playFrom), via });
 
   let refused: { path: string; status: number }[] = [];
@@ -409,4 +411,33 @@ export async function preparePlayback(orgId: string, cameraId: string, sessionId
   });
   await putStream(name, relayed);
   return { start: wall(startUtc + shift), via: "ONVIF replay" };
+}
+
+// ------------------------------------------------------------------ recording clips
+
+/** Clip lengths that can be downloaded: cameras send recordings at normal speed, so a clip takes as long as it lasts. */
+export const CLIP_MAX_SECONDS = 30 * 60;
+
+/**
+ * A clip of the camera's recording as an MP4 file: a playback stream of its own (the viewer's own
+ * playback goes on), recorded by go2rtc for `seconds` (its stream.mp4 with a duration). The caller
+ * streams `body` to the browser and calls `done` when finished or cancelled.
+ */
+export async function recordingClip(orgId: string, cameraId: string, start: string, seconds: number, channel?: number, signal?: AbortSignal) {
+  const name = `clip_${cameraId}_${randomBytes(6).toString("hex")}`;
+  const done = () => {
+    releaseReplay(name);
+    void fetch(`${base()}/api/streams?src=${encodeURIComponent(name)}`, { method: "DELETE", signal: AbortSignal.timeout(5000) }).catch(() => undefined);
+  };
+  try {
+    const { start: from, via } = await preparePlayback(orgId, cameraId, "clip", start, 1, channel, { streamName: name });
+    const res = await fetch(`${base()}/api/stream.mp4?src=${encodeURIComponent(name)}&duration=${seconds}`, { signal });
+    if (!res.ok || !res.body) {
+      throw new HttpError(502, "LIVE_VIDEO_SERVICE", `The live video service could not record the clip (HTTP ${res.status}). See: docker compose logs go2rtc`);
+    }
+    return { start: from, via, body: res.body, contentType: res.headers.get("content-type") ?? "video/mp4", done };
+  } catch (err) {
+    done();
+    throw err;
+  }
 }
