@@ -3,6 +3,7 @@ import net from "node:net";
 import { digestAuthorization, parseChallenge } from "../integrations/http/cameraHttpClient.js";
 import { logger } from "../lib/logger.js";
 import { hostGuard } from "../security/hostGuardInstance.js";
+import { interleavedChannel, startsKeyframe, type VideoCodec, videoTrack } from "./rtpKeyframes.js";
 
 /**
  * ONVIF Profile G playback through go2rtc. go2rtc cannot send the two headers a replay server needs
@@ -81,7 +82,7 @@ interface Trace {
   /** A request sent that the camera never answered. */
   unanswered?: string;
   /** When (epoch ms) go2rtc came, the camera's port answered, each method was first sent and last accepted, and video began. */
-  at: { contact?: number; connected?: number; sent: Record<string, number>; accepted: Record<string, number>; firstVideo?: number };
+  at: { contact?: number; connected?: number; sent: Record<string, number>; accepted: Record<string, number>; firstVideo?: number; keyframes: number[] };
 }
 const traces = new Map<string, Trace>();
 
@@ -98,6 +99,10 @@ export interface PlaybackTimings {
   firstVideo?: number;
   /** From go2rtc connecting to the relay to the first video. */
   total?: number;
+  /** From the first video to the first full picture (key frame): what a player waits before showing anything. */
+  firstPicture?: number;
+  /** How often the camera sends a full picture (its I-frame interval), once two or more have come. */
+  pictureInterval?: number;
 }
 
 export function playbackTimings(streamName: string): PlaybackTimings | undefined {
@@ -111,6 +116,8 @@ export function playbackTimings(streamName: string): PlaybackTimings | undefined
     play: span(a.sent.PLAY, a.accepted.PLAY),
     firstVideo: span(a.accepted.PLAY, a.firstVideo),
     total: span(a.contact, a.firstVideo),
+    firstPicture: span(a.firstVideo, a.keyframes[0]),
+    pictureInterval: a.keyframes.length >= 2 ? Math.round((a.keyframes.at(-1)! - a.keyframes[0]!) / (a.keyframes.length - 1)) : undefined,
   };
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as PlaybackTimings;
 }
@@ -188,7 +195,7 @@ export function registerReplay(relayBase: string, streamName: string, target: Re
   targets.set(token, { ...target, expires: now + TOKEN_TTL_MS, streamName });
   refusals.delete(streamName);
   if (traces.size > 2000) traces.clear();
-  traces.set(streamName, { port: target.port, contacted: false, played: false, frames: 0, cameraClosed: false, at: { sent: {}, accepted: {} } });
+  traces.set(streamName, { port: target.port, contacted: false, played: false, frames: 0, cameraClosed: false, at: { sent: {}, accepted: {}, keyframes: [] } });
   byStream.set(streamName, token);
   return `${relayBase.replace(/\/+$/, "")}/r/${token}${target.path.startsWith("/") ? "" : "/"}${target.path}`;
 }
@@ -255,6 +262,8 @@ function relayConnection(client: net.Socket) {
   let relayPrefix = "";
   let challenge: { scheme: "digest" | "basic"; params: Record<string, string>; nc: number; at: number } | undefined;
   let cameraKey = "";
+  /** The video track: its codec and control name (from DESCRIBE), and its interleaved channel (from SETUP). */
+  let video: { codec: VideoCodec; control?: string; channel?: number } | undefined;
   /** Requests waiting for the camera to answer, by CSeq, to resend once after a login challenge. */
   const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean; ranged?: boolean; unranged?: boolean }>();
   /** Messages for the camera before its connection is up. */
@@ -378,7 +387,17 @@ function relayConnection(client: net.Socket) {
       const v = header(m, name);
       if (v) setHeader(m, name, toRelay(v));
     }
-    if (/sdp/i.test(header(m, "Content-Type") ?? "")) m.body = Buffer.from(toRelay(m.body.toString("utf8")), "utf8");
+    if (/sdp/i.test(header(m, "Content-Type") ?? "")) {
+      video = videoTrack(m.body.toString("utf8")) ?? video;
+      m.body = Buffer.from(toRelay(m.body.toString("utf8")), "utf8");
+    }
+    // The channel the video comes on: the SETUP of the video track (or the first SETUP).
+    if (request && video && /^SETUP\b/i.test(request.message.first) && /^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
+      const uri = request.message.first.split(" ")[1] ?? "";
+      const isVideo = video.control ? uri.split("?")[0]!.endsWith(video.control.replace(/^.*\//, "")) : false;
+      const ch = interleavedChannel(header(m, "Transport") ?? header(request.message, "Transport"));
+      if (ch !== undefined && (isVideo || video.channel === undefined)) video.channel = ch;
+    }
     client.write(serialize(m));
   };
 
@@ -399,6 +418,11 @@ function relayConnection(client: net.Socket) {
           if (t) {
             t.frames += 1;
             t.at.firstVideo ??= Date.now();
+            // Full pictures among the first few seconds (parts of one picture count once).
+            if (video && video.channel === frame[1] && t.at.keyframes.length < 6 && startsKeyframe(frame.subarray(4), video.codec)) {
+              const now = Date.now();
+              if (!t.at.keyframes.length || now - t.at.keyframes.at(-1)! > 100) t.at.keyframes.push(now);
+            }
           }
           client.write(frame);
         });
@@ -448,7 +472,7 @@ function relayConnection(client: net.Socket) {
       if (tr) {
         tr.contacted = true;
         // A new start (go2rtc reconnecting): time it afresh.
-        tr.at = { contact: Date.now(), sent: {}, accepted: {} };
+        tr.at = { contact: Date.now(), sent: {}, accepted: {}, keyframes: [] };
       }
       const host = net.isIP(found.host) === 6 ? `[${found.host}]` : found.host;
       cameraOrigin = `rtsp://${host}:${found.port}`;

@@ -38,7 +38,11 @@ function duration(a: string, b: string) {
 }
 
 /** The recordings on a camera's own storage: pick a day, see what was recorded, play from any time. */
-interface CameraTimings { connect?: number; describe?: number; setup?: number; play?: number; firstVideo?: number; total?: number }
+interface CameraTimings {
+  connect?: number; describe?: number; setup?: number; play?: number; firstVideo?: number; total?: number;
+  /** After the first video, the first full picture (key frame); and how often the camera sends one. */
+  firstPicture?: number; pictureInterval?: number;
+}
 const sec = (ms: number) => `${(ms / 1000).toFixed(ms < 1000 ? 2 : 1)} s`;
 
 /**
@@ -55,10 +59,15 @@ export function describeStart(t: StartTimings, cam: CameraTimings | null): strin
   const picture = Math.max(0, t.playing - t.firstVideo);
   parts.push(`picture ${sec(picture)} after the video arrived`);
   // A picture can only start at a full frame (I-frame); cameras send recordings at real-time pace, so
-  // a long wait here is the camera's I-frame interval.
-  const hint = picture > 1500
-    ? ". Most of this is waiting for the camera's next full picture (I-frame): set the camera's I-frame interval to its frame rate (one per second) and turn off H.264+ / Smart Codec to start faster"
-    : "";
+  // a long wait here is the camera's I-frame interval (the relay measures it).
+  const frames = [
+    cam?.firstPicture !== undefined ? `the camera's first full picture (I-frame) came ${sec(cam.firstPicture)} after its video began` : "",
+    cam?.pictureInterval !== undefined ? `it sends one every ${sec(cam.pictureInterval)}` : "",
+  ].filter(Boolean).join(", and ");
+  const slow = picture > 1500 || (cam?.pictureInterval ?? 0) > 1500;
+  const hint = slow
+    ? `. ${frames ? `${frames[0]!.toUpperCase()}${frames.slice(1)}: ` : "Most of this is waiting for the camera's next full picture (I-frame): "}set the camera's I-frame interval to its frame rate (one per second) and turn off H.264+ / Smart Codec to start faster`
+    : frames ? `. ${frames[0]!.toUpperCase()}${frames.slice(1)}` : "";
   return `Started in ${sec(t.playing)}: ${parts.join(" · ")}${hint}`;
 }
 
@@ -90,10 +99,16 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const [inHand, setInHand] = useState<number | null>(null);
   /** Where the last start's time went: the browser's steps and the camera's (seen by the server's relay). */
   const [startInfo, setStartInfo] = useState<string | null>(null);
+  /** Which start the line is about: a later start's line is not overwritten by an earlier one. */
+  const startId = useRef(0);
   const started = useCallback((t: StartTimings) => {
-    void api<{ timings: CameraTimings | null }>(`/cameras/${cameraId}/playback/problem`)
+    const id = ++startId.current;
+    const read = () => api<{ timings: CameraTimings | null }>(`/cameras/${cameraId}/playback/problem`)
       .then((p) => p.timings, () => null)
-      .then((c) => setStartInfo(describeStart(t, c)));
+      .then((c) => id === startId.current && setStartInfo(describeStart(t, c)));
+    void read();
+    // How often the camera sends a full picture is known once two have come: ask again a little later.
+    window.setTimeout(() => void read(), 8000);
   }, [cameraId]);
   const chooseBuffer = (v: PlaybackBuffer) => {
     setBufferLevel(v);
@@ -152,6 +167,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
     setPlayed(0);
     setStartedAt(null);
     setStartInfo(null);
+    startId.current += 1;
     setStart(t);
   };
   // Only while playing: once stopped (another day chosen, paused), the old position must not pull the timeline back.

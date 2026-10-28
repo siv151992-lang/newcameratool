@@ -5,7 +5,7 @@ import { OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { parseOnvifRecordingResults, parseOnvifSearchToken } from "../../src/integrations/onvif/parser.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
-import { clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
+import { clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, playbackTimings, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
 
 const envelope = (body: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`;
 const results = (state: string, ...recs: [string, string, string][]) =>
@@ -341,6 +341,50 @@ describe("Replay relay", () => {
     expect(sent).toBeLessThan(16 * 1024 * 1024);
     c.close();
     flood.close();
+  });
+
+  it("times the camera's first full picture and how often it sends one", async () => {
+    // A camera whose recording starts between full pictures: P frames, then a key frame every 300 ms.
+    const gop = net.createServer((sock) => {
+      sock.on("data", (d) => {
+        const text = d.toString();
+        const cseq = /CSeq: (\d+)/.exec(text)?.[1];
+        if (text.startsWith("DESCRIBE")) {
+          const sdp = "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:trackID=1\r\n";
+          return void sock.write(`RTSP/1.0 200 OK\r\nCSeq: ${cseq}\r\nContent-Type: application/sdp\r\nContent-Length: ${sdp.length}\r\n\r\n${sdp}`);
+        }
+        if (text.startsWith("SETUP")) return void sock.write(`RTSP/1.0 200 OK\r\nCSeq: ${cseq}\r\nSession: 1\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n`);
+        if (!text.startsWith("PLAY")) return void sock.write(`RTSP/1.0 200 OK\r\nCSeq: ${cseq}\r\n\r\n`);
+        sock.write(`RTSP/1.0 200 OK\r\nCSeq: ${cseq}\r\nSession: 1\r\n\r\n`);
+        const packet = (nal: number) => {
+          const rtpPacket = Buffer.from([0x80, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, nal, 0x88]);
+          return Buffer.concat([Buffer.from([0x24, 0, 0, rtpPacket.length]), rtpPacket]);
+        };
+        let n = 0;
+        const timer = setInterval(() => {
+          n += 1;
+          // A frame every 50 ms; every sixth one (300 ms) a key frame, the first at 300 ms.
+          if (!sock.destroyed) sock.write(packet(n % 6 === 0 ? 0x65 : 0x41));
+          if (n > 30) clearInterval(timer);
+        }, 50);
+        sock.on("close", () => clearInterval(timer));
+      });
+      sock.on("error", () => undefined);
+    });
+    await new Promise<void>((r) => gop.listen(0, "127.0.0.1", r));
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "gop_stream", { host: "127.0.0.1", port: (gop.address() as net.AddressInfo).port, path: "/x", username: "admin", password: "secret", onvif: false });
+    const c = rtspClient(relayPort);
+    await c.request("DESCRIBE", url);
+    await c.request("SETUP", `${url}/trackID=1`, ["Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
+    await c.request("PLAY", url);
+    await new Promise((r) => setTimeout(r, 1100));
+    const t = playbackTimings("gop_stream")!;
+    expect(t.firstPicture).toBeGreaterThanOrEqual(200);
+    expect(t.firstPicture).toBeLessThanOrEqual(450);
+    expect(t.pictureInterval).toBeGreaterThanOrEqual(250);
+    expect(t.pictureInterval).toBeLessThanOrEqual(350);
+    c.close();
+    gop.close();
   });
 
   it("refuses unknown playback addresses", async () => {
