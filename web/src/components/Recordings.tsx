@@ -64,7 +64,9 @@ export function describeStart(t: StartTimings, cam: CameraTimings | null): strin
     cam?.firstPicture !== undefined ? `the camera's first full picture (I-frame) came ${sec(cam.firstPicture)} after its video began` : "",
     cam?.pictureInterval !== undefined ? `it sends one every ${sec(cam.pictureInterval)}` : "",
   ].filter(Boolean).join(", and ");
-  const slow = picture > 1500 || (cam?.pictureInterval ?? 0) > 1500;
+  // Advice only when the start really waited: a camera that starts on a full picture starts quickly
+  // whatever its interval.
+  const slow = picture > 1500;
   const hint = slow
     ? `. ${frames ? `${frames[0]!.toUpperCase()}${frames.slice(1)}: ` : "Most of this is waiting for the camera's next full picture (I-frame): "}set the camera's I-frame interval to its frame rate (one per second) and turn off H.264+ / Smart Codec to start faster`
     : frames ? `. ${frames[0]!.toUpperCase()}${frames.slice(1)}` : "";

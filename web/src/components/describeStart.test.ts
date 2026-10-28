@@ -12,6 +12,11 @@ describe("describeStart", () => {
     );
   });
 
+  it("gives no advice when the camera started on a full picture, whatever its interval", () => {
+    const line = describeStart({ prepared: 30, opened: 60, firstVideo: 150, playing: 930 }, { total: 200, firstPicture: 0, pictureInterval: 6600 });
+    expect(line).toBe("Started in 0.93 s: server 0.03 s · camera 0.20 s · picture 0.78 s after the video arrived. The camera's first full picture (I-frame) came 0.00 s after its video began, and it sends one every 6.6 s");
+  });
+
   it("only reports the timing when the start is quick", () => {
     const line = describeStart({ prepared: 40, opened: 90, firstVideo: 200, playing: 700 }, { total: 150, firstPicture: 300, pictureInterval: 1000 });
     expect(line).toBe("Started in 0.70 s: server 0.04 s · camera 0.15 s · picture 0.50 s after the video arrived. The camera's first full picture (I-frame) came 0.30 s after its video began, and it sends one every 1.0 s");
