@@ -191,6 +191,27 @@ Re-measured on 27 October 2026 with NVR channels, camera clock checks and record
 app turns off PostgreSQL's JIT compilation on its connections: it compiled the dashboard summary on
 every call (0.5 s, up to 5 s while the worker was busy) for a query that runs in 0.1 s.
 
+### Many people watching video at once
+
+Recordings reach the browser through the app server twice (camera → the server's playback relay →
+go2rtc → the server → browser); live video once (go2rtc → the server → browser). Measured on the
+same machine with simulated cameras sending 6 Mbps recordings (a typical 1080p / 4 MP main stream),
+while the dashboard was used:
+
+| Simultaneous recordings playing | Video delivered | First picture after opening | Dashboard meanwhile | App server CPU |
+|---|---|---|---|---|
+| 10 | 100% | 0.07 s | 0.10 s | — |
+| 50 | 100% | 0.12 s | 0.11 s | ~0.7 core |
+| 100 | 100% | 0.16–0.23 s | 0.11 s | ~0.6–0.7 core |
+| 150 | 99% | 0.26 s | 0.12 s | ~0.8 core |
+| 200 | 96% (falls behind) | 0.34 s | 0.12 s | 1 core (the limit) |
+
+So one app server carries about **100–150 simultaneous recordings** at 6 Mbps (about twice as many
+live views, or recordings at a lower bitrate); the dashboard stays fast even at the limit. Network:
+each 6 Mbps playback is 6 Mbps from the camera and 6 Mbps to the viewer. If video stalls for a while
+(go2rtc overloaded or restarting), the relay stops reading the camera once 1 MB is waiting rather than
+holding video in memory.
+
 Recommended settings for 5 000+ cameras:
 
 1. **Settings → Schedule → Concurrent checks: 300** (up to 1000). Raise it until *overdue* cameras

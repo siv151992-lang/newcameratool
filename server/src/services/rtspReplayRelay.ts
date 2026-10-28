@@ -41,6 +41,8 @@ const TOKEN_TTL_MS = 12 * 3_600_000;
 const MAX_TOKENS = 2000;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const CONNECT_TIMEOUT_MS = 10_000;
+/** Video waiting for the video service beyond which the camera is not read until it catches up. */
+const MAX_QUEUED_BYTES = 1024 * 1024;
 
 const targets = new Map<string, ReplayTarget & { expires: number; streamName: string }>();
 /** The last request each playback stream's camera refused, to show in the player (go2rtc only says "wrong response"). */
@@ -364,6 +366,13 @@ function relayConnection(client: net.Socket) {
       } catch (err) {
         logger.warn({ err: (err as Error).message }, "Recording playback: unreadable reply from the camera");
         close();
+        return;
+      }
+      // The video service is not keeping up (overloaded, restarting): stop reading the camera until
+      // it has caught up, so video does not pile up in memory (TCP then slows the camera down).
+      if (client.writableLength > MAX_QUEUED_BYTES && !camera!.isPaused()) {
+        camera!.pause();
+        client.once("drain", () => camera?.resume());
       }
     });
     let connected = false;

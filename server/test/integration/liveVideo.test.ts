@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { createApp } from "../../src/app.js";
 import { config } from "../../src/config.js";
 import { pool } from "../../src/db/pool.js";
@@ -133,6 +133,10 @@ describe("live video", () => {
     const id = (await request(app).post("/api/cameras").set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
       .send({ name: "Lobby", host: "127.0.0.1", port: camPort, protocol: "http", brand: "Hikvision", username: "admin", password: "Cam P@ss:1" }).expect(201)).body.id as string;
     const today = new Date().toISOString().slice(0, 10);
+    // The camera's clock at 12:00 today, whatever time the test runs: its recordings (around midnight,
+    // and the last hour) then always leave a gap at 00:45 (near midnight they would overlap).
+    cam.clockSkewMs = Date.parse(`${today}T12:00:00Z`) - Date.now();
+    onTestFinished(() => void (cam.clockSkewMs = 0));
     const day = (await request(app).get(`/api/cameras/${id}/recordings?date=${today}`).set("Cookie", admin.cookie).expect(200)).body;
     expect(day.date).toBe(today);
     expect(day.segments.length).toBeGreaterThan(0);

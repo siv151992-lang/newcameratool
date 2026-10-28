@@ -117,6 +117,7 @@ function rtspClient(port: number) {
     frames,
     until,
     close: () => socket.destroy(),
+    pause: () => socket.pause(),
     request: async (method: string, uri: string, extra: string[] = []) => {
       const n = replies.length;
       socket.write([`${method} ${uri} RTSP/1.0`, `CSeq: ${++cseq}`, ...extra, "", ""].join("\r\n"));
@@ -308,6 +309,38 @@ describe("Replay relay", () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(playbackDiagnosis("diag")).toBe(`The camera could not be reached on its RTSP port ${deadPort}: connection refused (RTSP is turned off in the camera, or on another port).`);
     c.close();
+  });
+
+  it("stops reading the camera while the video service is not keeping up", async () => {
+    // A camera that sends video as fast as it can once playing, counting what it got rid of.
+    let sent = 0;
+    const flood = net.createServer((sock) => {
+      sock.on("data", (d) => {
+        const cseq = /CSeq: (\d+)/.exec(d.toString())?.[1];
+        if (!d.toString().startsWith("PLAY")) return void sock.write(`RTSP/1.0 200 OK\r\nCSeq: ${cseq}\r\n\r\n`);
+        sock.write(`RTSP/1.0 200 OK\r\nCSeq: ${cseq}\r\n\r\n`);
+        const packet = Buffer.concat([Buffer.from([0x24, 0, 0x05, 0x78]), Buffer.alloc(1400)]);
+        const pump = () => {
+          while (sent < 64 * 1024 * 1024) {
+            sent += packet.length;
+            if (!sock.write(packet)) return void sock.once("drain", pump);
+          }
+        };
+        pump();
+      });
+      sock.on("error", () => undefined);
+    });
+    await new Promise<void>((r) => flood.listen(0, "127.0.0.1", r));
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "slow_reader", { host: "127.0.0.1", port: (flood.address() as net.AddressInfo).port, path: "/x", username: "admin", password: "secret", onvif: false });
+    const c = rtspClient(relayPort);
+    await c.request("DESCRIBE", url);
+    await c.request("PLAY", url);
+    // The video service stops reading (stalled): the relay must not take the camera's whole output.
+    c.pause();
+    await new Promise((r) => setTimeout(r, 800));
+    expect(sent).toBeLessThan(16 * 1024 * 1024);
+    c.close();
+    flood.close();
   });
 
   it("refuses unknown playback addresses", async () => {
