@@ -39,7 +39,7 @@ export class MilestoneAdapter extends OnvifAdapter {
     defaultTimeoutMs: 10000,
     recordsElsewhere: true,
     notes:
-      "Add the Milestone Open Network Bridge once, as an NVR (port 580, a Milestone user allowed to use the bridge): " +
+      "Add the Milestone Open Network Bridge once, as an NVR (port 580, a user from the bridge's ONVIF clients tab, not an XProtect user): " +
       "each XProtect camera is a channel, with live video and its recordings on the XProtect recording servers. " +
       "Disk health stays in XProtect.",
   };
@@ -121,7 +121,7 @@ export class MilestoneAdapter extends OnvifAdapter {
       const e = err instanceof CameraApiError ? err : new CameraApiError("API_ERROR", "Unexpected error");
       const reachable = !NETWORK_ERROR_CODES.has(e.code);
       if (!reachable) step("reachability", "failed", "Network reachability", e.message);
-      else if (AUTH_ERROR_CODES.has(e.code)) step("authentication", "failed", "Authentication", `${e.message}. Use a Milestone user that the Open Network Bridge allows.`);
+      else if (AUTH_ERROR_CODES.has(e.code)) step("authentication", "failed", "Authentication", `${e.message}. Use a user from the bridge's ONVIF clients tab (Management Client: Servers → Open Network Bridges → the bridge → ONVIF clients), not an XProtect user`);
       else step("api", "failed", "Cameras", e.message);
       return { ok: false, reachable, steps, deviceInfo, error: { code: e.code, message: e.message } };
     }

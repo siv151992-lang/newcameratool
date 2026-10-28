@@ -111,12 +111,17 @@ recordings on the XProtect recording servers).
 1. On an XProtect server, install the Open Network Bridge (from Milestone's download page) and, in
    the Management Client, enable it under *Servers → Open Network Bridges*. It answers ONVIF on port
    **580** and sends video over RTSP on port **554**.
-2. In XProtect, give a user (a basic user or a Windows user) the role that may view live video and
-   play back the cameras you want to see, and allow that user on the bridge.
+2. On the bridge, open the **ONVIF clients** tab and add a user name and password for the app. The
+   bridge does not take XProtect users here: ONVIF clients sign in with these accounts, and the bridge
+   reaches XProtect with its own service account. That account's XProtect role decides which cameras
+   and recordings the bridge shows.
 3. In the app, add a camera with brand **Milestone XProtect**, the bridge server's address, port 580
-   and that user. It is saved as an NVR; its page lists the cameras the user may see.
+   and that ONVIF client user. It is saved as an NVR; its page lists the cameras the bridge shows.
 
-The connection test lists the cameras found. XProtect keeps its own storage, so there are no disks to
+The connection test lists the cameras found. If it says the action requires authorization, the user
+is not one of the bridge's ONVIF clients (or its password differs), or the bridge server's clock is far off.
+
+XProtect keeps its own storage, so there are no disks to
 read here: disk health stays in XProtect, and the app monitors that the bridge answers and each
 camera is listed and recording. Which recording belongs to which camera comes from the recording's
 source (as the bridge reports it), else its name, else the cameras' order.
