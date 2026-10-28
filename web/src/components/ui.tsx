@@ -231,13 +231,13 @@ export function Dialog({
     >
       {open && (
         <div>
-          <div className="flex items-center justify-between border-b border-line px-5 py-3">
+          <div className={clsx("flex items-center justify-between border-b border-line px-5", size === "full" ? "py-1.5" : "py-3")}>
             <h2 id="dialog-title" className="font-semibold">
               {title}
             </h2>
             <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close dialog" icon={<X className="h-4 w-4" />} />
           </div>
-          <div className={clsx("overflow-y-auto px-5 py-4 text-sm", size === "full" ? "max-h-[calc(96vh-8rem)]" : "max-h-[70vh]")}>{children}</div>
+          <div className={clsx("overflow-y-auto text-sm", size === "full" ? "max-h-[calc(96vh-6rem)] px-4 py-2" : "max-h-[70vh] px-5 py-4")}>{children}</div>
           {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
         </div>
       )}

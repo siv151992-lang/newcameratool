@@ -395,7 +395,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
 
       {/* The player: video, the time, the timeline and the controls, dark like a recorder's. */}
       <div ref={frame} className="space-y-2 rounded-lg bg-neutral-900 p-2 text-neutral-100 [&:fullscreen]:flex [&:fullscreen]:flex-col [&:fullscreen]:justify-end">
-        <div className="relative mx-auto flex aspect-video max-h-[calc(96vh-26rem)] w-full items-center justify-center overflow-hidden rounded bg-black [:fullscreen_&]:max-h-none [:fullscreen_&]:flex-1">
+        <div className="relative mx-auto flex aspect-video max-h-[calc(96vh-20.5rem)] w-full items-center justify-center overflow-hidden rounded bg-black [:fullscreen_&]:max-h-none [:fullscreen_&]:flex-1">
           {playing ? (
             <LiveVideo
               key={`${start}|${Math.max(speed, 1)}|${attempt}`}
@@ -427,14 +427,6 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
           )}
         </div>
 
-        <div className="flex items-baseline justify-center gap-3 tabular">
-          <span className="text-sm text-neutral-400">{readout.slice(0, 10).split("-").reverse().join("-")}</span>
-          <span className="text-2xl font-semibold tracking-wide">{clock(readout)}</span>
-          <span className={clsx("rounded px-1.5 py-0.5 text-xs font-medium", playing ? "bg-red-600 text-white" : "bg-neutral-700 text-neutral-300")}>
-            {scrub !== null ? "Moving" : playing ? `Playback${speed !== 1 ? ` ${speedLabel(speed)}` : ""}` : "Paused"}
-          </span>
-        </div>
-
         <MilestoneTimeline
           time={head}
           span={span}
@@ -446,7 +438,8 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
           onZoom={(d) => setSpan((v) => zoomSpan(v, d))}
         />
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Controls, the time in the middle (on its own line only when the window is narrow), the settings. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="flex items-center gap-1" role="group" aria-label="Playback controls">
             <PlayerButton label="Previous recording" onClick={previousRecording} disabled={!segs.length}><SkipBack className="h-4 w-4" /></PlayerButton>
             {!fromStartOnly && <PlayerButton label="1 minute back" onClick={() => seek(head - 60_000)} disabled={!segs.length}><Rewind className="h-4 w-4" /></PlayerButton>}
@@ -455,6 +448,13 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
             </PlayerButton>
             {!fromStartOnly && <PlayerButton label="1 minute ahead" onClick={() => seek(head + 60_000)} disabled={!segs.length}><FastForward className="h-4 w-4" /></PlayerButton>}
             <PlayerButton label="Next recording" onClick={nextRecording} disabled={!segs.length}><SkipForward className="h-4 w-4" /></PlayerButton>
+          </div>
+          <div className="order-first flex w-full items-baseline justify-center gap-3 tabular lg:order-none lg:w-auto">
+            <span className="text-sm text-neutral-400">{readout.slice(0, 10).split("-").reverse().join("-")}</span>
+            <span className="text-2xl font-semibold tracking-wide">{clock(readout)}</span>
+            <span className={clsx("rounded px-1.5 py-0.5 text-xs font-medium", playing ? "bg-red-600 text-white" : "bg-neutral-700 text-neutral-300")}>
+              {scrub !== null ? "Moving" : playing ? `Playback${speed !== 1 ? ` ${speedLabel(speed)}` : ""}` : "Paused"}
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400">
             {/* Speed */}
