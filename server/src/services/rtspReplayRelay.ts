@@ -122,10 +122,15 @@ export function playbackTimings(streamName: string): PlaybackTimings | undefined
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as PlaybackTimings;
 }
 
-/** A camera with no free connection (453) is asked again after 1, 2 and 3 seconds. */
+/**
+ * A camera with no free connection (453) is asked again after 0.6, 1.2 and 1.8 seconds: within
+ * the 5 seconds go2rtc waits for an answer (the player then tries again itself).
+ */
 const BUSY_RETRIES = 3;
 /** Tunable for tests. */
-export const busyRetry = { ms: 1000 };
+export const busyRetry = { ms: 600 };
+/** How long a reopened session waits for the camera to close the old one (it frees its connection then). */
+export const reopenWait = { ms: 2000 };
 
 const STATUS_HINTS: [RegExp, string][] = [
   [/^401\b/, "the camera refused the user name or password for playback"],
@@ -699,12 +704,20 @@ function relayConnection(socket: net.Socket) {
       setHeader(s, "Session", cameraId);
       silently(s, (a) => setupAt(i + 1, header(a, "Session")?.split(";")[0]?.trim() ?? cameraId));
     };
-    void connect(target!).catch((err) => {
+    // Only once the camera has closed the old session: before that it refuses a new one (453).
+    const opened = () => void connect(target!).catch((err) => {
       reopening = false;
       reply(play, "503 Service Unavailable");
       logger.warn({ err: (err as Error).message }, "Recording playback: the camera cannot be contacted again");
       close();
     });
+    if (old && !old.destroyed) {
+      const wait = setTimeout(() => (old.destroy(), undefined), reopenWait.ms);
+      old.once("close", () => {
+        clearTimeout(wait);
+        if (!client.destroyed) opened();
+      });
+    } else opened();
     silently({ first: `DESCRIBE ${relayPrefix}${target!.path.startsWith("/") ? "" : "/"}${target!.path} RTSP/1.0`, headers: [["Accept", "application/sdp"]], body: Buffer.alloc(0) }, () => setupAt(0));
   };
 
@@ -870,8 +883,13 @@ export function startReplayRelay(port: number, host = "0.0.0.0"): Promise<net.Se
   });
 }
 
-export function stopReplayRelay(): Promise<void> {
+/** Ends every playback session kept for a seek (the relay stopping). */
+export function endKeptSessions(): void {
   for (const p of [...parked.values()]) p.end();
+}
+
+export function stopReplayRelay(): Promise<void> {
+  endKeptSessions();
   const s = server;
   server = undefined;
   return new Promise((resolve) => (s ? s.close(() => resolve()) : resolve()));

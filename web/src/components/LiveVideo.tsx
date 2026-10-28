@@ -188,6 +188,25 @@ export function LiveVideo({
       fail(ranForAnHour ? "Live video stops after an hour. Open it again to go on watching." : message);
     };
 
+    /**
+     * A recording that did not open. A camera with all its connections in use (453: often the
+     * playback just replaced by a seek, which it frees a moment later) is asked again by itself,
+     * a few times, before saying so.
+     */
+    let busyRetries = 0;
+    const playbackFailed = (problem: string | null, otherwise: string) => {
+      if (stopped) return;
+      if (problem && /\b453\b|connections are in use/.test(problem) && busyRetries < 3) {
+        busyRetries += 1;
+        const old = ws;
+        ws = null;
+        old?.close();
+        retryTimer = window.setTimeout(() => void connect(), 2500 * busyRetries);
+        return;
+      }
+      fail(problem ? `The recording could not be played. ${problem}` : otherwise);
+    };
+
     const playbackProblem = () =>
       api<{ problem: string | null }>(`/cameras/${cameraId}/playback/problem`).then((p) => p.problem, () => null);
 
@@ -243,7 +262,7 @@ export function LiveVideo({
           if (gotVideo) return dropped(`The video stopped: ${msg.value}`);
           if (!playbackStart) return fail(`The camera stream could not be opened: ${msg.value}`);
           // go2rtc only says "wrong response on SETUP": add what the camera actually answered.
-          void playbackProblem().then((p) => fail(p ? `The recording could not be played. ${p}` : `The camera stream could not be opened: ${msg.value}.`));
+          void playbackProblem().then((p) => playbackFailed(p, `The camera stream could not be opened: ${msg.value}.`));
           return;
         }
         if (msg.type !== "mse") return;
@@ -268,9 +287,7 @@ export function LiveVideo({
         }
         if (!playbackStart) return fail("The camera's video could not be opened. Check that RTSP is turned on in the camera (port 554).");
         // What the camera actually did (the server's relay saw it), rather than a guess.
-        void playbackProblem().then((p) => fail(p
-          ? `The recording could not be played. ${p}`
-          : "The recording could not be opened. Check that the camera user has the Playback permission and that RTSP is on (port 554)."));
+        void playbackProblem().then((p) => playbackFailed(p, "The recording could not be opened. Check that the camera user has the Playback permission and that RTSP is on (port 554)."));
       };
     };
     void connect();
@@ -283,7 +300,7 @@ export function LiveVideo({
         if (!playbackStart) fail("The camera did not send video. Check that RTSP is turned on in the camera (port 554), or use pictures.");
         else {
           lastData = performance.now(); // ask once
-          void playbackProblem().then((p) => fail(p ? `The recording could not be played. ${p}` : "The camera did not send the recording. Try another time, or check the camera's playback settings."));
+          void playbackProblem().then((p) => playbackFailed(p, "The camera did not send the recording. Try another time, or check the camera's playback settings."));
         }
       }
       else if (gotVideo && quiet > 12_000) dropped(playbackStart ? "Playback stopped: the camera stopped sending the recording." : "The video stopped: the camera stopped sending.");

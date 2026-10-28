@@ -5,7 +5,7 @@ import { OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { parseOnvifRecordingResults, parseOnvifSearchToken } from "../../src/integrations/onvif/parser.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
-import { busyRetry, parkTime, seekHonoured, targetStartUtc, clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, playbackTimings, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
+import { busyRetry, endKeptSessions, parkTime, seekHonoured, targetStartUtc, clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, playbackTimings, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
 
 const envelope = (body: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`;
 const results = (state: string, ...recs: [string, string, string][]) =>
@@ -56,12 +56,16 @@ describe("ONVIF recordings (Profile G)", () => {
 
 /** A replay server that insists on digest login, Require: onvif-replay and a clock Range. */
 function fakeReplayCamera() {
-  const options = { refuseScale: false, refuseRange: false, refuseSetup: false, busySetups: 0, confirmSeek: false };
+  const options = { refuseScale: false, refuseRange: false, refuseSetup: false, busySetups: 0, confirmSeek: false, maxSessions: 0 };
   let connections = 0;
+  /** Playback sessions open (a camera with few connections refuses more: 453). */
+  const open = new Set<string>();
+  let busyAnswers = 0;
   const requests: { first: string; headers: Record<string, string> }[] = [];
   const md5 = (s: string) => createHash("md5").update(s).digest("hex");
   const server = net.createServer((socket) => {
     const sessionId = String(1233 + ++connections);
+    socket.on("close", () => open.delete(sessionId));
     let buf: Buffer = Buffer.alloc(0);
     socket.on("data", (chunk) => {
       buf = readRtsp(Buffer.concat([buf, chunk]), (m) => {
@@ -82,6 +86,16 @@ function fakeReplayCamera() {
           return send("200 OK", ["Content-Type: application/sdp", "Content-Base: rtsp://192.168.1.99/onvif-media/record/Rec1/"], sdp);
         }
         if (method === "SETUP" && options.refuseSetup) return send("400 Bad Request");
+        if (method === "SETUP" && options.maxSessions && !open.has(sessionId) && open.size >= options.maxSessions) {
+          busyAnswers += 1;
+          return send("453 Not Enough Bandwidth");
+        }
+        if (method === "SETUP") open.add(sessionId);
+        if (method === "TEARDOWN") {
+          open.delete(sessionId);
+          send("200 OK");
+          return socket.end();
+        }
         if (method === "SETUP" && options.busySetups > 0) {
           options.busySetups -= 1;
           return send("453 Not Enough Bandwidth");
@@ -101,7 +115,7 @@ function fakeReplayCamera() {
       }, () => undefined);
     });
   });
-  return { server, requests, options, connections: () => connections };
+  return { server, requests, options, connections: () => connections, busyAnswers: () => busyAnswers, openSessions: () => open.size };
 }
 
 /** A minimal RTSP client, like go2rtc: sends requests one at a time and collects replies and data. */
@@ -357,13 +371,19 @@ describe("Replay relay", () => {
     expect(cam.connections()).toBe(before);
     expect(cam.requests.map((r) => r.first.split(" ")[0])).toEqual(["PLAY"]);
     expect(cam.requests[0]!.headers).toMatchObject({ session: first.session, range: "clock=20261024T103000Z-" });
+    // No seek follows: the kept session is ended.
+    parkTime.ms = 50;
     second.c.close();
     cam.options.confirmSeek = false;
-    await waitFor(() => cam.requests.some((r) => r.first.startsWith("PAUSE")));
+    await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN") && r.headers.session === first.session));
   });
 
   it("opens a new session out of go2rtc's sight when the camera does not confirm the seek", async () => {
     parkTime.ms = 8000;
+    // Like a Hikvision camera: one playback at a time, and a seek not confirmed.
+    endKeptSessions(); // earlier tests' playbacks
+    await waitFor(() => cam.openSessions() === 0);
+    cam.options.maxSessions = 1;
     const first = await playFrom("seek2", "20261024T101500Z");
     first.c.close();
     await waitFor(() => cam.requests.at(-1)?.first.startsWith("PAUSE") ?? false);
@@ -381,9 +401,12 @@ describe("Replay relay", () => {
     ]);
     const newSession = cam.requests.find((r) => r.first.startsWith("PLAY") && r.headers.session !== first.session)!.headers.session;
     expect(newSession).not.toBe(first.session);
+    // The new session waited for the camera to close the old one: never refused.
+    expect(cam.busyAnswers()).toBe(0);
     // That camera's next seek opens a new session directly (no kept session to try first).
     second.c.close();
     await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN") && r.headers.session === newSession));
+    cam.options.maxSessions = 0;
   });
 
   it("ends the camera's session when the playback cannot be kept for a seek, so the camera frees the connection", async () => {
