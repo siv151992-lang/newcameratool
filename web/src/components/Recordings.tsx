@@ -4,7 +4,7 @@ import { Camera, ChevronLeft, Layers, ChevronRight, Clock, Film, Gauge, Maximize
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { localTimeText, pictureFileName, savePicture } from "../lib/savePicture";
-import { LiveVideo, PLAYBACK_BUFFERS, type PlaybackBuffer } from "./LiveVideo";
+import { LiveVideo, PLAYBACK_BUFFERS, type PlaybackBuffer, type StartTimings } from "./LiveVideo";
 import { RecordingCalendar } from "./RecordingCalendar";
 import { MilestoneTimeline, SPANS, zoomSpan } from "./MilestoneTimeline";
 import { Button, Dialog, EmptyState, ErrorMessage, Spinner } from "./ui";
@@ -38,6 +38,24 @@ function duration(a: string, b: string) {
 }
 
 /** The recordings on a camera's own storage: pick a day, see what was recorded, play from any time. */
+interface CameraTimings { connect?: number; describe?: number; setup?: number; play?: number; firstVideo?: number; total?: number }
+const sec = (ms: number) => `${(ms / 1000).toFixed(ms < 1000 ? 2 : 1)} s`;
+
+/**
+ * "Started in 2.5 s: server 0.05 s · camera 1.9 s (connect 0.01 s, describe 0.20 s, setup 0.10 s,
+ * play 1.2 s, first video 0.40 s) · picture 0.3 s after the video arrived".
+ */
+export function describeStart(t: StartTimings, cam: CameraTimings | null): string {
+  const parts = [`server ${sec(t.prepared)}`];
+  if (cam?.total !== undefined) {
+    const steps = ([["connect", cam.connect], ["describe", cam.describe], ["setup", cam.setup], ["play", cam.play], ["first video", cam.firstVideo]] as const)
+      .filter(([, v]) => v !== undefined).map(([k, v]) => `${k} ${sec(v!)}`);
+    parts.push(`camera ${sec(cam.total)}${steps.length ? ` (${steps.join(", ")})` : ""}`);
+  }
+  parts.push(`picture ${sec(Math.max(0, t.playing - t.firstVideo))} after the video arrived`);
+  return `Started in ${sec(t.playing)}: ${parts.join(" · ")}`;
+}
+
 const BUFFER_KEY = "cctv-playback-buffer";
 function savedBuffer(): PlaybackBuffer {
   try {
@@ -64,6 +82,13 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const [speed, setSpeed] = useState(1);
   const [bufferLevel, setBufferLevel] = useState<PlaybackBuffer>(savedBuffer);
   const [inHand, setInHand] = useState<number | null>(null);
+  /** Where the last start's time went: the browser's steps and the camera's (seen by the server's relay). */
+  const [startInfo, setStartInfo] = useState<string | null>(null);
+  const started = useCallback((t: StartTimings) => {
+    void api<{ timings: CameraTimings | null }>(`/cameras/${cameraId}/playback/problem`)
+      .then((p) => p.timings, () => null)
+      .then((c) => setStartInfo(describeStart(t, c)));
+  }, [cameraId]);
   const chooseBuffer = (v: PlaybackBuffer) => {
     setBufferLevel(v);
     try {
@@ -120,6 +145,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
     setError(null);
     setPlayed(0);
     setStartedAt(null);
+    setStartInfo(null);
     setStart(t);
   };
   // Only while playing: once stopped (another day chosen, paused), the old position must not pull the timeline back.
@@ -301,6 +327,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
               onArrival={setArrival}
               buffer={bufferLevel}
               onBuffer={setInHand}
+              onStarted={started}
             />
           ) : (
             <button
@@ -389,6 +416,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
             <PlayerButton label="Full screen" onClick={() => void frame.current?.requestFullscreen?.()}><Maximize2 className="h-4 w-4" /></PlayerButton>
           </div>
         </div>
+        {start && startInfo && <p className="text-xs text-neutral-400 tabular" title="Where the time to start went, to find what is slow">{startInfo}</p>}
         {speed > 1 && arrival !== null && arrival < speed * 0.6 && played > 8 && (
           <p className="text-xs text-amber-300">
             The camera is sending the recording at about {arrival < 1.3 ? "normal speed" : `${Math.round(arrival * 10) / 10}×`}: it may not support {speed}× playback.

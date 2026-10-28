@@ -4,7 +4,12 @@ import { Spinner } from "./ui";
 import { ZoomPan } from "./ZoomPan";
 
 /** Codecs go2rtc may send; the browser says which it can play (H.265 only where supported). */
-const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0", "mp4a.40.2", "mp4a.40.5", "flac", "opus"];
+/**
+ * Video formats offered to go2rtc. No audio: the player is always muted, and an audio track (which
+ * go2rtc converts from the camera's G.711 to FLAC) holds the picture back until audio for the same
+ * moment arrives, which in recordings is often late; it also costs go2rtc the conversion.
+ */
+const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0"];
 
 /**
  * Smooth video over a WebSocket (go2rtc's MSE stream, relayed by the server) into a <video>.
@@ -24,6 +29,8 @@ export const PLAYBACK_BUFFERS = {
   large: { label: "Large 10 s", start: 3, target: 10, refill: 5 },
 } as const;
 export type PlaybackBuffer = keyof typeof PLAYBACK_BUFFERS;
+/** Milliseconds from pressing play: the server prepared it, the video connection opened, video arrived, the picture played. */
+export interface StartTimings { prepared: number; opened: number; firstVideo: number; playing: number }
 /** Never wait longer than this for the start reserve (a slow camera still plays). */
 const START_WAIT_MS = 6000;
 
@@ -39,6 +46,7 @@ export function LiveVideo({
   channel,
   buffer: bufferLevel = "normal",
   onBuffer,
+  onStarted,
 }: {
   cameraId: string;
   name: string;
@@ -62,13 +70,15 @@ export function LiveVideo({
   buffer?: PlaybackBuffer;
   /** Recordings: seconds of video in hand, about once a second. */
   onBuffer?: (seconds: number) => void;
+  /** Recordings: how long the start took in the browser (ms): prepare, video connection open, first video, picture. */
+  onStarted?: (t: StartTimings) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   // Read at call time, so a new callback does not restart the stream.
   const prepared = useRef(onPrepared);
   prepared.current = onPrepared;
-  const rate = useRef({ speed, onArrival, reserve: PLAYBACK_BUFFERS[bufferLevel], onBuffer });
-  rate.current = { speed, onArrival, reserve: PLAYBACK_BUFFERS[bufferLevel], onBuffer };
+  const rate = useRef({ speed, onArrival, reserve: PLAYBACK_BUFFERS[bufferLevel], onBuffer, onStarted });
+  rate.current = { speed, onArrival, reserve: PLAYBACK_BUFFERS[bufferLevel], onBuffer, onStarted };
   const fast = speed > 1 ? speed : 1;
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -181,6 +191,16 @@ export function LiveVideo({
     const playbackProblem = () =>
       api<{ problem: string | null }>(`/cameras/${cameraId}/playback/problem`).then((p) => p.problem, () => null);
 
+    // When each step of the (first) start happened, from pressing play.
+    const began = performance.now();
+    const steps = { prepared: 0, opened: 0, firstVideo: 0, playing: 0 };
+    const onPlayingOnce = () => {
+      if (!playbackStart || steps.playing || !steps.firstVideo) return;
+      steps.playing = performance.now() - began;
+      rate.current.onStarted?.({ ...steps });
+    };
+    el.addEventListener("playing", onPlayingOnce);
+
     const connect = async () => {
       if (stopped) return;
       buffer = null;
@@ -190,6 +210,7 @@ export function LiveVideo({
         if (playbackStart) {
           const r = await api<{ start?: string }>(`/cameras/${cameraId}/playback/prepare`, { method: "POST", body: { start: playbackStart, ...(fast > 1 ? { speed: fast } : {}), ...(channel ? { channel } : {}) } });
           if (r.start) prepared.current?.(r.start);
+          steps.prepared ||= performance.now() - began;
         }
         else await api(`/cameras/${cameraId}/live/prepare${channel ? `?channel=${channel}` : ""}`, { method: "POST" });
       } catch (e) {
@@ -203,11 +224,15 @@ export function LiveVideo({
       openedAt = openedAt || performance.now();
       lastData = performance.now();
       socket.binaryType = "arraybuffer";
-      socket.onopen = () => socket.send(JSON.stringify({ type: "mse", value: CODECS.filter((c) => Source.isTypeSupported(`video/mp4; codecs="${c}"`)).join() }));
+      socket.onopen = () => {
+        steps.opened ||= performance.now() - began;
+        socket.send(JSON.stringify({ type: "mse", value: CODECS.filter((c) => Source.isTypeSupported(`video/mp4; codecs="${c}"`)).join() }));
+      };
       socket.onmessage = (ev) => {
         if (ws !== socket) return;
         if (typeof ev.data !== "string") {
           gotVideo = true;
+          steps.firstVideo ||= performance.now() - began;
           everPlayed = true;
           lastData = performance.now();
           queue.push(ev.data as ArrayBuffer);
@@ -297,6 +322,7 @@ export function LiveVideo({
 
     return () => {
       el.removeEventListener("waiting", onWaiting);
+      el.removeEventListener("playing", onPlayingOnce);
       clearInterval(pace);
       clearInterval(watchdog);
       window.clearTimeout(retryTimer);

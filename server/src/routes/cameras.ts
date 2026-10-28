@@ -31,7 +31,7 @@ import { commitImport, csvTemplate, importRequestSchema, publicValidation, valid
 import { getSnapshot } from "../services/liveViewService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
 import { listRecordings, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, prepareStream } from "../services/liveVideoService.js";
-import { lastRefusal, playbackDiagnosis } from "../services/rtspReplayRelay.js";
+import { lastRefusal, playbackDiagnosis, playbackTimings } from "../services/rtspReplayRelay.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
 export const camerasRouter = Router();
@@ -197,7 +197,7 @@ camerasRouter.get("/:id/recordings/oldest", requirePermission("cameras:live"), l
 camerasRouter.get("/:id/playback/problem", requirePermission("cameras:live"), async (req, res) => {
   await getCameraRow(param(req), orgOf(req));
   const stream = playbackStreamName(param(req), req.auth!.sessionId);
-  res.json({ refusal: lastRefusal(stream) ?? null, problem: playbackDiagnosis(stream) ?? null });
+  res.json({ refusal: lastRefusal(stream) ?? null, problem: playbackDiagnosis(stream) ?? null, timings: playbackTimings(stream) ?? null });
 });
 
 camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {

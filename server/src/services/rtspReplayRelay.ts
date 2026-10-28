@@ -80,8 +80,40 @@ interface Trace {
   cameraClosed: boolean;
   /** A request sent that the camera never answered. */
   unanswered?: string;
+  /** When (epoch ms) go2rtc came, the camera's port answered, each method was first sent and last accepted, and video began. */
+  at: { contact?: number; connected?: number; sent: Record<string, number>; accepted: Record<string, number>; firstVideo?: number };
 }
 const traces = new Map<string, Trace>();
+
+/** How long each step of the last start took, in ms (from what the relay saw); absent steps are left out. */
+export interface PlaybackTimings {
+  /** The camera's RTSP port answered the connection. */
+  connect?: number;
+  /** The camera described the recording (including a login round trip). */
+  describe?: number;
+  setup?: number;
+  /** The camera accepted PLAY (it looks for the recording at the start time). */
+  play?: number;
+  /** After accepting PLAY, until it sent the first video. */
+  firstVideo?: number;
+  /** From go2rtc connecting to the relay to the first video. */
+  total?: number;
+}
+
+export function playbackTimings(streamName: string): PlaybackTimings | undefined {
+  const a = traces.get(streamName)?.at;
+  if (!a?.contact) return undefined;
+  const span = (from?: number, to?: number) => (from !== undefined && to !== undefined && to >= from ? to - from : undefined);
+  const out: PlaybackTimings = {
+    connect: span(a.contact, a.connected),
+    describe: span(a.sent.DESCRIBE, a.accepted.DESCRIBE),
+    setup: span(a.sent.SETUP, a.accepted.SETUP),
+    play: span(a.sent.PLAY, a.accepted.PLAY),
+    firstVideo: span(a.accepted.PLAY, a.firstVideo),
+    total: span(a.contact, a.firstVideo),
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as PlaybackTimings;
+}
 
 const STATUS_HINTS: [RegExp, string][] = [
   [/^401\b/, "the camera refused the user name or password for playback"],
@@ -156,7 +188,7 @@ export function registerReplay(relayBase: string, streamName: string, target: Re
   targets.set(token, { ...target, expires: now + TOKEN_TTL_MS, streamName });
   refusals.delete(streamName);
   if (traces.size > 2000) traces.clear();
-  traces.set(streamName, { port: target.port, contacted: false, played: false, frames: 0, cameraClosed: false });
+  traces.set(streamName, { port: target.port, contacted: false, played: false, frames: 0, cameraClosed: false, at: { sent: {}, accepted: {} } });
   byStream.set(streamName, token);
   return `${relayBase.replace(/\/+$/, "")}/r/${token}${target.path.startsWith("/") ? "" : "/"}${target.path}`;
 }
@@ -280,7 +312,10 @@ function relayConnection(client: net.Socket) {
     const cseq = header(m, "CSeq");
     if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled, ranged, unranged });
     const t = trace();
-    if (t) t.unanswered = `${method} ${uri === "*" ? uri : controlBeforeQuery(uri.slice(relayPrefix.length) || "/")}`.slice(0, 300);
+    if (t) {
+      t.unanswered = `${method} ${uri === "*" ? uri : controlBeforeQuery(uri.slice(relayPrefix.length) || "/")}`.slice(0, 300);
+      t.at.sent[method.toUpperCase()] ??= Date.now();
+    }
     toCamera(serialize(out));
   };
 
@@ -296,6 +331,7 @@ function relayConnection(client: net.Socket) {
       const [method = "", uri = ""] = request.message.first.split(" ");
       t.lastAnswered = `${method} ${uri.startsWith(relayPrefix) ? controlBeforeQuery(uri.slice(relayPrefix.length)) : uri}`.slice(0, 300);
       if (t.unanswered === t.lastAnswered) t.unanswered = undefined;
+      if (/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) t.at.accepted[method.toUpperCase()] = Date.now();
       if (method.toUpperCase() === "PLAY" && /^RTSP\/\S+\s+2\d\d\b/.test(m.first)) t.played = true;
     }
     if (/^RTSP\/\S+\s+401\b/.test(m.first) && request && !request.retried) {
@@ -360,7 +396,10 @@ function relayConnection(client: net.Socket) {
       try {
         fromCamera = readRtsp(fromCamera, onCameraMessage, (frame) => {
           const t = trace();
-          if (t) t.frames += 1;
+          if (t) {
+            t.frames += 1;
+            t.at.firstVideo ??= Date.now();
+          }
           client.write(frame);
         });
       } catch (err) {
@@ -376,7 +415,11 @@ function relayConnection(client: net.Socket) {
       }
     });
     let connected = false;
-    camera.once("connect", () => (connected = true));
+    camera.once("connect", () => {
+      connected = true;
+      const tr = trace();
+      if (tr) tr.at.connected = Date.now();
+    });
     camera.on("error", (err) => {
       logger.warn({ err: err.message, host: t.host }, "Recording playback: the camera connection failed");
       const tr = trace();
@@ -402,7 +445,11 @@ function relayConnection(client: net.Socket) {
       target = found;
       relayPrefix = match![0];
       const tr = traces.get(found.streamName);
-      if (tr) tr.contacted = true;
+      if (tr) {
+        tr.contacted = true;
+        // A new start (go2rtc reconnecting): time it afresh.
+        tr.at = { contact: Date.now(), sent: {}, accepted: {} };
+      }
       const host = net.isIP(found.host) === 6 ? `[${found.host}]` : found.host;
       cameraOrigin = `rtsp://${host}:${found.port}`;
       cameraKey = `${found.host}:${found.port}`;
