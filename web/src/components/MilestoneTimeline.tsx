@@ -49,10 +49,6 @@ export function ticks(from: number, to: number, span: number) {
  * A playback timeline like Milestone XProtect's: the playhead stays in the middle and the recordings
  * slide under it. Drag (or scroll the wheel over) the timeline to move through time; letting go
  * plays from the time under the playhead. A click plays from the clicked time.
- *
- * With `day`, the view stays inside that day: near its start (or end) the window begins at 00:00
- * (or ends at 24:00) and the playhead moves to the edge, like a normal scrub bar, rather than
- * showing the day before (or after).
  */
 export function MilestoneTimeline({
   time,
@@ -63,7 +59,6 @@ export function MilestoneTimeline({
   onSeek,
   onScrub,
   onZoom,
-  day,
 }: {
   /** The time under the playhead (camera wall-clock, as UTC ms). */
   time: number;
@@ -78,16 +73,13 @@ export function MilestoneTimeline({
   onScrub: (t: number | null) => void;
   /** Zoom in (-1) or out (+1): Ctrl + wheel (or a pinch), and the + and - keys. */
   onZoom?: (direction: -1 | 1) => void;
-  /** Start of the day shown (camera wall-clock, as UTC ms): the view does not go outside it. */
-  day?: number;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [scrub, setScrub] = useState<number | null>(null);
   /** Where the mouse is over the timeline (px), to show the time there. */
   const [hover, setHover] = useState<number | null>(null);
-  /** pinnedFrom: the view was held at the day's edge when the drag began, so the playhead follows the pointer. */
-  const drag = useRef<{ x: number; time: number; moved: boolean; pinnedFrom: number | null } | null>(null);
+  const drag = useRef<{ x: number; time: number; moved: boolean } | null>(null);
   const wheel = useRef<{ time: number; timer: ReturnType<typeof setTimeout> } | null>(null);
 
   // Ctrl + wheel over the timeline zooms the timeline, not the page (React's wheel listener is passive).
@@ -111,13 +103,8 @@ export function MilestoneTimeline({
 
   const center = scrub ?? time;
   const perPx = span / width;
-  const centred = center - span / 2;
-  const DAY = 86_400_000;
-  const from = drag.current?.pinnedFrom ?? (day !== undefined && span < DAY && center >= day && center <= day + DAY
-    ? Math.min(Math.max(centred, day), day + DAY - span)
-    : centred);
-  const to = from + span;
-  const pinned = from !== centred;
+  const from = center - span / 2;
+  const to = center + span / 2;
   const x = (t: number) => (t - from) / perPx;
   const clamp = (t: number) => Math.min(max, Math.max(min, t));
   const setScrubbing = (t: number | null) => {
@@ -137,7 +124,7 @@ export function MilestoneTimeline({
       aria-valuetext={hhmm(center, true)}
       className="relative h-24 cursor-grab touch-none select-none overflow-hidden rounded-md bg-neutral-950 active:cursor-grabbing"
       onPointerDown={(e) => {
-        drag.current = { x: e.clientX, time: center, moved: false, pinnedFrom: pinned ? from : null };
+        drag.current = { x: e.clientX, time: center, moved: false };
         e.currentTarget.setPointerCapture(e.pointerId);
       }}
       onPointerLeave={() => setHover(null)}
@@ -146,14 +133,14 @@ export function MilestoneTimeline({
         const d = drag.current;
         if (!d) return;
         if (Math.abs(e.clientX - d.x) > 3) d.moved = true;
-        if (d.moved) setScrubbing(clamp(d.time + (d.pinnedFrom === null ? -1 : 1) * (e.clientX - d.x) * perPx));
+        if (d.moved) setScrubbing(clamp(d.time - (e.clientX - d.x) * perPx));
       }}
       onPointerUp={(e) => {
         const d = drag.current;
         drag.current = null;
         if (!d) return;
         if (d.moved) {
-          const t = clamp(d.time + (d.pinnedFrom === null ? -1 : 1) * (e.clientX - d.x) * perPx);
+          const t = clamp(d.time - (e.clientX - d.x) * perPx);
           setScrubbing(null);
           onSeek(t);
         } else {
@@ -233,9 +220,9 @@ export function MilestoneTimeline({
         </div>
       )}
 
-      {/* The playhead: in the middle, or towards the edge at the start or end of the day, with its time */}
-      <div className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-amber-400" style={{ left: Math.min(width - 1, Math.max(1, x(center))) }} aria-hidden>
-        <span className={clsx("absolute top-0 whitespace-nowrap rounded bg-amber-400 px-1 text-[10px] font-semibold text-black tabular", x(center) < 32 ? "left-0" : x(center) > width - 32 ? "right-0" : "left-1/2 -translate-x-1/2")}>
+      {/* The playhead, fixed in the middle, with its time */}
+      <div className="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-amber-400" aria-hidden>
+        <span className="absolute left-1/2 top-0 -translate-x-1/2 whitespace-nowrap rounded bg-amber-400 px-1 text-[10px] font-semibold text-black tabular">
           {hhmm(center, true)}
         </span>
       </div>

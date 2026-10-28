@@ -13,34 +13,23 @@ beforeAll(() => {
 });
 afterEach(cleanup);
 
-const playheadAt = () => Number.parseFloat(((screen.getByRole("slider").lastElementChild as HTMLElement).style.left));
 const labels = () => [...screen.getByRole("slider").querySelectorAll("span")].map((s) => s.textContent);
-const timeline = (time: number, withDay = true) =>
-  render(<MilestoneTimeline time={time} span={HOUR} min={day - DAY} max={day + DAY} segments={[]} onSeek={() => {}} onScrub={() => {}} day={withDay ? day : undefined} />);
+const timeline = (time: number) =>
+  render(<MilestoneTimeline time={time} span={HOUR} min={day - DAY} max={day + DAY} segments={[]} onSeek={() => {}} onScrub={() => {}} />);
 
-describe("timeline kept inside the day", () => {
-  it("starts the view at 00:00 with the playhead at the left edge, not in the day before", () => {
+describe("timeline like XProtect's", () => {
+  it("keeps the playhead in the middle, with its time, and names each day in view", () => {
     timeline(day);
-    expect(playheadAt()).toBeLessThanOrEqual(1);
-    // The date band names only this day; the scale starts at its first minute.
-    expect(labels()[0]).toBe("Thu 29-10-2026");
-    expect(labels()).not.toContain("Wed 28-10-2026");
-    expect(labels()).not.toContain("23:50");
-    // The playhead shows its time.
+    // At midnight the half before is the day before, named in the date band.
+    expect(labels()).toEqual(expect.arrayContaining(["Wed 28-10-2026", "Thu 29-10-2026", "23:50"]));
     expect(labels().at(-1)).toBe("00:00:00");
+    expect((screen.getByRole("slider").lastElementChild as HTMLElement).className).toContain("left-1/2");
   });
 
-  it("keeps the playhead in the middle during the day, and at the right edge at its end", () => {
+  it("shows one day when the view is inside it", () => {
     timeline(day + 12 * HOUR);
-    expect(playheadAt()).toBe(400);
-    cleanup();
-    timeline(day + DAY - 15 * 60_000);
-    expect(playheadAt()).toBe(600);
-  });
-
-  it("without a day, stays centred (the day before shows)", () => {
-    timeline(day, false);
-    expect(playheadAt()).toBe(400);
-    expect(labels()).toEqual(expect.arrayContaining(["Wed 28-10-2026", "Thu 29-10-2026"]));
+    const days = labels().filter((l) => /^\w{3} \d{2}-\d{2}-\d{4}$/.test(l ?? ""));
+    expect(days).toEqual(["Thu 29-10-2026"]);
+    expect(labels().at(-1)).toBe("12:00:00");
   });
 });
