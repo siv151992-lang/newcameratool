@@ -5,7 +5,7 @@ import { OnvifAdapter } from "../../src/integrations/onvif/adapter.js";
 import { parseOnvifRecordingResults, parseOnvifSearchToken } from "../../src/integrations/onvif/parser.js";
 import type { CameraHttpClient, CameraRequest } from "../../src/integrations/http/cameraHttpClient.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
-import { clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, playbackTimings, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
+import { busyRetry, clockTime, controlBeforeQuery, lastRefusal, playbackDiagnosis, playbackTimings, readRtsp, registerReplay, startReplayRelay, stopReplayRelay } from "../../src/services/rtspReplayRelay.js";
 
 const envelope = (body: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`;
 const results = (state: string, ...recs: [string, string, string][]) =>
@@ -56,7 +56,7 @@ describe("ONVIF recordings (Profile G)", () => {
 
 /** A replay server that insists on digest login, Require: onvif-replay and a clock Range. */
 function fakeReplayCamera() {
-  const options = { refuseScale: false, refuseRange: false, refuseSetup: false };
+  const options = { refuseScale: false, refuseRange: false, refuseSetup: false, busySetups: 0 };
   const requests: { first: string; headers: Record<string, string> }[] = [];
   const md5 = (s: string) => createHash("md5").update(s).digest("hex");
   const server = net.createServer((socket) => {
@@ -80,6 +80,10 @@ function fakeReplayCamera() {
           return send("200 OK", ["Content-Type: application/sdp", "Content-Base: rtsp://192.168.1.99/onvif-media/record/Rec1/"], sdp);
         }
         if (method === "SETUP" && options.refuseSetup) return send("400 Bad Request");
+        if (method === "SETUP" && options.busySetups > 0) {
+          options.busySetups -= 1;
+          return send("453 Not Enough Bandwidth");
+        }
         if (method === "SETUP") return send("200 OK", ["Session: 1234", "Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
         if (method === "PLAY") {
           if (onvif && !/^clock=\d{8}T\d{6}Z-$/.test(headers.range ?? "")) return send("457 Invalid Range");
@@ -279,6 +283,30 @@ describe("Replay relay", () => {
     expect(lastRefusal("refused_stream")).toBeUndefined();
     c.close();
     cam.options.refuseSetup = false;
+  });
+
+  it("asks again when all the camera's connections are in use (453), and explains it when they stay so", async () => {
+    busyRetry.ms = 20;
+    const target = { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101?starttime=20261024T101500Z", username: "admin", password: "secret", onvif: false };
+    // Freed a moment later (the playback a seek just replaced): plays.
+    cam.options.busySetups = 2;
+    cam.requests.length = 0;
+    let url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "busy", target);
+    let c = rtspClient(relayPort);
+    await c.request("DESCRIBE", url);
+    expect((await c.request("SETUP", `${url}/trackID=1`)).first).toBe("RTSP/1.0 200 OK");
+    expect(cam.requests.filter((r) => r.first.startsWith("SETUP")).length).toBe(3);
+    c.close();
+    // Still in use after three more tries: refused, with the reason.
+    cam.options.busySetups = 10;
+    url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "busy", target);
+    c = rtspClient(relayPort);
+    await c.request("DESCRIBE", url);
+    expect((await c.request("SETUP", `${url}/trackID=1`)).first).toBe("RTSP/1.0 453 Not Enough Bandwidth");
+    expect(playbackDiagnosis("busy")).toMatch(/^The camera answered "453 Not Enough Bandwidth" to SETUP .*: all the camera's video connections are in use/);
+    c.close();
+    cam.options.busySetups = 0;
+    busyRetry.ms = 1000;
   });
 
   it("explains why a recording did not play, from what the camera did", async () => {

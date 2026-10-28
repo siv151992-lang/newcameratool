@@ -122,12 +122,18 @@ export function playbackTimings(streamName: string): PlaybackTimings | undefined
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as PlaybackTimings;
 }
 
+/** A camera with no free connection (453) is asked again after 1, 2 and 3 seconds. */
+const BUSY_RETRIES = 3;
+/** Tunable for tests. */
+export const busyRetry = { ms: 1000 };
+
 const STATUS_HINTS: [RegExp, string][] = [
   [/^401\b/, "the camera refused the user name or password for playback"],
   [/^403\b/, "the camera user is not allowed to play recordings: give it the Playback permission, or use the admin account"],
   [/^(404|454)\b/, "the camera has no recording at this address or time"],
   [/^(400|451|457|459|461)\b/, "the camera did not accept the request; its firmware may need another playback address"],
   [/^(500|503)\b/, "the camera could not serve it now (too many playbacks at once, or its storage is busy)"],
+  [/^453\b/, "all the camera's video connections are in use (live views, other playbacks, an NVR or video management software such as Milestone pulling its streams). Close other views of this camera, or free a connection on the camera, and try again"],
 ];
 
 /**
@@ -274,7 +280,7 @@ function relayConnection(client: net.Socket) {
   /** The video track: its codec and control name (from DESCRIBE), and its interleaved channel (from SETUP). */
   let video: { codec: VideoCodec; control?: string; channel?: number } | undefined;
   /** Requests waiting for the camera to answer, by CSeq, to resend once after a login challenge. */
-  const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean; ranged?: boolean; unranged?: boolean }>();
+  const pending = new Map<string, { message: RtspMessage; retried: boolean; scaled?: boolean; unscaled?: boolean; ranged?: boolean; unranged?: boolean; busyTries?: number }>();
   /** Messages for the camera before its connection is up. */
   let queue: Buffer[] | undefined = [];
   let fromClient: Buffer = Buffer.alloc(0);
@@ -328,7 +334,7 @@ function relayConnection(client: net.Socket) {
     if (scaled) setHeader(out, "Scale", target!.scale!.toFixed(1));
     authorize(out, method, cameraUri);
     const cseq = header(m, "CSeq");
-    if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled, ranged, unranged });
+    if (cseq) pending.set(cseq, { message: m, retried: pending.get(cseq)?.retried ?? false, scaled, unscaled, ranged, unranged, busyTries: pending.get(cseq)?.busyTries });
     const t = trace();
     if (t) {
       t.unanswered = `${method} ${uri === "*" ? uri : controlBeforeQuery(uri.slice(relayPrefix.length) || "/")}`.slice(0, 300);
@@ -379,6 +385,18 @@ function relayConnection(client: net.Socket) {
       rangeRefusedAt.set(cameraKey, Date.now());
       pending.set(cseq!, { ...request, ranged: false, unranged: true });
       sendRequest(request.message, request.unscaled, true);
+      return;
+    }
+    // All the camera's connections in use (Hikvision: 453 Not Enough Bandwidth): usually the playback
+    // just replaced by a seek, which the camera frees a moment later. Ask again, a few times.
+    if (request && /^RTSP\/\S+\s+453\b/.test(m.first) && (request.busyTries ?? 0) < BUSY_RETRIES) {
+      const tries = (request.busyTries ?? 0) + 1;
+      logger.info({ status: m.first, host: target?.host, tries }, "Recording playback: the camera has no free connection; asking again");
+      setTimeout(() => {
+        if (client.destroyed || camera?.destroyed) return;
+        pending.set(cseq!, { ...request, busyTries: tries });
+        sendRequest(request.message, request.unscaled, request.unranged);
+      }, busyRetry.ms * tries);
       return;
     }
     if (request && !/^RTSP\/\S+\s+2\d\d\b/.test(m.first)) {
