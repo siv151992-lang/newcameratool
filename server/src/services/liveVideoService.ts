@@ -61,8 +61,15 @@ export async function prepareStream(orgId: string, cameraId: string, channel?: n
   let src: string;
   if (channel && row.device_type === "nvr") {
     // A channel of an NVR: that channel's stream paths.
-    if (!adapter.channelRtspPaths) throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `Live video of NVR channels is not available for ${adapter.meta.displayName}`);
-    src = await chooseLiveSource(`${cameraId}:c${channel}`, adapter, config, adapter.channelRtspPaths(channel), false);
+    if (adapter.channelRtspPaths) src = await chooseLiveSource(`${cameraId}:c${channel}`, adapter, config, adapter.channelRtspPaths(channel), false);
+    else if (adapter.liveRtspUrl && adapter.getChannels) {
+      // Asked from the device for that channel (ONVIF recording servers such as Milestone's bridge).
+      try {
+        src = withCredentials(await adapter.liveRtspUrl(config, channel), config);
+      } catch (err) {
+        throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `The video address of channel ${channel} could not be read: ${(err as Error).message}`);
+      }
+    } else throw new HttpError(422, "LIVE_VIDEO_UNAVAILABLE", `Live video of NVR channels is not available for ${adapter.meta.displayName}`);
   } else if (adapter.rtspPath) src = await chooseLiveSource(cameraId, adapter, config);
   else {
     // Asked from the camera (ONVIF), for ONVIF cameras and brands without a stream path of their own.

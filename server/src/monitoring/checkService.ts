@@ -146,7 +146,8 @@ export async function runCheck(
       integrationVersion = meta.configVersion ? `${meta.version ?? "1.0.0"} (config ${meta.configVersion})` : (meta.version ?? "1.0.0");
       config = await getCameraConfig(cameraId, settings.requestTimeoutMs);
       const cfg = config;
-      const local = row.local_storage !== false;
+      // A recording server (Milestone) keeps its own storage: only its being reachable is checked.
+      const local = row.local_storage !== false && !meta.recordsElsewhere;
       const { value, attempts: n } = await withRetry(() => (local ? adapter.getStorageStatus(cfg) : reachability(adapter, cfg)), {
         maxRetries: settings.maxRetries,
         baseDelayMs: settings.retryBaseDelayMs,
@@ -156,7 +157,7 @@ export async function runCheck(
       result = { ok: true, reading: value };
       recording = local
         ? reconcileRecording(await readRecording(adapter, cfg), value)
-        : { state: "unknown", channels: [], detail: "No local storage: this camera records elsewhere (e.g. an NVR)" };
+        : { state: "unknown", channels: [], detail: meta.recordsElsewhere ? `Records on its own servers (${meta.displayName}); each camera's recording is shown on its channel` : "No local storage: this camera records elsewhere (e.g. an NVR)" };
       if (row.device_type === "nvr") channels = await readChannels(adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
       if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);

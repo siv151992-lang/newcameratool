@@ -201,6 +201,8 @@ export interface BrandMeta {
   integrationType?: "builtin" | "configurable" | "alias";
   /** "Works like" brands: the built-in adapter they use. */
   basedOn?: string;
+  /** A recording server (e.g. Milestone XProtect): it records on its own storage, so there are no disks to read here. */
+  recordsElsewhere?: boolean;
   /** Which camera credentials the integration uses. Built-in adapters use username + password. */
   credentials?: "user_password" | "secret" | "none";
   /** Protocol a new camera of this brand starts with. */
@@ -248,7 +250,7 @@ export interface CameraBrandAdapter {
    */
   replayRtspUrl?(camera: CameraConfig, segment?: RecordedSegment): Promise<string>;
   /** Optional: the full RTSP address (without credentials) of the live stream, asked from the camera (ONVIF). */
-  liveRtspUrl?(camera: CameraConfig): Promise<string>;
+  liveRtspUrl?(camera: CameraConfig, channel?: number): Promise<string>;
   /** Optional: the RTSP path of a stream browsers can play (H.264, usually the second stream), for live video. */
   readonly rtspPath?: string;
   /** Optional, for NVRs: each channel's camera name, whether it has video and whether it is recording. */

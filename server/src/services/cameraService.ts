@@ -483,11 +483,22 @@ function translateUniqueViolation(err: unknown): never {
   throw err;
 }
 
+/** Brands that are recording servers (Milestone XProtect): their storage is theirs, not read here. */
+function recordsElsewhere(brand: string): boolean {
+  try {
+    return registry.get(brand).meta.recordsElsewhere === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function createCamera(
   orgId: string, input: Omit<CameraInput, "localStorage" | "priority" | "deviceType"> & { localStorage?: boolean; priority?: "critical" | "normal"; deviceType?: "camera" | "nvr" }, actor: Actor, ip?: string | null, db?: Queryable,
 ) {
   const port = input.port ?? defaultPort(input.brand, input.protocol);
   const cipher = getCipher();
+  // A recording server (Milestone): always an NVR of cameras, with no disks of its own to read here.
+  const server = recordsElsewhere(input.brand);
   const run = async (client: Queryable) => {
     const { rows } = await client
       .query<{ id: string }>(
@@ -497,7 +508,7 @@ export async function createCamera(
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
-          input.caCertificate, actor.id, input.localStorage ?? true, orgId, input.priority ?? "normal", input.deviceType ?? "camera",
+          input.caCertificate, actor.id, server ? false : (input.localStorage ?? true), orgId, input.priority ?? "normal", server ? "nvr" : (input.deviceType ?? "camera"),
         ],
       )
       .catch(translateUniqueViolation);
@@ -586,9 +597,9 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
           patch.caCertificate === undefined
             ? (await client.query("SELECT ca_certificate FROM cameras WHERE id = $1", [id])).rows[0].ca_certificate
             : patch.caCertificate,
-          patch.localStorage ?? current.local_storage,
+          recordsElsewhere(brand) ? false : (patch.localStorage ?? current.local_storage),
           patch.priority ?? current.priority,
-          patch.deviceType ?? current.device_type,
+          recordsElsewhere(brand) ? "nvr" : (patch.deviceType ?? current.device_type),
         ],
       )
       .catch(translateUniqueViolation);

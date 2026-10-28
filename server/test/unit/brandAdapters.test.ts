@@ -57,7 +57,7 @@ describe("brand registry", () => {
     for (const key of ["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic"]) expect(registry.isSupported(key)).toBe(true);
     for (const key of ["hikvision", "prama", "hanwha", "panasonic"]) expect(registry.get(key).meta.supportStatus).toBe("supported");
     for (const key of ["dahua", "axis", "uniview", "onvif"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
-    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic", "reolink", "bosch"]);
+    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic", "reolink", "bosch", "milestone"]);
   });
 
   it("resolves brand aliases", () => {

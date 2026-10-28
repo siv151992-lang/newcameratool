@@ -283,6 +283,45 @@ export function parseOnvifProfileToken(xml: string): string {
   return chosen;
 }
 
+/** One camera of a recording server seen over ONVIF (several media profiles of one video source). */
+export interface OnvifSourceChannel {
+  /** From 1, in the order the device lists them. */
+  channel: number;
+  name: string;
+  /** The profile to stream (H.264 where there is one). */
+  profileToken: string;
+  /** The video source token (what recordings name as their source), or the profile token. */
+  sourceToken: string;
+}
+
+/**
+ * trt:GetProfilesResponse → one channel per video source: a recording server such as Milestone's
+ * Open Network Bridge lists its cameras as profiles, a camera with several streams lists several
+ * profiles of one source. The H.264 profile of each source is streamed where there is one.
+ */
+export function parseOnvifChannels(xml: string): OnvifSourceChannel[] {
+  soapBody(xml);
+  const doc = mediaParser.parse(xml.trim()) as XmlNode;
+  const response = child(child(child(doc, "Envelope"), "Body"), "GetProfilesResponse");
+  const key = response ? Object.keys(response).find((k) => k.toLowerCase() === "profiles") : undefined;
+  const profiles = (key ? (response![key] as unknown[]) : []).filter(isNode);
+  const groups = new Map<string, { name: string; profiles: XmlNode[] }>();
+  for (const p of profiles) {
+    const token = typeof p["@_token"] === "string" ? (p["@_token"] as string) : undefined;
+    if (!token) continue;
+    const vsc = child(p, "VideoSourceConfiguration");
+    const source = text(vsc, "SourceToken") ?? token;
+    const g = groups.get(source) ?? { name: text(vsc, "Name") ?? text(p, "Name") ?? `Camera ${groups.size + 1}`, profiles: [] };
+    g.profiles.push(p);
+    groups.set(source, g);
+  }
+  return [...groups.entries()].map(([sourceToken, g], i) => {
+    const h264 = g.profiles.find((p) => /h\.?264/i.test(text(child(p, "VideoEncoderConfiguration"), "Encoding") ?? ""));
+    const chosen = (h264 ?? g.profiles[0])!;
+    return { channel: i + 1, name: g.name, profileToken: chosen["@_token"] as string, sourceToken };
+  });
+}
+
 /** trt:GetStreamUriResponse / GetSnapshotUriResponse → <MediaUri><Uri>. */
 export function parseOnvifMediaUri(xml: string, response: "GetStreamUriResponse" | "GetSnapshotUriResponse" | "GetReplayUriResponse"): string {
   const r = soapResponse(xml, response);
@@ -307,7 +346,18 @@ const utcMs = (v: string | undefined) => {
  * tse:GetRecordingSearchResultsResponse → each recording's token and the period it covers (UTC),
  * and whether the search is complete.
  */
-export function parseOnvifRecordingResults(xml: string): { recordings: { token: string; from: number; until: number }[]; done: boolean } {
+export interface OnvifRecording {
+  token: string;
+  from: number;
+  until: number;
+  /** Where it was recorded from (Source: SourceId and Name), to tell a recording server's cameras apart. */
+  sourceId?: string;
+  sourceName?: string;
+  /** RecordingStatus: Recording, Stopped, … */
+  status?: string;
+}
+
+export function parseOnvifRecordingResults(xml: string): { recordings: OnvifRecording[]; done: boolean } {
   soapBody(xml);
   const doc = mediaParser.parse(xml.trim()) as XmlNode;
   const list = child(child(child(child(doc, "Envelope"), "Body"), "GetRecordingSearchResultsResponse"), "ResultList");
@@ -317,7 +367,10 @@ export function parseOnvifRecordingResults(xml: string): { recordings: { token: 
     const token = text(r, "RecordingToken");
     const from = utcMs(text(r, "EarliestRecording"));
     const until = utcMs(text(r, "LatestRecording"));
-    return token && from !== undefined && until !== undefined && until > from ? [{ token, from, until }] : [];
+    if (!token || from === undefined || until === undefined || until <= from) return [];
+    const source = child(r, "Source");
+    const extra = { sourceId: text(source, "SourceId"), sourceName: text(source, "Name"), status: text(r, "RecordingStatus") };
+    return [{ token, from, until, ...Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined)) }];
   });
   return { recordings, done: /completed/i.test(state) };
 }

@@ -27,6 +27,9 @@ import {
   parseOnvifProfileToken,
   parseOnvifRecordingResults,
   parseOnvifSearchToken,
+  parseOnvifChannels,
+  type OnvifRecording,
+  type OnvifSourceChannel,
 } from "./parser.js";
 import { escapeXml, NS, soapEnvelope } from "./soap.js";
 import { COMMON_ONVIF_ENDPOINTS, probeOnvifEndpoint, type OnvifEndpoint } from "./discovery.js";
@@ -136,7 +139,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
     return true;
   }
 
-  constructor(private readonly http: CameraHttpClient) {}
+  constructor(protected readonly http: CameraHttpClient) {}
 
   private async call(camera: CameraConfig, op: SoapAction, now = Date.now() + this.offsetFor(camera)): Promise<string> {
     const body = soapEnvelope(op.body, op.auth ? { username: camera.username, password: camera.password, now } : undefined);
@@ -259,8 +262,14 @@ export class OnvifAdapter implements CameraBrandAdapter {
     return parseOnvifProfileToken(await this.authenticated(camera, await this.atService(camera, ACTIONS.profiles, NS.trt)));
   }
 
-  private async mediaUri(camera: CameraConfig, kind: "Stream" | "Snapshot"): Promise<string> {
-    const token = escapeXml(await this.profileToken(camera));
+  /** The device's video sources as channels (a recording server's cameras), from its media profiles. */
+  protected async sourceChannels(camera: CameraConfig): Promise<OnvifSourceChannel[]> {
+    return parseOnvifChannels(await this.authenticated(camera, await this.atService(camera, ACTIONS.profiles, NS.trt)));
+  }
+
+  /** A media address of a profile (the camera's H.264 one unless another is given). */
+  protected async mediaUri(camera: CameraConfig, kind: "Stream" | "Snapshot", profile?: string): Promise<string> {
+    const token = escapeXml(profile ?? (await this.profileToken(camera)));
     const body = kind === "Stream"
       ? `<trt:GetStreamUri><trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream><tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup><trt:ProfileToken>${token}</trt:ProfileToken></trt:GetStreamUri>`
       : `<trt:GetSnapshotUri><trt:ProfileToken>${token}</trt:ProfileToken></trt:GetSnapshotUri>`;
@@ -285,7 +294,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
   }
 
   /** The camera's clock and its local time zone offset (shiftMs: local minus UTC). */
-  private async cameraClock(camera: CameraConfig): Promise<{ now: number; shiftMs: number }> {
+  protected async cameraClock(camera: CameraConfig): Promise<{ now: number; shiftMs: number }> {
     let now = Date.now() + this.offsetFor(camera);
     let localOffsetMin = 0;
     try {
@@ -311,7 +320,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
   }
 
   /** The recordings on the camera (Search service: FindRecordings, then its results), in UTC. */
-  private async findRecordings(camera: CameraConfig): Promise<{ token: string; from: number; until: number }[]> {
+  protected async findRecordings(camera: CameraConfig): Promise<OnvifRecording[]> {
     const find = await this.atService(
       camera,
       { ...ACTIONS.summary, action: `${NS.tse}/FindRecordings`, body: "<tse:FindRecordings><tse:Scope/><tse:MaxMatches>100</tse:MaxMatches><tse:KeepAliveTime>PT10S</tse:KeepAliveTime></tse:FindRecordings>" },
@@ -323,7 +332,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
       action: `${NS.tse}/GetRecordingSearchResults`,
       body: `<tse:GetRecordingSearchResults><tse:SearchToken>${searchToken}</tse:SearchToken><tse:MaxResults>100</tse:MaxResults><tse:WaitTime>PT2S</tse:WaitTime></tse:GetRecordingSearchResults>`,
     };
-    const recordings: { token: string; from: number; until: number }[] = [];
+    const recordings: OnvifRecording[] = [];
     try {
       for (let i = 0; i < 10; i++) {
         const page = parseOnvifRecordingResults(await this.authenticated(camera, results));
@@ -342,7 +351,7 @@ export class OnvifAdapter implements CameraBrandAdapter {
    * the camera's local time. Where the search is not supported, the recording summary's span.
    */
   async listRecordings(camera: CameraConfig): Promise<RecordingList> {
-    let found: { token: string; from: number; until: number }[];
+    let found: OnvifRecording[];
     try {
       found = await this.findRecordings(camera);
     } catch (err) {
