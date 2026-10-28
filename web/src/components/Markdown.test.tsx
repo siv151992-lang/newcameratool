@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
-import { Markdown } from "./Markdown";
+import { isAppPath, Markdown } from "./Markdown";
 
 const show = (text: string) => render(<MemoryRouter><Markdown text={text} /></MemoryRouter>);
 
@@ -22,5 +22,11 @@ describe("Markdown", () => {
     expect(screen.queryAllByRole("link")).toHaveLength(0);
     expect(container.textContent).toContain("<img src=x");
     expect(container.textContent).toContain("evil");
+  });
+
+  it("does not take a backslash path for one inside the app (browsers read /\\host as //host)", () => {
+    show("[a](/\\evil.example) [b](/x\\y) [c](/cameras/ok)");
+    expect(screen.queryAllByRole("link").map((l) => l.getAttribute("href"))).toEqual(["/cameras/ok"]);
+    expect(["/cameras/1", "/x\\y", "/\\evil", "//evil", "/\u0009/evil", "https://x", "cameras"].map(isAppPath)).toEqual([true, false, false, false, false, false, false]);
   });
 });

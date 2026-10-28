@@ -8,6 +8,14 @@ import { Link } from "react-router-dom";
  * other link target is shown as plain text.
  */
 
+/**
+ * A path inside this app: one leading slash, then a path. Not "//host" or "/\\host" (browsers read a
+ * backslash as a slash, so both lead to another site), and no control characters (which browsers
+ * drop from addresses).
+ */
+export const isAppPath = (href: string) =>
+  /^\/(?![/\\])/.test(href) && ![...href].some((c) => c === "\\" || c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
+
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|(?<![\w])_[^_]+_(?![\w]))/g;
 
 function inline(text: string, key: string): ReactNode[] {
@@ -19,7 +27,7 @@ function inline(text: string, key: string): ReactNode[] {
     const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(part);
     if (link) {
       const [, label, href] = link;
-      return href!.startsWith("/") && !href!.startsWith("//") ? (
+      return isAppPath(href!) ? (
         <Link key={k} to={href!} className="font-medium text-accent-ink hover:underline">{label}</Link>
       ) : (
         <Fragment key={k}>{label}</Fragment>
