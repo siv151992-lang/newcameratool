@@ -182,7 +182,12 @@ export function MilestoneTimeline({
       <div className="absolute inset-x-0 top-0 h-5 border-b border-neutral-800 text-[11px] text-neutral-300" aria-hidden>
         {dayBands(from, to, x, width).map((b) => (
           <div key={b.day} className="absolute inset-y-0 overflow-hidden border-l border-neutral-700 first:border-l-0" style={{ left: b.left, width: Math.max(0, b.right - b.left) }}>
-            {b.right - b.left > 70 && <span className="absolute left-1.5 top-0.5 whitespace-nowrap font-medium">{dayLabel(b.day)}</span>}
+            {b.right - b.left > 70 && (
+              // Clear of the playhead's time, in the middle.
+              <span className="absolute top-0.5 whitespace-nowrap font-medium" style={{ left: b.left + 6 > width / 2 - 130 && b.left + 6 < width / 2 + 36 ? width / 2 + 36 - b.left : 6 }}>
+                {dayLabel(b.day)}
+              </span>
+            )}
           </div>
         ))}
       </div>
