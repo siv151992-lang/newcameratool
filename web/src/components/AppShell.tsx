@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bell, Building2, Camera, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, X } from "lucide-react";
+import { Bell, Building2, Camera, LayoutDashboard, MonitorPlay, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -101,7 +101,7 @@ function OrganizationSwitcher() {
 }
 
 export function AppShell() {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   useRedirectNotice();
   const { theme, toggle, palette } = useTheme();
   const [open, setOpen] = useState(false);
@@ -122,6 +122,7 @@ export function AppShell() {
     <nav aria-label="Main" className="flex flex-col gap-1">
       <NavItem to="/" icon={<LayoutDashboard className={icon} />} onClick={close} collapsed={collapsed}>Dashboard</NavItem>
       <NavItem to="/cameras" icon={<Camera className={icon} />} onClick={close} collapsed={collapsed}>Cameras</NavItem>
+      {can("cameras:live") && <NavItem to="/live" icon={<MonitorPlay className={icon} />} onClick={close} collapsed={collapsed}>Live</NavItem>}
       <NavItem to="/alerts" icon={<Bell className={icon} />} badge={summary.data?.alerts.active} onClick={close} collapsed={collapsed}>Alerts</NavItem>
       {ai.data?.enabled && <NavItem to="/ai" icon={<Sparkles className={icon} />} onClick={close} collapsed={collapsed}>AI Mode</NavItem>}
       <NavItem to="/integrations" icon={<Plug className={icon} />} onClick={close} collapsed={collapsed}>Integrations</NavItem>

@@ -14,6 +14,7 @@ import { CameraFormPage } from "./pages/CameraFormPage";
 import { CamerasPage } from "./pages/CamerasPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ImportPage } from "./pages/ImportPage";
+import { LiveWallPage } from "./pages/LiveWallPage";
 import { NoOrganizationPage } from "./pages/NoOrganizationPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
@@ -42,6 +43,7 @@ export function App() {
           {can("cameras:write") && <Route path="cameras/import" element={<ImportPage />} />}
           {can("cameras:write") && <Route path="cameras/:id/edit" element={<CameraFormPage />} />}
           <Route path="cameras/:id" element={<CameraDetailPage />} />
+          {can("cameras:live") && <Route path="live" element={<LiveWallPage />} />}
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="ai/*" element={<AiPage />} />
           <Route path="integrations" element={<BrandsPage />} />

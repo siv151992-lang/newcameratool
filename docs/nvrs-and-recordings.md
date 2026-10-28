@@ -27,6 +27,15 @@ timeline as it was on screen, with the saved moment marked.
 Browsers cannot play **H.265**. If live view says the format is not supported, set the camera's
 second stream to H.264 in the camera's own video settings.
 
+### Several cameras at once (Live)
+
+**Live** in the sidebar shows 4, 9 or 16 cameras at once (2 × 2, 3 × 3, 4 × 4). Click a tile to
+choose a camera by name, address or location; for an NVR, choose its channel. The layout and cameras
+are kept in that browser. Each tile plays the camera's second stream, so a full 4 × 4 wall is light on
+the network; a tile whose video cannot play shows a picture every 5 seconds (with the reason), and
+**Try video again** retries it. Double-click a tile (or its full-screen button) to fill the screen,
+and its name opens the camera's page.
+
 ## Recordings (the camera's own SD card or disk)
 
 **Recordings** opens a player for what the camera has recorded:
