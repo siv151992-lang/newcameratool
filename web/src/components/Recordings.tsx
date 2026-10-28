@@ -444,6 +444,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
           onSeek={seek}
           onScrub={setScrub}
           onZoom={(d) => setSpan((v) => zoomSpan(v, d))}
+          day={dayStart}
         />
 
         <div className="flex flex-wrap items-center justify-between gap-2">
