@@ -198,7 +198,9 @@ export interface BrandMeta {
   /** For configurable integrations: the configuration version number in use. */
   configVersion?: number;
   /** "builtin": a trusted adapter in this code base (Mode B). "configurable": defined in the UI (Mode A). */
-  integrationType?: "builtin" | "configurable";
+  integrationType?: "builtin" | "configurable" | "alias";
+  /** "Works like" brands: the built-in adapter they use. */
+  basedOn?: string;
   /** Which camera credentials the integration uses. Built-in adapters use username + password. */
   credentials?: "user_password" | "secret" | "none";
   /** Protocol a new camera of this brand starts with. */

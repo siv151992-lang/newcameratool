@@ -27,7 +27,7 @@ const BUILTIN_VERSION = "1.0.0";
 interface BrandState {
   status: "draft" | "tested" | "enabled" | "disabled";
   displayName: string;
-  type: "builtin" | "configurable";
+  type: "builtin" | "configurable" | "alias";
   /** Credentials cameras need and whether they must use HTTPS, from the active configuration. */
   credentials: "user_password" | "secret" | "none";
   httpsOnly: boolean;
@@ -37,6 +37,8 @@ export class BrandRegistry {
   private readonly adapters = new Map<string, CameraBrandAdapter>();
   private readonly planned = new Map<string, BrandMeta>();
   private configured = new Map<string, ConfigurableAdapter>();
+  /** "Works like" brands: a built-in adapter under the brand's own name. */
+  private aliases = new Map<string, CameraBrandAdapter>();
   private states = new Map<string, BrandState>();
   private refreshedAt = 0;
 
@@ -59,12 +61,13 @@ export class BrandRegistry {
   async refresh(db: Queryable = pool): Promise<void> {
     const { rows } = await db.query(
       `SELECT b.key, b.display_name, b.status, b.integration_type, b.integration_version, b.notes, b.default_protocol,
-              b.default_http_port, b.default_https_port, v.config, v.version
+              b.default_http_port, b.default_https_port, b.based_on, v.config, v.version
        FROM camera_brands b LEFT JOIN brand_integration_versions v ON v.id = b.active_version_id
        WHERE b.deleted_at IS NULL`,
     );
     const states = new Map<string, BrandState>();
     const configured = new Map<string, ConfigurableAdapter>();
+    const aliases = new Map<string, CameraBrandAdapter>();
     for (const r of rows) {
       const auth = r.config?.auth?.type as string | undefined;
       states.set(r.key, {
@@ -72,6 +75,15 @@ export class BrandRegistry {
         credentials: auth ? credentialModeFor(auth as IntegrationConfig["auth"]["type"]) : "user_password",
         httpsOnly: auth === "basic" || auth === "bearer" || auth === "api_key",
       });
+      const base = r.based_on ? this.adapters.get(r.based_on) : undefined;
+      if (r.integration_type === "alias" && r.status === "enabled" && base) {
+        aliases.set(r.key, worksLike(base, {
+          key: r.key, displayName: r.display_name, notes: r.notes ?? base.meta.notes,
+          defaultPorts: { http: r.default_http_port ?? base.meta.defaultPorts.http, https: r.default_https_port ?? base.meta.defaultPorts.https },
+          defaultProtocol: r.default_protocol,
+        }));
+        continue;
+      }
       if (r.integration_type !== "configurable" || r.status !== "enabled" || !r.config || !this.http) continue;
       const parsed = integrationConfigSchema.safeParse(r.config);
       if (!parsed.success) continue; // never monitor with a configuration that no longer validates
@@ -89,6 +101,7 @@ export class BrandRegistry {
     }
     this.states = states;
     this.configured = configured;
+    this.aliases = aliases;
     this.refreshedAt = Date.now();
   }
 
@@ -99,7 +112,7 @@ export class BrandRegistry {
 
   get(key: string): CameraBrandAdapter {
     const state = this.states.get(key);
-    const adapter = this.configured.get(key) ?? this.adapters.get(key);
+    const adapter = this.configured.get(key) ?? this.aliases.get(key) ?? this.adapters.get(key);
     if (adapter && (!state || state.status === "enabled")) return adapter;
     if (state && state.status !== "enabled") {
       throw new CameraApiError(
@@ -120,7 +133,7 @@ export class BrandRegistry {
   isSupported(key: string) {
     const state = this.states.get(key);
     if (state && state.status !== "enabled") return false;
-    return this.adapters.has(key) || this.configured.has(key);
+    return this.adapters.has(key) || this.configured.has(key) || this.aliases.has(key);
   }
 
   /** A built-in adapter whatever its status (tests run even while it is disabled). */
@@ -210,8 +223,18 @@ export class BrandRegistry {
   /** Integrations that can be selected for cameras now, plus planned ones. */
   list(): BrandMeta[] {
     const builtin = [...this.adapters.values()].filter((a) => this.isSupported(a.meta.key)).map((a) => withDefaults(a.meta));
-    return [...builtin, ...[...this.configured.values()].map((a) => a.meta), ...this.planned.values()];
+    return [...builtin, ...[...this.configured.values()].map((a) => a.meta), ...[...this.aliases.values()].map((a) => a.meta), ...this.planned.values()];
   }
+}
+
+/**
+ * A built-in adapter under another brand's name: every method is the built-in one (the same code,
+ * tests and fixes); only the name, ports and notes are the brand's.
+ */
+function worksLike(base: CameraBrandAdapter, own: Pick<BrandMeta, "key" | "displayName" | "defaultPorts"> & Partial<BrandMeta>): CameraBrandAdapter {
+  const adapter = Object.create(base) as CameraBrandAdapter;
+  Object.defineProperty(adapter, "meta", { value: { ...withDefaults(base.meta), ...own, integrationType: "alias", basedOn: base.meta.key }, enumerable: true });
+  return adapter;
 }
 
 function withDefaults(meta: BrandMeta): BrandMeta {

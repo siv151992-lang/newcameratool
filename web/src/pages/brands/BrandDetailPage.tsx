@@ -93,7 +93,7 @@ export function BrandDetailPage() {
             {d.displayName} <IntegrationStatusBadge status={d.status} />
           </h2>
           <p className="text-sm text-ink-secondary">
-            {TYPE_LABELS[d.integrationType]} · version {d.integrationVersion}
+            {d.basedOn ? `Works like ${d.basedOn.displayName}` : `${TYPE_LABELS[d.integrationType]} · version ${d.integrationVersion}`}
             {configurable && d.activeVersion !== null && ` · monitoring with configuration ${d.activeVersion}`}
           </p>
         </div>
@@ -114,7 +114,7 @@ export function BrandDetailPage() {
             ) : (
               <Button icon={<PowerOff className="h-4 w-4" />} onClick={() => setDialog("disable")}>Disable</Button>
             )}
-            {configurable && <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} onClick={() => setDialog("delete")}>Delete</Button>}
+            {(configurable || d.integrationType === "alias") && <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} onClick={() => setDialog("delete")}>Delete</Button>}
           </div>
         )}
       </div>

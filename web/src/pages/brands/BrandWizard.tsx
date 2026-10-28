@@ -200,6 +200,9 @@ export function BrandWizard() {
   if (editing && existing.data?.integrationType === "builtin") {
     return <p className="text-sm text-ink-secondary">Built-in adapters are maintained in code and cannot be edited here.</p>;
   }
+  if (editing && existing.data?.integrationType === "alias") {
+    return <p className="text-sm text-ink-secondary">This brand works like {existing.data.basedOn?.displayName}: it has no API configuration to edit.</p>;
+  }
 
   const latest = saved?.versions[0];
   const testedLatest = latest?.testStatus === "passed" && testResult?.ok !== false;

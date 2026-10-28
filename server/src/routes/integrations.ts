@@ -6,6 +6,10 @@ import { param, parse } from "../lib/validate.js";
 import {
   createIntegration,
   createIntegrationSchema,
+  createWorksLikeIntegration,
+  createWorksLikeSchema,
+  detectBrand,
+  detectSchema,
   deleteIntegration,
   disableIntegration,
   enableIntegration,
@@ -47,6 +51,15 @@ integrationsRouter.post("/validate", write, async (req, res) => {
 integrationsRouter.post("/preview", write, async (req, res) => {
   res.json(previewMapping(parse(previewSchema, req.body)));
 });
+// Adding a brand the simple way: find which built-in adapter one of its cameras works with, then
+// save the brand as working like it.
+integrationsRouter.post("/detect", write, integrationLimiter, async (req, res) => {
+  res.json(await detectBrand(parse(detectSchema, req.body)));
+});
+integrationsRouter.post("/works-like", write, async (req, res) => {
+  res.status(201).json(await createWorksLikeIntegration(parse(createWorksLikeSchema, req.body), actorOf(req), req.ip));
+});
+
 integrationsRouter.post("/", write, async (req, res) => {
   res.status(201).json(await createIntegration(parse(createIntegrationSchema, req.body), actorOf(req), req.ip));
 });

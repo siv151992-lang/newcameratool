@@ -66,6 +66,24 @@ const targetSchema = z.union([
     })
     .strict(),
 ]);
+/** One camera of the brand, to find which built-in adapter it works with. Nothing is stored. */
+export const detectSchema = z.object({
+  host: z.string().trim().min(1).max(253),
+  port: z.number().int().min(1).max(65535).optional(),
+  protocol: z.enum(["http", "https"]).default("http"),
+  username: z.string().max(64).default(""),
+  password: z.string().max(256).default(""),
+  caCertificate: z.string().max(20000).optional().nullable(),
+}).strict();
+/** A brand that works like a built-in adapter (found by detection, or chosen). */
+export const createWorksLikeSchema = z.object({
+  displayName: z.string().trim().min(2, "Brand name is required").max(60),
+  manufacturer: text(80),
+  description: text(500),
+  basedOn: z.string().trim().min(1).max(60),
+  defaultProtocol: z.enum(["http", "https"]).optional(),
+}).strict();
+
 export const testIntegrationSchema = z.object({ versionId: z.string().uuid().optional(), target: targetSchema }).strict();
 export const previewSchema = z.object({ config: z.unknown(), sample: z.string().min(1, "Paste a sample response").max(262_144) }).strict();
 
@@ -180,7 +198,9 @@ export interface IntegrationSummary {
   displayName: string;
   manufacturer: string | null;
   description: string | null;
-  integrationType: "builtin" | "configurable";
+  integrationType: "builtin" | "configurable" | "alias";
+  /** "Works like" brands: the built-in adapter they use. */
+  basedOn: { key: string; displayName: string } | null;
   integrationVersion: string;
   status: "draft" | "tested" | "enabled" | "disabled";
   supportStatus: string;
@@ -203,7 +223,7 @@ export interface IntegrationSummary {
 // Database rows of SUMMARY_SQL; columns are read by name below.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function summarize(r: Record<string, any>): IntegrationSummary {
-  const builtin = r.integration_type === "builtin" ? registry.builtinMeta(r.key) : undefined;
+  const builtin = r.integration_type === "builtin" ? registry.builtinMeta(r.key) : r.integration_type === "alias" ? registry.builtinMeta(r.based_on) : undefined;
   const cfg = r.active_config ?? r.latest_config;
   const parsed = cfg ? integrationConfigSchema.safeParse(cfg) : null;
   const config = parsed?.success ? parsed.data : null;
@@ -214,6 +234,7 @@ function summarize(r: Record<string, any>): IntegrationSummary {
     manufacturer: r.manufacturer,
     description: r.description ?? builtin?.notes ?? null,
     integrationType: r.integration_type,
+    basedOn: r.integration_type === "alias" && builtin ? { key: r.based_on, displayName: builtin.displayName } : null,
     integrationVersion: r.integration_version,
     status: r.status,
     supportStatus: r.support_status,
@@ -337,12 +358,94 @@ export async function createIntegration(input: z.infer<typeof createIntegrationS
   return getIntegration(key, null);
 }
 
+/** Adds a brand that works like a built-in adapter: enabled at once (the adapter is tested code). */
+export async function createWorksLikeIntegration(input: z.infer<typeof createWorksLikeSchema>, actor: Actor, ip?: string) {
+  const base = registry.builtinMeta(input.basedOn);
+  if (!base || !registry.isSupported(input.basedOn)) throw new HttpError(400, "VALIDATION_ERROR", "Choose an enabled built-in adapter");
+  const key = await withTransaction(async (db) => {
+    await assertNameFree(input.displayName, null, db);
+    const key = await uniqueKey(input.displayName, db);
+    const description = input.description ?? `Works like ${base.displayName}.`;
+    await db.query(
+      `INSERT INTO camera_brands (key, display_name, support_status, auth_methods, default_http_port, default_https_port, capabilities, notes,
+                                  integration_type, based_on, status, manufacturer, description, default_protocol, created_by, updated_by)
+       VALUES ($1,$2,'supported',$3,$4,$5,$6,$7,'alias',$8,'enabled',$9,$10,$11,$12,$12)`,
+      [
+        key, input.displayName, base.authMethods, base.defaultPorts.http, base.defaultPorts.https, base.capabilities, description,
+        base.key, input.manufacturer, description, input.defaultProtocol ?? base.defaultProtocol ?? "http", actor.id,
+      ],
+    );
+    await audit({ actor: serverWide(actor), ip, action: "integration.created", entityType: "integration", entityId: key, details: { displayName: input.displayName, worksLike: base.key } }, db);
+    return key;
+  });
+  await registry.refresh();
+  return getIntegration(key, null);
+}
+
+/** Built-in adapters tried on a camera to find its brand's, most specific first; ONVIF (the standard) last. */
+const DETECT_ORDER = ["hikvision", "prama", "dahua", "uniview", "hanwha", "axis", "panasonic", "reolink", "bosch", "onvif"];
+
+export interface DetectAttempt {
+  key: string;
+  displayName: string;
+  /** works: storage read; login_refused: the camera speaks this API but refused the login; no: not this API. */
+  result: "works" | "login_refused" | "no";
+  message: string;
+  storageDevices?: number;
+  model?: string | null;
+}
+
+/**
+ * Finds which built-in adapter one camera works with, by trying them in turn (one at a time, to be
+ * gentle on the camera): stops at the first that reads storage, at a refused login (the right API,
+ * wrong password), or when the camera cannot be reached. Nothing is stored.
+ */
+export async function detectBrand(input: z.infer<typeof detectSchema>): Promise<{ reachable: boolean; match: DetectAttempt | null; attempts: DetectAttempt[] }> {
+  const settings = await getMonitoringSettings();
+  const attempts: DetectAttempt[] = [];
+  for (const key of DETECT_ORDER) {
+    const adapter = registry.builtinAdapter(key);
+    if (!adapter || !registry.isSupported(key)) continue;
+    const port = input.port ?? (input.protocol === "https" ? adapter.meta.defaultPorts.https : adapter.meta.defaultPorts.http);
+    let r;
+    try {
+      r = await adapter.testConnection({
+        host: input.host, port, protocol: input.protocol, username: input.username, password: input.password,
+        caCertificate: input.caCertificate ?? null, timeoutMs: Math.min(settings.requestTimeoutMs, 8000),
+      });
+    } catch (err) {
+      const e = err instanceof CameraApiError ? err : new CameraApiError("API_ERROR", "Unexpected error");
+      r = { ok: false, reachable: !NETWORK_ERROR_CODES.has(e.code), steps: [], error: { code: e.code, message: e.message } };
+    }
+    const message = redactSecrets(r.error?.message ?? "", [input.password]);
+    if (!r.reachable && r.error && (NETWORK_ERROR_CODES.has(r.error.code) || r.error.code === "HOST_NOT_ALLOWED" || r.error.code === "INVALID_HOST")) {
+      return { reachable: false, match: null, attempts: [...attempts, { key, displayName: adapter.meta.displayName, result: "no", message }] };
+    }
+    if (r.ok) {
+      const found: DetectAttempt = {
+        key, displayName: adapter.meta.displayName, result: "works", message: "Read the camera's storage",
+        storageDevices: r.storage?.devices.length ?? 0, model: r.deviceInfo?.model ?? null,
+      };
+      return { reachable: true, match: found, attempts: [...attempts, found] };
+    }
+    if (r.error && AUTH_ERROR_CODES.has(r.error.code) && key !== "onvif") {
+      const refused: DetectAttempt = { key, displayName: adapter.meta.displayName, result: "login_refused", message };
+      return { reachable: true, match: refused, attempts: [...attempts, refused] };
+    }
+    attempts.push({ key, displayName: adapter.meta.displayName, result: "no", message });
+  }
+  return { reachable: true, match: null, attempts };
+}
+
 export async function updateIntegration(key: string, input: z.infer<typeof updateIntegrationSchema>, actor: Actor, ip?: string) {
   const row = await brandRow(key);
   const builtin = row.integration_type === "builtin";
   const d = input.details ?? {};
   if (builtin && (input.config !== undefined || Object.keys(d).some((k) => !["description", "compatibilityNotes", "supportedModels"].includes(k)))) {
     throw new HttpError(400, "BUILTIN_INTEGRATION", "Built-in adapters are maintained in code. Only the description, supported models and compatibility notes can be edited.");
+  }
+  if (row.integration_type === "alias" && input.config !== undefined) {
+    throw new HttpError(400, "WORKS_LIKE_INTEGRATION", "This brand works like a built-in adapter and has no API configuration to edit.");
   }
   const config = input.config !== undefined ? requireValidConfig(input.config) : undefined;
   await withTransaction(async (db) => {
@@ -516,8 +619,8 @@ export async function testIntegration(key: string, input: z.infer<typeof testInt
   let result: Omit<IntegrationTestResult, "durationMs" | "versionId" | "version" | "outcomeLabel">;
   let version: { id: string; version: number } | null = null;
 
-  if (row.integration_type === "builtin") {
-    const adapter = registry.builtinAdapter(key);
+  if (row.integration_type === "builtin" || row.integration_type === "alias") {
+    const adapter = registry.builtinAdapter(row.integration_type === "alias" ? row.based_on : key);
     if (!adapter) throw notFound("Built-in adapter");
     const r = await adapter.testConnection(camera);
     const outcome: TestOutcome = r.ok ? (r.storage && r.storage.devices.length > 0 ? "OK" : "NO_STORAGE_DATA") : classify(new CameraApiError(r.error!.code, r.error!.message));

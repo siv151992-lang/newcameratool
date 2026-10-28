@@ -9,6 +9,7 @@ import { useAuth } from "../../hooks/auth";
 import { absoluteTime, capabilityLabel, relativeTime } from "../../lib/format";
 import { BrandDetailPage } from "./BrandDetailPage";
 import { BrandWizard } from "./BrandWizard";
+import { QuickAddBrand } from "./QuickAddBrand";
 import { AUTH_LABELS } from "./shared";
 
 /** Settings → Camera brands: list, add wizard, details and edit, under /settings/brands. */
@@ -17,7 +18,8 @@ export function BrandsSection() {
   return (
     <Routes>
       <Route index element={<BrandList />} />
-      {can("system:manage") && <Route path="new" element={<BrandWizard />} />}
+      {can("system:manage") && <Route path="new" element={<QuickAddBrand />} />}
+      {can("system:manage") && <Route path="new/manual" element={<BrandWizard />} />}
       <Route path=":key" element={<BrandDetailPage />} />
       {can("system:manage") && <Route path=":key/edit" element={<BrandWizard />} />}
       <Route path="*" element={<Navigate to="/settings/brands" replace />} />
@@ -25,7 +27,7 @@ export function BrandsSection() {
   );
 }
 
-export const TYPE_LABELS = { builtin: "Custom adapter", configurable: "Configurable API" } as const;
+export const TYPE_LABELS = { builtin: "Custom adapter", configurable: "Configurable API", alias: "Works like a built-in adapter" } as const;
 
 function LastTest({ b }: { b: IntegrationSummary }) {
   if (!b.lastTestAt) return <span className="text-ink-muted">{b.integrationType === "builtin" && b.lastSuccessAt ? `Storage read ${relativeTime(b.lastSuccessAt)}` : "Never"}</span>;

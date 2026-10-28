@@ -14,12 +14,34 @@ information, storage status, error classification, capabilities) and return the 
 storage model, so the dashboard, alerts, history charts, reports and AI forecasts work the same for
 every brand. No other part of the application contains brand-specific logic.
 
-## Adding a brand in the UI (administrators)
+## Adding a brand: detect it from one camera (the simple way)
 
-Before you start, get the vendor's HTTP API documentation and one real camera of that brand with a
-memory card or disk installed, on a network listed in **Settings → Camera networks**.
+Most brands run another maker's firmware (Hikvision, Dahua, …) or support ONVIF, the standard most
+IP cameras speak, so the app already knows how to talk to them. **Settings → Camera brands → Add
+brand** (system administrators):
 
-1. **Settings → Camera brands → Add brand.**
+1. Enter the **brand name** (as people know it) and, optionally, the manufacturer.
+2. Enter **one of its cameras**: address, protocol, port (blank: the usual one), user name and password.
+3. Press **Detect**. The app tries its built-in adapters one at a time: Hikvision, Prama, Dahua,
+   Uniview, Hanwha, Axis, Panasonic, Reolink, Bosch, then ONVIF. It stops at the first that reads the
+   camera's storage, or at a refused login (the camera speaks that API; check the password), or at
+   once if the camera cannot be reached. **What was tried** lists each answer.
+4. Press **Add … (works like …)**. The brand is enabled at once and offered when adding cameras. Its
+   cameras use that built-in adapter: monitoring, recordings, live view, NVRs and every later fix, as
+   for the original brand. The brand's page says "Works like …"; it can be disabled, or deleted
+   while no camera uses it.
+
+The camera's address and password are only used for the test and are not kept. If none of the ways
+reads the camera, turn on ONVIF in it (with an ONVIF user) and try again, or set up its API by hand
+(below).
+
+## Adding a brand in the UI by hand (its own API)
+
+For a brand with an HTTP API of its own that none of the built-in adapters speak. Before you start,
+get the vendor's HTTP API documentation and one real camera of that brand with a memory card or disk
+installed, on a network listed in **Settings → Camera networks**.
+
+1. **Settings → Camera brands → Add brand → Set up its API by hand.**
 2. **Brand details.** Name (must be unique), manufacturer, description, models, default protocol
    and ports, and your version label. Choose **Configurable API**. If the API needs any of the things
    listed under [What needs a custom adapter](#what-needs-a-custom-adapter), stop here: the wizard

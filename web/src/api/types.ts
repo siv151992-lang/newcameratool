@@ -294,7 +294,7 @@ export interface Brand {
   notes: string;
   cameraCount: number;
   version?: string;
-  integrationType?: "builtin" | "configurable";
+  integrationType?: "builtin" | "configurable" | "alias";
   /** Which credentials cameras of this brand need: username + password, one API key/token, or none. */
   credentials?: "user_password" | "secret" | "none";
   defaultProtocol?: "http" | "https";
@@ -543,7 +543,9 @@ export interface IntegrationSummary {
   displayName: string;
   manufacturer: string | null;
   description: string | null;
-  integrationType: "builtin" | "configurable";
+  integrationType: "builtin" | "configurable" | "alias";
+  /** "Works like" brands: the built-in adapter they use. */
+  basedOn: { key: string; displayName: string } | null;
   integrationVersion: string;
   status: IntegrationStatus;
   supportStatus: "supported" | "unverified" | "planned";
