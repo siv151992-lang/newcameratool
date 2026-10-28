@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video, Wrench } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, toQuery } from "../api/client";
@@ -17,7 +17,24 @@ import { MaintenanceDialog } from "./MaintenanceDialog";
 import { ConnectionBadge, CriticalAreaBadge, HealthBadge, MaintenanceBadge, NoLocalStorageBadge, NvrBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
-type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays";
+type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays" | "password";
+
+/** The sort menu: common orders by name, problems first where that is what people look for. */
+const SORT_OPTIONS: { value: `${SortKey}:${"asc" | "desc"}`; label: string }[] = [
+  { value: "name:asc", label: "Name (A–Z)" },
+  { value: "name:desc", label: "Name (Z–A)" },
+  { value: "host:asc", label: "IP address" },
+  { value: "brand:asc", label: "Brand" },
+  { value: "location:asc", label: "Location" },
+  { value: "connection:desc", label: "Offline first" },
+  { value: "recording:desc", label: "Not recording" },
+  { value: "recordingDays:asc", label: "Fewest days" },
+  { value: "recordingDays:desc", label: "Most days" },
+  { value: "usage:desc", label: "Fullest storage" },
+  { value: "health:desc", label: "Storage problems" },
+  { value: "password:desc", label: "Password issues" },
+  { value: "lastSuccess:asc", label: "Oldest check" },
+];
 
 const USAGE_FILTERS: Record<string, { minUsage?: number; maxUsage?: number; label: string }> = {
   "": { label: "Any usage" },
@@ -71,6 +88,7 @@ const COLUMNS: ColumnDef[] = [
   {
     key: "password",
     label: "Password",
+    sortKey: "password",
     cellClassName: "whitespace-nowrap",
     render: (c) => (c.password.status === "unknown" ? <span className="text-ink-muted">—</span> : <PasswordBadge status={c.password.status} title={c.password.changedAt ? `Changed ${relativeTime(c.password.changedAt)}` : undefined} />),
   },
@@ -136,9 +154,11 @@ function SortHeader({ label, k, sort, order, onSort, className }: { label: strin
   const active = sort === k;
   return (
     <th scope="col" aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"} className={clsx("whitespace-nowrap px-2 py-2 font-medium", className)}>
-      <button className="inline-flex items-center gap-1 hover:text-ink" onClick={() => onSort(k)}>
+      <button className="inline-flex items-center gap-1 hover:text-ink" onClick={() => onSort(k)} title={`Sort by ${label.toLowerCase()}`}>
         {label}
-        {active && (order === "asc" ? <ArrowUp className="h-3 w-3" aria-hidden /> : <ArrowDown className="h-3 w-3" aria-hidden />)}
+        {active
+          ? (order === "asc" ? <ArrowUp className="h-3 w-3" aria-hidden /> : <ArrowDown className="h-3 w-3" aria-hidden />)
+          : <ArrowUpDown className="h-3 w-3 opacity-40" aria-hidden />}
       </button>
     </th>
   );
@@ -187,7 +207,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const visibleColumns = COLUMNS.filter((col) => columnVisibility.isVisible(col.key));
   const pageSize = 25;
 
-  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording, password, priority, type]);
+  useEffect(() => setPage(1), [debouncedSearch, brand, status, location, usage, recording, password, priority, type, sort, order]);
 
   const { minUsage, maxUsage } = USAGE_FILTERS[usage] ?? {};
   const params = { search: debouncedSearch, brand, status, location, minUsage, maxUsage, recording, password, priority, type, sort, order, page, pageSize };
@@ -206,7 +226,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
     if (sort === k) setOrder(order === "asc" ? "desc" : "asc");
     else {
       setSort(k);
-      setOrder(k === "usage" || k === "health" || k === "recording" ? "desc" : "asc");
+      setOrder(["usage", "health", "recording", "connection", "password"].includes(k) ? "desc" : "asc");
     }
   };
 
@@ -335,6 +355,23 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
             <option value="ok">Password meets policy</option>
             <option value="weak">Weak password</option>
             <option value="expired">Password change due</option>
+          </Select>
+          <Select
+            aria-label="Sort cameras"
+            className="w-full"
+            value={`${sort}:${order}`}
+            onChange={(e) => {
+              const [k, o] = e.target.value.split(":") as [SortKey, "asc" | "desc"];
+              setSort(k);
+              setOrder(o);
+            }}
+          >
+            {!SORT_OPTIONS.some((o) => o.value === `${sort}:${order}`) && <option value={`${sort}:${order}`}>Sorted by column</option>}
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                Sort: {o.label}
+              </option>
+            ))}
           </Select>
           <Select aria-label="Filter by storage usage" className="w-full" value={usage} onChange={(e) => setUsage(e.target.value)}>
             {Object.entries(USAGE_FILTERS).map(([k, v]) => (

@@ -112,6 +112,15 @@ describe("cameras", () => {
     expect((await agent.get("/api/cameras?recording=idle")).body.total).toBe(0);
     await agent.get("/api/cameras?recording=maybe").expect(400);
 
+    // Sorting: problems first when descending (a camera never checked is above one online).
+    const other = (await agent.post("/api/cameras").set("X-CSRF-Token", csrf).send({ ...cameraBody(), name: "Yard", host: "127.0.0.2" }).expect(201)).body.id;
+    const names = async (q: string) => ((await agent.get(`/api/cameras?${q}`).expect(200)).body.items as { name: string }[]).map((c) => c.name);
+    expect(await names("sort=connection&order=desc")).toEqual(["Yard", "Entrance"]);
+    expect(await names("sort=connection&order=asc")).toEqual(["Entrance", "Yard"]);
+    expect(await names("sort=name&order=desc")).toEqual(["Yard", "Entrance"]);
+    expect(await names("sort=password&order=desc")).toHaveLength(2);
+    await agent.delete(`/api/cameras/${other}`).set("X-CSRF-Token", csrf).expect(204);
+
     const summary = await agent.get("/api/cameras/summary").expect(200);
     expect(summary.body).toMatchObject({ totalCameras: 1, online: 1, offline: 0, storageWarning: 0, recording: 1, notRecording: 0 });
 

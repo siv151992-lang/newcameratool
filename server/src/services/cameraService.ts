@@ -270,7 +270,7 @@ export const listQuerySchema = z.object({
   password: z.enum(["ok", "weak", "expired"]).optional(),
   priority: z.enum(["critical", "normal"]).optional(),
   type: z.enum(["camera", "nvr"]).optional(),
-  sort: z.enum(["name", "host", "brand", "location", "connection", "health", "recording", "usage", "lastSuccess", "recordingDays"]).default("name"),
+  sort: z.enum(["name", "host", "brand", "location", "connection", "health", "recording", "usage", "lastSuccess", "recordingDays", "password"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
@@ -282,12 +282,14 @@ export const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
   host: "c.host",
   brand: "c.brand_key",
   location: "lower(c.location)",
-  connection: "s.connection_status",
+  // Ranked, so descending puts problems first: offline (and refused logins) above unknown above online.
+  connection: "CASE COALESCE(s.connection_status, 'unknown') WHEN 'online' THEN 1 WHEN 'unknown' THEN 2 ELSE 3 END",
   health: "CASE s.storage_health WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'healthy' THEN 1 ELSE 0 END",
   recording: "CASE s.recording_state WHEN 'error' THEN 3 WHEN 'idle' THEN 2 WHEN 'recording' THEN 1 ELSE 0 END",
   usage: "s.used_percentage",
   lastSuccess: "s.last_success_at",
   recordingDays: "s.recording_days",
+  password: `(SELECT CASE ${PASSWORD_STATUS_SQL} WHEN 'expired' THEN 3 WHEN 'weak' THEN 2 WHEN 'ok' THEN 1 ELSE 0 END FROM camera_credentials cr WHERE cr.camera_id = c.id)`,
 };
 
 /** WHERE clause (over cameras c LEFT JOIN camera_status s) for the camera list filters, within one organization. */
