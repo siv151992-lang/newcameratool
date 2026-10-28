@@ -210,7 +210,13 @@ export class MockHikvisionCamera {
       "/ISAPI/ContentMgmt/search": () => {
         // Segments: the first one in the requested period (the oldest, recordedDays ago, when the
         // period reaches back to it) and the one being written (recording) or last written (error).
-        const from = Date.parse(/<startTime>([^<]+)<\/startTime>/.exec(searchBody)?.[1] ?? "") || now;
+        // Firmware replying in UTC also reads the period asked in UTC.
+        const asked = (tag: string) => {
+          const t = Date.parse(new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(searchBody)?.[1] ?? "");
+          return Number.isNaN(t) ? undefined : t + (this.searchRepliesUtc ? offsetMs : 0);
+        };
+        const from = asked("startTime") ?? now;
+        const to = asked("endTime") ?? Infinity;
         if (now - from > this.searchMaxDays * 86_400_000) {
           return `<?xml version="1.0" encoding="UTF-8"?><ResponseStatus version="1.0" xmlns="http://www.hikvision.com/ver10/XMLSchema"><requestURL>/ISAPI/ContentMgmt/search</requestURL><statusCode>6</statusCode><statusString>Invalid Content</statusString><subStatusCode>badParameters</subStatusCode></ResponseStatus>`;
         }
@@ -222,6 +228,8 @@ export class MockHikvisionCamera {
         if (this.recording !== "idle" && from <= oldestStart) items.push([oldestStart, oldestStart + 3600_000]);
         else if (this.recording !== "idle" && from < stopped) items.push([from - 1800_000, Math.min(from + 1800_000, stopped)]);
         if (lastEnd !== undefined && this.recording === "recording") items.push([lastEnd - 3600_000, lastEnd]);
+        // Only what overlaps the period asked.
+        items.splice(0, items.length, ...items.filter(([a, b]) => b > from && a < to));
         if (items.length === 0) {
           return `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>false</responseStatus><responseStatusStrg>NO MATCHES</responseStatusStrg><numOfMatches>0</numOfMatches></CMSearchResult>`;
         }

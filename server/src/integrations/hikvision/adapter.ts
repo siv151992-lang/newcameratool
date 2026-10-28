@@ -247,12 +247,25 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     };
     let found = await search(fromMs, toMs);
     let shiftMs = 0;
+    const inUtc = (segments: RecordedSegment[]) => {
+      const latest = Math.max(...segments.map((s) => s.end));
+      return toLocalWallClock(latest, nowMs, offsetMinutes) !== latest;
+    };
     if (offsetMinutes && found.length) {
-      const latest = Math.max(...found.map((s) => s.end));
-      if (toLocalWallClock(latest, nowMs, offsetMinutes) !== latest) {
+      if (inUtc(found)) {
         // Firmware answering in UTC also reads the requested period in UTC: ask for the local one.
         shiftMs = offsetMinutes * 60_000;
         found = await search(fromMs - shiftMs, toMs - shiftMs);
+      }
+    } else if (offsetMinutes && offsetMinutes > 0) {
+      // Nothing found. On such firmware, today read in UTC can start in the camera's future (in India,
+      // until 05:30 local time "today" in UTC has not begun): ask for the local period in UTC, and
+      // keep what it finds if its answers are in UTC.
+      const shift = offsetMinutes * 60_000;
+      const shifted = await search(fromMs - shift, toMs - shift);
+      if (shifted.length && inUtc(shifted)) {
+        shiftMs = shift;
+        found = shifted;
       }
     }
     return { segments: mergeSegments(found.map((s) => ({ start: s.start + shiftMs, end: s.end + shiftMs }))), nowMs, shiftMs };
