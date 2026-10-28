@@ -52,8 +52,14 @@ export function describeStart(t: StartTimings, cam: CameraTimings | null): strin
       .filter(([, v]) => v !== undefined).map(([k, v]) => `${k} ${sec(v!)}`);
     parts.push(`camera ${sec(cam.total)}${steps.length ? ` (${steps.join(", ")})` : ""}`);
   }
-  parts.push(`picture ${sec(Math.max(0, t.playing - t.firstVideo))} after the video arrived`);
-  return `Started in ${sec(t.playing)}: ${parts.join(" · ")}`;
+  const picture = Math.max(0, t.playing - t.firstVideo);
+  parts.push(`picture ${sec(picture)} after the video arrived`);
+  // A picture can only start at a full frame (I-frame); cameras send recordings at real-time pace, so
+  // a long wait here is the camera's I-frame interval.
+  const hint = picture > 1500
+    ? ". Most of this is waiting for the camera's next full picture (I-frame): set the camera's I-frame interval to its frame rate (one per second) and turn off H.264+ / Smart Codec to start faster"
+    : "";
+  return `Started in ${sec(t.playing)}: ${parts.join(" · ")}${hint}`;
 }
 
 const BUFFER_KEY = "cctv-playback-buffer";

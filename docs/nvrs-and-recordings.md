@@ -34,6 +34,14 @@ second stream to H.264 in the camera's own video settings.
   and builds the rest by playing slightly slower than real time (0.9–0.96×) until it is full. Use
   Large over VPN or mobile links. The choice is remembered in the browser.
 
+A line under the player says where the time to start went: our server, each step of the camera's
+answer, and the wait for the picture. A picture can only start at a full frame (I-frame), and cameras
+send recordings at real-time pace, so a long "picture … after the video arrived" is the camera's
+I-frame interval: set **I Frame Interval** to the frame rate (e.g. 25 at 25 fps, one per second) and
+turn off **H.264+ / Smart Codec** in the camera's video settings (Hikvision: Configuration →
+Video/Audio → Video). Recordings then start within about a second; they take roughly 10–30% more
+space.
+
 Times are the camera's own clock. The app reads each camera's clock about once an hour and shows
 how far off it is on the camera page; a clock wrong by more than 5 minutes (Settings → Problem
 detection) raises an alert. Set the camera to take its time from an NTP server.
