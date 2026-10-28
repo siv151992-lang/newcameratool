@@ -4,13 +4,14 @@ import { createCamera } from "../../src/services/cameraService.js";
 import { uptimeCsv, uptimeReport } from "../../src/services/uptimeService.js";
 import { createTestUser, prepareDb, resetData, testOrgId } from "../helpers.js";
 
-const H = 3600_000;
 let actor: { id: string; username: string };
+/** Each test camera its own address (two cameras may not share one). */
+let nextHost = 2;
 
 async function camera(name: string, location: string, createdHoursAgo: number, status: "online" | "offline" | "unknown") {
   const id = await createCamera(
     testOrgId,
-    { name, host: `10.0.0.${Math.floor(Math.random() * 200) + 2}`, port: 80, protocol: "http", brand: "hikvision", model: null, location, username: "a", password: "b",
+    { name, host: `10.0.0.${nextHost++}`, port: 80, protocol: "http", brand: "hikvision", model: null, location, username: "a", password: "b",
       monitoringEnabled: true, warningThreshold: null, criticalThreshold: null, caCertificate: null },
     actor,
   );
@@ -63,7 +64,7 @@ describe("uptime", () => {
     expect(r2.cameras[0]).toMatchObject({ name: "Dock", uptime: 0, outages: 0 });
 
     const csv = uptimeCsv(r2);
-    expect(csv.split("\r\n")[0]).toBe("﻿Camera,Location,Uptime %,Online (hours),Observed (hours),Downtime (minutes),Outages,Longest outage (minutes)");
+    expect(csv.split("\r\n")[0]).toBe("\uFEFFCamera,Location,Uptime %,Online (hours),Observed (hours),Downtime (minutes),Outages,Longest outage (minutes)");
     expect(csv).toContain("Gate,Site A,95.833,23.00,24.00,60,1,60");
   });
 });

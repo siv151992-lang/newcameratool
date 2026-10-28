@@ -134,5 +134,5 @@ export function uptimeCsv(r: UptimeReport): string {
     c.name, c.location, c.uptime, (c.onlineSeconds / 3600).toFixed(2), (c.observedSeconds / 3600).toFixed(2),
     Math.round((c.observedSeconds - c.onlineSeconds) / 60), c.outages, Math.round(c.longestOutageSeconds / 60),
   ].map(csvCell).join(","));
-  return `﻿${[head.join(","), ...lines].join("\r\n")}\r\n`;
+  return `\uFEFF${[head.join(","), ...lines].join("\r\n")}\r\n`;
 }
