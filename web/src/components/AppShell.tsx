@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bell, Building2, Camera, LayoutDashboard, MonitorPlay, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, X } from "lucide-react";
+import { Activity, Bell, Building2, Camera, LayoutDashboard, MonitorPlay, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -124,6 +124,7 @@ export function AppShell() {
       <NavItem to="/cameras" icon={<Camera className={icon} />} onClick={close} collapsed={collapsed}>Cameras</NavItem>
       {can("cameras:live") && <NavItem to="/live" icon={<MonitorPlay className={icon} />} onClick={close} collapsed={collapsed}>Live</NavItem>}
       <NavItem to="/alerts" icon={<Bell className={icon} />} badge={summary.data?.alerts.active} onClick={close} collapsed={collapsed}>Alerts</NavItem>
+      <NavItem to="/uptime" icon={<Activity className={icon} />} onClick={close} collapsed={collapsed}>Uptime</NavItem>
       {ai.data?.enabled && <NavItem to="/ai" icon={<Sparkles className={icon} />} onClick={close} collapsed={collapsed}>AI Mode</NavItem>}
       <NavItem to="/integrations" icon={<Plug className={icon} />} onClick={close} collapsed={collapsed}>Integrations</NavItem>
       <NavItem to="/settings" icon={<Settings className={icon} />} onClick={close} collapsed={collapsed}>Settings</NavItem>

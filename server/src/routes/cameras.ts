@@ -30,6 +30,7 @@ import {
   updateCamera,
 } from "../services/cameraService.js";
 import { testCameraConfig, testSavedCamera } from "../services/connectionService.js";
+import { uptimeCsv, uptimeReport } from "../services/uptimeService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
@@ -62,6 +63,21 @@ camerasRouter.get("/report", read, async (req, res) => {
 
 camerasRouter.get("/ids", read, async (req, res) => {
   res.json(await listCameraIds(orgOf(req), parse(listQuerySchema, req.query)));
+});
+
+// Uptime over the last 7, 30 or 90 days: per camera and location (the page shows the lowest 500; the CSV has all).
+const uptimeQuery = z.object({ days: z.coerce.number().int().refine((d) => [1, 7, 30, 90].includes(d), "Use 1, 7, 30 or 90").default(30) });
+camerasRouter.get("/uptime", read, async (req, res) => {
+  const { days } = parse(uptimeQuery, req.query);
+  const r = await uptimeReport(orgOf(req), days);
+  res.json({ ...r, cameras: r.cameras.slice(0, 500), camerasShown: Math.min(500, r.cameras.length) });
+});
+camerasRouter.get("/uptime.csv", read, async (req, res) => {
+  const { days } = parse(uptimeQuery, req.query);
+  const r = await uptimeReport(orgOf(req), days);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="uptime-${days}-days-${r.to.slice(0, 10)}.csv"`);
+  res.send(uptimeCsv(r));
 });
 
 camerasRouter.get("/summary", read, async (req, res) => {

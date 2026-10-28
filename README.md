@@ -193,4 +193,4 @@ cameras are needed: tests use the simulated camera and mocked responses.
 
 In Docker, run the status command with `docker compose exec api node dist/cli/status.js` (add `--check` to refresh first).
 
-More: [Accounts, organizations and sign-in](docs/accounts-and-sign-in.md) · [Live view, recordings and NVRs](docs/nvrs-and-recordings.md) · [Alert notifications](docs/notifications.md) · [Architecture and security](docs/architecture.md) · [Operations](docs/operations.md) · [Adding a camera brand](docs/adding-a-camera-brand.md) · API docs at `/api/docs`.
+More: [Accounts, organizations and sign-in](docs/accounts-and-sign-in.md) · [Live view, recordings and NVRs](docs/nvrs-and-recordings.md) · [Alert notifications](docs/notifications.md) · [Uptime report](docs/uptime.md) · [Architecture and security](docs/architecture.md) · [Operations](docs/operations.md) · [Adding a camera brand](docs/adding-a-camera-brand.md) · API docs at `/api/docs`.
