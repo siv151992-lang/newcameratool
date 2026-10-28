@@ -111,7 +111,11 @@ export class MilestoneAdapter extends OnvifAdapter {
     let deviceInfo: DeviceInfo | undefined;
     try {
       deviceInfo = await this.getDeviceInfo(camera);
-      step("reachability", "passed", "Network reachability", `Connected to ${camera.host}:${camera.port}`);
+      const at = this.answeringAt(camera);
+      const moved = at !== `${camera.host}:${camera.port}`;
+      step("reachability", moved ? "warning" : "passed", "Network reachability", moved
+        ? `Port ${camera.port} did not answer; an ONVIF device answered at ${at} instead (is this the Open Network Bridge, or a camera?)`
+        : `Connected to ${at}`);
       step("authentication", "passed", "Authentication", "Signed in to the Open Network Bridge");
       const cams = await this.cameras(camera);
       step("api", "passed", "Cameras", `${cams.length} camera${cams.length === 1 ? "" : "s"}: ${cams.slice(0, 5).map((c) => c.name).join(", ")}${cams.length > 5 ? ", …" : ""}`);

@@ -91,6 +91,12 @@ export class OnvifAdapter implements CameraBrandAdapter {
   private readonly searchedAt = new Map<string, number>();
 
   /** The camera as ONVIF must be contacted: its own address, at the ONVIF service's protocol and port. */
+  /** Where the device's ONVIF service actually answers (the configured address, or one found elsewhere). */
+  protected answeringAt(camera: CameraConfig): string {
+    const t = this.target(camera);
+    return `${t.camera.host}:${t.camera.port}${t.devicePath === ONVIF_DEVICE_SERVICE_PATH ? "" : t.devicePath}`;
+  }
+
   private target(camera: CameraConfig): { camera: CameraConfig; devicePath: string } {
     const ep = this.endpoints.get(cameraKey(camera));
     return ep ? { camera: { ...camera, protocol: ep.protocol, port: ep.port }, devicePath: ep.path } : { camera, devicePath: ONVIF_DEVICE_SERVICE_PATH };
