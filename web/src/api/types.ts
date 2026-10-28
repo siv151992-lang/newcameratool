@@ -114,6 +114,8 @@ export interface Camera {
   credentialsUpdatedAt: string | null;
   /** "critical": a critical area, listed first, problems raised as critical. */
   priority: "critical" | "normal";
+  /** Planned work: no new alerts or notifications until then; null when not in maintenance. */
+  maintenance: { until: string; note: string | null } | null;
   /** "nvr": a network video recorder (its hard disks and channels are checked). */
   deviceType: "camera" | "nvr";
   /** NVRs: channel counts, and why channels could not be read (null for cameras). */

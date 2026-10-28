@@ -49,6 +49,24 @@ export function useSetMonitoring() {
 const BULK_BATCH = 500;
 const batches = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / BULK_BATCH) }, (_, i) => ids.slice(i * BULK_BATCH, (i + 1) * BULK_BATCH));
 
+/** Puts cameras in maintenance for `minutes`, or ends it (minutes null). */
+export function useSetMaintenance() {
+  const invalidate = useInvalidateCameras();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ ids, minutes, note }: { ids: string[]; minutes: number | null; note?: string }) => {
+      let updated = 0;
+      for (const chunk of batches(ids)) updated += (await api<{ updated: number }>("/cameras/bulk-maintenance", { method: "POST", body: { ids: chunk, minutes, ...(note ? { note } : {}) } })).updated;
+      return { updated };
+    },
+    onSuccess: (r, v) => {
+      toast("success", v.minutes === null ? `Maintenance ended for ${r.updated} camera(s): alerts resume` : `${r.updated} camera(s) in maintenance: no new alerts or notifications`);
+      invalidate();
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+}
+
 export function useSetPriority() {
   const invalidate = useInvalidateCameras();
   const toast = useToast();

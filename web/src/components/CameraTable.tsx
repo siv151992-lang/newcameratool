@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, toQuery } from "../api/client";
@@ -13,7 +13,8 @@ import { ColumnsMenu } from "./ColumnsMenu";
 import { LiveViewDialog } from "./LiveView";
 import { RecordingsDialog } from "./Recordings";
 import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
-import { ConnectionBadge, CriticalAreaBadge, HealthBadge, NoLocalStorageBadge, NvrBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
+import { MaintenanceDialog } from "./MaintenanceDialog";
+import { ConnectionBadge, CriticalAreaBadge, HealthBadge, MaintenanceBadge, NoLocalStorageBadge, NvrBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
 
 type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays";
@@ -180,6 +181,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const [recordings, setRecordings] = useState<Camera | null>(null);
   const setLocalStorage = useSetLocalStorage();
   const setCameraPriority = useSetPriority();
+  const [maintaining, setMaintaining] = useState(false);
   const debouncedSearch = useDebounced(search);
   const columnVisibility = useColumnVisibility("cctv-camera-columns", COLUMN_KEYS);
   const visibleColumns = COLUMNS.filter((col) => columnVisibility.isVisible(col.key));
@@ -370,6 +372,9 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
             >
               Normal priority
             </Button>
+            <Button size="sm" icon={<Wrench className="h-4 w-4" />} onClick={() => setMaintaining(true)} title="Planned work: no new alerts or notifications for a while">
+              Maintenance
+            </Button>
             <Button
               size="sm"
               icon={<HardDriveDownload className="h-4 w-4" />}
@@ -467,10 +472,11 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                         {c.host}
                         {c.port !== (c.protocol === "https" ? 443 : 80) && `:${c.port}`} · {c.model ?? "Model unknown"}
                       </div>
-                      {(c.priority === "critical" || c.deviceType === "nvr") && (
+                      {(c.priority === "critical" || c.deviceType === "nvr" || c.maintenance) && (
                         <div className="mt-1 flex flex-wrap gap-1">
                           {c.deviceType === "nvr" && <NvrBadge channels={c.channels} />}
                           {c.priority === "critical" && <CriticalAreaBadge />}
+                          {c.maintenance && <MaintenanceBadge until={c.maintenance.until} note={c.maintenance.note} />}
                         </div>
                       )}
                     </td>
@@ -539,6 +545,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
           })
         }
       />
+      <MaintenanceDialog ids={[...selected]} open={maintaining} onClose={() => setMaintaining(false)} onDone={() => setSelected(new Set())} />
     </section>
   );
 }

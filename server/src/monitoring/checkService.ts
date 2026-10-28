@@ -310,7 +310,7 @@ async function persist(
   return withTransaction(async (db) => {
     const { rows } = await db.query(
       `SELECT c.id, c.name, c.host, c.created_at, c.warning_threshold, c.critical_threshold, c.local_storage,
-              c.organization_id, c.brand_key, c.priority, cr.password_changed_at,
+              c.organization_id, c.brand_key, c.priority, cr.password_changed_at, (c.maintenance_until > now()) AS in_maintenance,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success,
               s.recording_days, s.recording_days_at_least, s.recording_range_error, s.clock_offset_seconds
@@ -474,6 +474,13 @@ async function persist(
     // Critical-area cameras: every problem is critical (the password reminder stays a reminder).
     const raised = cam.priority === "critical" ? evaluation.active.map(raiseForCriticalArea) : evaluation.active;
     const active = due ? [...raised, due] : raised;
+    if (cam.in_maintenance) {
+      // Planned work: alerts already open stay as they are (and resolve if the problem clears), no new
+      // ones open, and nothing is sent.
+      const open = await openAlertTypes(cameraId, db);
+      await applyConditions(db, { id: cam.id, name: cam.name, host: cam.host }, active.filter((c) => open.has(c.type)), [...evaluation.evaluated, "password_change_due"]);
+      return [];
+    }
     return applyConditions(db, { id: cam.id, name: cam.name, host: cam.host }, active, [...evaluation.evaluated, "password_change_due"]);
   });
 }

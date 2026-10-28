@@ -96,6 +96,41 @@ describe("storage checks", () => {
     expect(sent.map((e) => `${e.type}:${e.kind}`)).toEqual(["offline:opened", "offline:resolved"]);
   });
 
+  it("opens no alerts and sends nothing for a camera in maintenance, and resumes afterwards", async () => {
+    const { setMaintenance } = await import("../../src/services/cameraService.js");
+    const actor = await createTestUser("admin", "maint-admin");
+    const id = await addCamera({ password: "wrong-password" }); // every check: login refused
+    await setMaintenance(testOrgId, [id], new Date(Date.now() + 3600_000), "Replacing the camera", actor);
+    for (let i = 0; i < 3; i++) await runCheck(id, "manual", deps);
+    expect((await status(id)).consecutive_auth_failures).toBe(3); // still checked and shown
+    expect(await alerts(id)).toEqual([]);
+    expect(sent).toEqual([]);
+    expect((await pool.query("SELECT action, details FROM audit_logs WHERE entity_id = $1 AND action LIKE 'camera.maintenance%'", [id])).rows)
+      .toEqual([{ action: "camera.maintenance_started", details: { until: expect.any(String), note: "Replacing the camera" } }]);
+
+    // Over: the next check raises the alert and sends it.
+    await setMaintenance(testOrgId, [id], null, null, actor);
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).map((a) => a.type)).toEqual(["auth_failure"]);
+    expect(sent.map((e) => `${e.type}:${e.kind}`)).toEqual(["auth_failure:opened"]);
+  });
+
+  it("keeps alerts opened before maintenance, and resolves them if the problem clears", async () => {
+    const { setMaintenance } = await import("../../src/services/cameraService.js");
+    const actor = await createTestUser("admin", "maint-admin2");
+    const id = await addCamera({ password: "wrong-password" });
+    for (let i = 0; i < 2; i++) await runCheck(id, "manual", deps);
+    expect((await alerts(id)).map((a) => [a.type, a.status])).toEqual([["auth_failure", "active"]]);
+    sent.length = 0;
+    await setMaintenance(testOrgId, [id], new Date(Date.now() + 3600_000), null, actor);
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).map((a) => [a.type, a.status])).toEqual([["auth_failure", "active"]]); // not resolved by maintenance
+    await updateCamera(testOrgId, id, { password: "Cam-Pass-123" }, actor); // the right password: the problem clears
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).map((a) => [a.type, a.status])).toEqual([["auth_failure", "resolved"]]);
+    expect(sent).toEqual([]); // nothing sent during maintenance
+  });
+
   it("distinguishes authentication failures from offline", async () => {
     const id = await addCamera({ password: "wrong-password" });
     await runCheck(id, "manual", deps);

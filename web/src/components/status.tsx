@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, Clock, FilePen, FlaskConical, HardDriveDownload, KeyRound, Server, ShieldAlert, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDot, CircleHelp, CirclePause, CircleStop, Clock, FilePen, FlaskConical, HardDriveDownload, KeyRound, Wrench, Server, ShieldAlert, WifiOff } from "lucide-react";
 import type { CameraPasswordStatus, ConnectionStatus, IntegrationStatus, RecordingState, Severity, StorageHealth } from "../api/types";
 
 /**
@@ -135,6 +135,14 @@ export function NvrBadge({ channels }: { channels: { total: number; noVideo: num
   const label = `NVR${channels?.total ? ` · ${channels.total} ch` : ""}${problems ? ` · ${problems} issue${problems === 1 ? "" : "s"}` : ""}`;
   const title = channels ? `${channels.total} channels: ${channels.noVideo} without video, ${channels.notRecording} not recording` : "Network video recorder";
   return <Pill tone={problems ? (channels!.noVideo ? "bad" : "warn") : "good"} icon={Server} label={label} title={title} />;
+}
+
+/** In maintenance (planned work): no new alerts or notifications until then. */
+export function MaintenanceBadge({ until, note }: { until: string; note: string | null }) {
+  const end = new Date(until);
+  const sameDay = end.toDateString() === new Date().toDateString();
+  const when = sameDay ? end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : end.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return <Pill tone="unknown" icon={Wrench} label={`Maintenance until ${when}`} title={`No new alerts or notifications until ${end.toLocaleString()}${note ? `: ${note}` : ""}`} />;
 }
 
 export function CriticalAreaBadge() {

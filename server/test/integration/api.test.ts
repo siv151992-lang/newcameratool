@@ -259,6 +259,21 @@ describe("camera priority", () => {
     expect((await agent.get("/api/cameras?priority=critical").expect(200)).body.items.map((c: { id: string }) => c.id)).toEqual([b]);
     expect(a).toBeTruthy();
   });
+
+  it("puts cameras in maintenance (Operators too, not Viewers) and shows it", async () => {
+    const admin = await signIn("admin");
+    const id = (await admin.agent.post("/api/cameras").set("X-CSRF-Token", admin.csrf).send(cameraBody()).expect(201)).body.id as string;
+    const operator = await signIn("operator");
+    await operator.agent.post("/api/cameras/bulk-maintenance").set("X-CSRF-Token", operator.csrf).send({ ids: [id], minutes: 120, note: "New switch" }).expect(200);
+    const cam = (await admin.agent.get(`/api/cameras/${id}`).expect(200)).body;
+    expect(cam.maintenance.note).toBe("New switch");
+    expect(Date.parse(cam.maintenance.until) - Date.now()).toBeGreaterThan(115 * 60_000);
+    const viewer = await signIn("viewer");
+    await viewer.agent.post("/api/cameras/bulk-maintenance").set("X-CSRF-Token", viewer.csrf).send({ ids: [id], minutes: null }).expect(403);
+    await admin.agent.post("/api/cameras/bulk-maintenance").set("X-CSRF-Token", admin.csrf).send({ ids: [id], minutes: 5 }).expect(400); // at least 15 minutes
+    await operator.agent.post("/api/cameras/bulk-maintenance").set("X-CSRF-Token", operator.csrf).send({ ids: [id], minutes: null }).expect(200);
+    expect((await admin.agent.get(`/api/cameras/${id}`).expect(200)).body.maintenance).toBeNull();
+  });
 });
 
 describe("camera password policy", () => {

@@ -16,6 +16,7 @@ import {
   createCamera,
   getCamera,
   getCameraRow,
+  setMaintenance,
   getHistory,
   getSummary,
   listCameras,
@@ -116,6 +117,19 @@ camerasRouter.post("/bulk-delete", write, async (req, res) => {
 camerasRouter.post("/bulk-local-storage", write, async (req, res) => {
   const { ids, localStorage } = parse(z.object({ ids: z.array(z.string().uuid()).min(1).max(500), localStorage: z.boolean() }).strict(), req.body);
   res.json(await setLocalStorage(orgOf(req), ids, localStorage, actorOf(req), req.ip));
+});
+
+// Maintenance (planned work): Operators and Org Admins, like handling alerts. minutes: null ends it.
+camerasRouter.post("/bulk-maintenance", requirePermission("alerts:manage"), async (req, res) => {
+  const { ids, minutes, note } = parse(
+    z.object({
+      ids: z.array(z.string().uuid()).min(1).max(500),
+      minutes: z.number().int().min(15).max(30 * 24 * 60).nullable(),
+      note: z.string().trim().max(200).optional(),
+    }).strict(),
+    req.body,
+  );
+  res.json(await setMaintenance(orgOf(req), ids, minutes === null ? null : new Date(Date.now() + minutes * 60_000), note || null, actorOf(req), req.ip));
 });
 
 camerasRouter.post("/bulk-priority", write, async (req, res) => {

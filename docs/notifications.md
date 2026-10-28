@@ -24,3 +24,14 @@ test** checks a channel at once; failed deliveries show their reason.
   network (10.x, 192.168.x, 172.16–31.x, loopback, link-local, cloud metadata) are refused, the
   checked address is the one connected to, and redirects are not followed.
 - The server needs outbound HTTPS (port 443) to the chat service.
+
+## Maintenance (planned work)
+
+Before planned work, or while a camera is being replaced, put it in **maintenance**: the camera's
+page → **Maintenance**, or select cameras in the list → **Maintenance** (Org Admins). Choose how long
+(1 hour to 30 days) and an optional note. Meanwhile the camera is still checked and its status
+shown, but it **opens no new alerts and sends no emails or chat messages**; alerts that were already
+open stay as they are, and close if the problem clears. When the time is up, alerting resumes by
+itself (or press **End maintenance**; the camera is checked at once). The camera list and page show
+"Maintenance until …". Operators and Org Admins can do this; each start and end is in the audit log.
+

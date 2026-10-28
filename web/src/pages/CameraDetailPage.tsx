@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff } from "lucide-react";
+import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, toQuery } from "../api/client";
@@ -9,14 +9,15 @@ import { Diagnostics } from "../components/Diagnostics";
 import { LiveViewDialog } from "../components/LiveView";
 import { RecordingsDialog } from "../components/Recordings";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
-import { ConnectionBadge, CriticalAreaBadge, DeviceHealthBadge, HealthBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
+import { ConnectionBadge, CriticalAreaBadge, DeviceHealthBadge, HealthBadge, MaintenanceBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
 import { issueLabel } from "../lib/cameraPassword";
 import { UsageHistoryChart } from "../components/UsageHistoryChart";
 import { useAiStatus } from "../hooks/ai";
 import { CameraForecastPanel } from "./AiPage";
 import { Button, Card, Dialog, EmptyState, ErrorMessage, Spinner } from "../components/ui";
 import { useAuth } from "../hooks/auth";
-import { useCheckNow, useRemoveCameras, useSetMonitoring, useTestSavedCamera } from "../hooks/cameras";
+import { useCheckNow, useRemoveCameras, useSetMaintenance, useSetMonitoring, useTestSavedCamera } from "../hooks/cameras";
+import { MaintenanceDialog } from "../components/MaintenanceDialog";
 import { absoluteTime, ALERT_TYPE_LABELS, describeClockOffset, ERROR_LABELS, errorCategory, formatBytes, formatDays, formatPercent, relativeTime } from "../lib/format";
 
 const RANGES = [
@@ -118,6 +119,8 @@ export function CameraDetailPage() {
 
   const checkNow = useCheckNow();
   const setMonitoring = useSetMonitoring();
+  const endMaintenance = useSetMaintenance();
+  const [maintaining, setMaintaining] = useState(false);
   const remove = useRemoveCameras();
   const testConn = useTestSavedCamera();
 
@@ -144,6 +147,7 @@ export function CameraDetailPage() {
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {c.priority === "critical" && <CriticalAreaBadge />}
+            {c.maintenance && <MaintenanceBadge until={c.maintenance.until} note={c.maintenance.note} />}
             <ConnectionBadge status={s.connection} monitoringEnabled={c.monitoringEnabled} />
             {c.localStorage === false ? (
               <NoLocalStorageBadge />
@@ -181,6 +185,15 @@ export function CameraDetailPage() {
               </Button>
             </>
           )}
+          {can("alerts:manage") && (c.maintenance ? (
+            <Button icon={<Wrench className="h-4 w-4" />} loading={endMaintenance.isPending} onClick={() => endMaintenance.mutate({ ids: [c.id], minutes: null })} title="Alerts and notifications resume">
+              End maintenance
+            </Button>
+          ) : (
+            <Button icon={<Wrench className="h-4 w-4" />} onClick={() => setMaintaining(true)} title="Planned work: no new alerts or notifications for a while">
+              Maintenance
+            </Button>
+          ))}
           {can("cameras:write") && (
             <>
               <Button icon={<Pencil className="h-4 w-4" />} onClick={() => navigate(`/cameras/${c.id}/edit`)}>
@@ -495,6 +508,7 @@ export function CameraDetailPage() {
       </Dialog>
       <LiveViewDialog camera={live ? c : null} onClose={() => setLive(false)} />
       <RecordingsDialog camera={showRecordings ? c : null} onClose={() => setShowRecordings(false)} />
+      <MaintenanceDialog ids={[c.id]} open={maintaining} onClose={() => setMaintaining(false)} />
       <RemoveCamerasDialog
         open={removing}
         names={[c.name]}

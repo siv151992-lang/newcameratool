@@ -143,6 +143,7 @@ const SELECT_CAMERA = `
   SELECT c.id, c.name, c.host, c.port, c.protocol, c.brand_key, b.display_name AS brand_name,
          c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.device_type, c.warning_threshold, c.critical_threshold,
          (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
+         CASE WHEN c.maintenance_until > now() THEN c.maintenance_until END AS maintenance_until, c.maintenance_note,
          c.created_at, c.updated_at,
          cr.username, cr.updated_at AS credentials_updated_at, cr.password_changed_at, cr.password_issues,
          ${PASSWORD_STATUS_SQL} AS password_status,
@@ -199,6 +200,8 @@ export function toCameraView(r: CameraRow) {
     monitoringEnabled: r.monitoring_enabled,
     localStorage: r.local_storage as boolean,
     priority: r.priority as "critical" | "normal",
+    /** Planned work: no new alerts or notifications until then (null when not in maintenance). */
+    maintenance: r.maintenance_until ? { until: r.maintenance_until as Date, note: (r.maintenance_note as string | null) ?? null } : null,
     deviceType: (r.device_type as "camera" | "nvr" | undefined) ?? "camera",
     /** NVRs: how many channels, how many without video and how many not recording (null for cameras). */
     channels: r.device_type === "nvr"
@@ -740,6 +743,29 @@ export async function setLocalStorage(orgId: string, ids: string[], localStorage
     for (const r of rows) {
       await audit({ actor, ip, action: localStorage ? "camera.local_storage_on" : "camera.local_storage_off", entityType: "camera", entityId: r.id }, db);
     }
+    return { updated: rows.length };
+  });
+}
+
+/**
+ * Puts cameras in maintenance until a time (planned work: they are still checked, but open no new
+ * alerts and send no notifications), or ends it (until = null).
+ */
+export async function setMaintenance(orgId: string, ids: string[], until: Date | null, note: string | null, actor: Actor, ip?: string | null) {
+  return withTransaction(async (db) => {
+    const { rows } = await db.query<{ id: string }>(
+      `UPDATE cameras SET maintenance_until = $2, maintenance_note = $3, updated_at = now()
+       WHERE id = ANY($1::uuid[]) AND organization_id = $4 AND deleted_at IS NULL RETURNING id`,
+      [ids, until, until ? note : null, orgId],
+    );
+    for (const r of rows) {
+      await audit({
+        actor, ip, action: until ? "camera.maintenance_started" : "camera.maintenance_ended", entityType: "camera", entityId: r.id,
+        details: until ? { until: until.toISOString(), ...(note ? { note } : {}) } : {},
+      }, db);
+    }
+    // A check at once: alerts resume straight after maintenance ends.
+    if (!until) await db.query("UPDATE camera_status SET next_check_at = now() WHERE camera_id = ANY($1::uuid[])", [rows.map((r) => r.id)]);
     return { updated: rows.length };
   });
 }
