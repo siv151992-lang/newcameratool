@@ -328,6 +328,10 @@ type Pending = {
   silent?: (m: RtspMessage) => void;
 };
 
+/** CSeqs of the relay's own requests to the camera (go2rtc counts up from 1). */
+const OWN_PAUSE_CSEQ = "998";
+const OWN_TEARDOWN_CSEQ = "999";
+
 const ok2xx = (m: RtspMessage) => /^RTSP\/\S+\s+2\d\d\b/.test(m.first);
 const cloneMessage = (m: RtspMessage): RtspMessage => ({ first: m.first, headers: m.headers.map(([k, v]) => [k, v]), body: Buffer.from(m.body) });
 
@@ -372,7 +376,7 @@ function relayConnection(socket: net.Socket) {
   const endSession = (cam: net.Socket) => {
     if (!session || tornDown || !cam.writable || queue) return false;
     tornDown = true;
-    const m: RtspMessage = { first: `TEARDOWN ${session.uri} RTSP/1.0`, headers: [["CSeq", "999"], ["Session", session.id]], body: Buffer.alloc(0) };
+    const m: RtspMessage = { first: `TEARDOWN ${session.uri} RTSP/1.0`, headers: [["CSeq", OWN_TEARDOWN_CSEQ], ["Session", session.id]], body: Buffer.alloc(0) };
     authorize(m, "TEARDOWN", session.uri);
     cam.end(serialize(m));
     setTimeout(() => cam.destroy(), 1000).unref();
@@ -406,7 +410,7 @@ function relayConnection(socket: net.Socket) {
     if (!parkable(cam) || !session) return false;
     const name = target!.streamName!;
     parkedNow = true;
-    const pause: RtspMessage = { first: `PAUSE ${session.uri} RTSP/1.0`, headers: [["CSeq", "998"], ["Session", session.id]], body: Buffer.alloc(0) };
+    const pause: RtspMessage = { first: `PAUSE ${session.uri} RTSP/1.0`, headers: [["CSeq", OWN_PAUSE_CSEQ], ["Session", session.id]], body: Buffer.alloc(0) };
     if (target!.onvif) setHeader(pause, "Require", "onvif-replay");
     authorize(pause, "PAUSE", session.uri);
     cam.write(serialize(pause));
@@ -533,6 +537,8 @@ function relayConnection(socket: net.Socket) {
     const cseq = header(m, "CSeq");
     const request = cseq ? pending.get(cseq) : undefined;
     if (request) pending.delete(cseq!);
+    // The answer to the relay's own PAUSE or TEARDOWN (late, after a seek took the session over): not go2rtc's.
+    if (!request && (cseq === OWN_PAUSE_CSEQ || cseq === OWN_TEARDOWN_CSEQ) && /^RTSP\//.test(m.first)) return;
     const t = trace();
     if (t && request && !request.silent) {
       const [method = "", uri = ""] = request.message.first.split(" ");

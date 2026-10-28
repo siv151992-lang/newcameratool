@@ -56,7 +56,7 @@ describe("ONVIF recordings (Profile G)", () => {
 
 /** A replay server that insists on digest login, Require: onvif-replay and a clock Range. */
 function fakeReplayCamera() {
-  const options = { refuseScale: false, refuseRange: false, refuseSetup: false, busySetups: 0, confirmSeek: false, maxSessions: 0 };
+  const options = { refuseScale: false, refuseRange: false, refuseSetup: false, busySetups: 0, confirmSeek: false, maxSessions: 0, latePauseMs: 0 };
   let connections = 0;
   /** Playback sessions open (a camera with few connections refuses more: 453). */
   const open = new Set<string>();
@@ -95,6 +95,10 @@ function fakeReplayCamera() {
           open.delete(sessionId);
           send("200 OK");
           return socket.end();
+        }
+        if (method === "PAUSE" && options.latePauseMs) {
+          setTimeout(() => send("200 OK", [`Session: ${sessionId}`]), options.latePauseMs);
+          return;
         }
         if (method === "SETUP" && options.busySetups > 0) {
           options.busySetups -= 1;
@@ -137,6 +141,7 @@ function rtspClient(port: number) {
   let cseq = 0;
   return {
     frames,
+    replies,
     until,
     close: () => socket.destroy(),
     pause: () => socket.pause(),
@@ -376,6 +381,33 @@ describe("Replay relay", () => {
     second.c.close();
     cam.options.confirmSeek = false;
     await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN") && r.headers.session === first.session));
+  });
+
+  it("keeps a late answer to its own PAUSE from go2rtc after a seek", async () => {
+    cam.options.confirmSeek = true;
+    cam.options.latePauseMs = 150;
+    const first = await playFrom("late", "20261024T101500Z");
+    first.c.close();
+    await waitFor(() => cam.requests.at(-1)?.first.startsWith("PAUSE") ?? false);
+    // go2rtc is back before the camera answers the PAUSE.
+    const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "late", hik("20261024T103000Z"));
+    const c = rtspClient(relayPort);
+    const describe = await c.request("DESCRIBE", url);
+    expect(describe.first).toBe("RTSP/1.0 200 OK");
+    expect(describe.headers.cseq).toBe("1");
+    await new Promise((r) => setTimeout(r, 300)); // the PAUSE answer has come by now
+    const setup = await c.request("SETUP", `${url}/trackID=1`, ["Transport: RTP/AVP/TCP;unicast;interleaved=0-1"]);
+    expect(setup.headers.cseq).toBe("2");
+    const play = await c.request("PLAY", url, [`Session: ${setup.headers.session}`]);
+    expect([play.first, play.headers.cseq]).toEqual(["RTSP/1.0 200 OK", "3"]);
+    // Only answers to go2rtc's own requests: none to the relay's PAUSE.
+    expect(c.replies.map((r) => r.headers.cseq)).toEqual(["1", "2", "3"]);
+    parkTime.ms = 50;
+    c.close();
+    await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN") && r.headers.session === first.session));
+    parkTime.ms = 8000;
+    cam.options.confirmSeek = false;
+    cam.options.latePauseMs = 0;
   });
 
   it("opens a new session out of go2rtc's sight when the camera does not confirm the seek", async () => {
