@@ -239,6 +239,7 @@ The load test can be repeated: `npm run mock-camera` has a `--search-recording` 
 | Symptom | Likely cause and fix |
 |---|---|
 | Test connection: *Address … is outside the allowed camera networks* | Add the camera subnet in **Settings → Camera networks** (applies within 30 seconds, no restart) |
+| A camera is offline and you need to know whether it is on the network | **Ping** (camera row or page, *cameras:check*): from the server, ICMP ping (when the server may send it; the Docker image includes it) and a TCP connection to the camera's web port and RTSP port 554, four tries each. Many networks drop ICMP, so the ports are the better sign; *refused* means something is at the address but not listening on that port |
 | A brand is missing from **Add camera** | Only enabled integrations are offered. Check **Settings → Camera brands**: a draft must pass **Test API** and be enabled |
 | Many cameras show *No storage device* / *Not recording* although they record to an NVR | Cameras → status filter **No SD card detected** → select all → **No local storage**. They stay monitored for online/offline; storage and recording alerts stop |
 | Cameras of one brand stopped being checked | The brand's integration was disabled (Settings → Camera brands; see the audit log). Enable it again; history was kept |

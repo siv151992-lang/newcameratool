@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, ArrowUpDown, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, RefreshCw, Search, ShieldAlert, Trash2, Video, Wrench } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, Radar, RefreshCw, Search, ShieldAlert, Trash2, Video, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { PingDialog } from "./PingDialog";
 import { api, toQuery } from "../api/client";
 import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
@@ -199,6 +200,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
   const [removing, setRemoving] = useState<Camera[] | null>(null);
   const [live, setLive] = useState<Camera | null>(null);
   const [recordings, setRecordings] = useState<Camera | null>(null);
+  const [pinging, setPinging] = useState<Camera | null>(null);
   const setLocalStorage = useSetLocalStorage();
   const setCameraPriority = useSetPriority();
   const [maintaining, setMaintaining] = useState(false);
@@ -537,6 +539,11 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                         </>
                       )}
                       {can("cameras:check") && (
+                        <IconAction label={`Ping ${c.name}`} onClick={() => setPinging(c)}>
+                          <Radar className="h-4 w-4" />
+                        </IconAction>
+                      )}
+                      {can("cameras:check") && (
                         <IconAction
                           label={`Check storage now for ${c.name}`}
                           disabled={s.checkInProgress || (checkNow.isPending && checkNow.variables === c.id)}
@@ -568,6 +575,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
 
       <LiveViewDialog camera={live} onClose={() => setLive(null)} />
       <RecordingsDialog camera={recordings} onClose={() => setRecordings(null)} />
+      <PingDialog camera={pinging} onClose={() => setPinging(null)} />
       <RemoveCamerasDialog
         open={!!removing}
         names={removing?.map((c) => c.name) ?? []}

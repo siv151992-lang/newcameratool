@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff, Wrench } from "lucide-react";
+import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, Radar, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Alert, CameraDetail, CameraHistory, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
 import { LiveViewDialog } from "../components/LiveView";
+import { PingDialog } from "../components/PingDialog";
 import { RecordingsDialog } from "../components/Recordings";
 import { RemoveCamerasDialog } from "../components/RemoveCamerasDialog";
 import { ConnectionBadge, CriticalAreaBadge, DeviceHealthBadge, HealthBadge, MaintenanceBadge, NoLocalStorageBadge, PasswordBadge, RecordingBadge, SeverityBadge, UsageMeter } from "../components/status";
@@ -103,6 +104,7 @@ export function CameraDetailPage() {
   const [removing, setRemoving] = useState(false);
   const [live, setLive] = useState(false);
   const [showRecordings, setShowRecordings] = useState(false);
+  const [pinging, setPinging] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null);
 
   const camera = useQuery({ queryKey: ["camera", id], queryFn: () => api<CameraDetail>(`/cameras/${id}`), refetchInterval: 30_000 });
@@ -182,6 +184,9 @@ export function CameraDetailPage() {
               </Button>
               <Button icon={<PlugZap className="h-4 w-4" />} loading={testConn.isPending} onClick={() => testConn.mutate({ id: c.id }, { onSuccess: setTestResult })}>
                 Test connection
+              </Button>
+              <Button icon={<Radar className="h-4 w-4" />} onClick={() => setPinging(true)}>
+                Ping
               </Button>
             </>
           )}
@@ -508,6 +513,7 @@ export function CameraDetailPage() {
       </Dialog>
       <LiveViewDialog camera={live ? c : null} onClose={() => setLive(false)} />
       <RecordingsDialog camera={showRecordings ? c : null} onClose={() => setShowRecordings(false)} />
+      <PingDialog camera={pinging ? c : null} onClose={() => setPinging(false)} />
       <MaintenanceDialog ids={[c.id]} open={maintaining} onClose={() => setMaintaining(false)} />
       <RemoveCamerasDialog
         open={removing}

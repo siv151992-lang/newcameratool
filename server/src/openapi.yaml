@@ -403,6 +403,16 @@ paths:
       responses:
         "200": { description: "{ outcome, camera }" }
         "409": { description: A check for this camera is already running }
+  /cameras/{id}/ping:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+    post:
+      tags: [Cameras]
+      summary: Ping the camera from the server (cameras:check)
+      description: ICMP echo when the server may send it, and a TCP connection to the camera's web port and RTSP port (554), four tries each. Returns each try's time in ms, or null where it got no answer.
+      responses:
+        "200": { description: "{ host, address, icmp: { times } | { unavailable }, ports: [{ port, label, times, error? }], reachable }" }
+        "400": { description: The camera address is outside the allowed camera networks }
   /cameras/{id}/snapshot:
     get:
       tags: [Cameras]

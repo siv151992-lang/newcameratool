@@ -33,6 +33,7 @@ import { testCameraConfig, testSavedCamera } from "../services/connectionService
 import { uptimeCsv, uptimeReport } from "../services/uptimeService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
+import { pingCamera } from "../services/pingService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
 import { CLIP_MAX_SECONDS, listRecordings, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, recordingClip, prepareStream } from "../services/liveVideoService.js";
 import { lastRefusal, playbackDiagnosis, playbackTimings } from "../services/rtspReplayRelay.js";
@@ -200,6 +201,11 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
   const outcome = await runCheck(param(req), "manual", { registry, notifier });
   if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
   res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req), orgOf(req)) });
+});
+
+// Ping from this server: ICMP (when allowed) and the camera's web and RTSP ports.
+camerasRouter.post("/:id/ping", check, deviceLimiter, async (req, res) => {
+  res.json(await pingCamera(orgOf(req), param(req)));
 });
 
 // Live video: registers the camera's stream, then the page opens /api/cameras/:id/live/ws (liveVideoProxy).
