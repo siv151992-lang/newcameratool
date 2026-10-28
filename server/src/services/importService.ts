@@ -41,7 +41,7 @@ export type ImportOptions = z.infer<typeof importOptionsSchema>;
 
 export const importRequestSchema = z.object({
   rows: z.array(importRowSchema).min(1, "No rows to import").max(MAX_IMPORT_ROWS, `At most ${MAX_IMPORT_ROWS} rows per request`),
-  options: importOptionsSchema.default({}),
+  options: importOptionsSchema.prefault({}),
 });
 
 export interface RowValidation {

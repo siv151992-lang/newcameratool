@@ -14,7 +14,7 @@ import {
   type StorageReading,
 } from "../integrations/types.js";
 import { conflict, HttpError, notFound } from "../lib/errors.js";
-import { formatZodError } from "../lib/validate.js";
+import { patchOf, formatZodError } from "../lib/validate.js";
 import { redactSecrets } from "../security/redact.js";
 import { audit, type Actor } from "./auditService.js";
 import { getCameraConfig } from "./cameraService.js";
@@ -50,7 +50,7 @@ export const integrationDetailsSchema = z
 
 export const createIntegrationSchema = z.object({ details: integrationDetailsSchema, config: z.unknown(), changeNote: text(200) }).strict();
 export const updateIntegrationSchema = z
-  .object({ details: integrationDetailsSchema.partial().optional(), config: z.unknown().optional(), changeNote: text(200) })
+  .object({ details: patchOf(integrationDetailsSchema).optional(), config: z.unknown().optional(), changeNote: text(200) })
   .strict();
 
 const targetSchema = z.union([

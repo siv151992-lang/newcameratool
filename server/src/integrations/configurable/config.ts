@@ -169,7 +169,7 @@ const responseSchema = z
         if (!f.free && !f.used) ctx.addIssue({ code: "custom", path: ["free"], message: "Map free capacity or used capacity (or both)" });
       }),
     healthValues: z.object({ healthy: stringList, degraded: stringList, unhealthy: stringList, absent: stringList }).strict(),
-    readWriteValues: z.object({ readWrite: stringList, readOnly: stringList }).strict().default({ readWrite: [], readOnly: [] }),
+    readWriteValues: z.object({ readWrite: stringList, readOnly: stringList }).strict().prefault({ readWrite: [], readOnly: [] }),
   })
   .strict();
 
@@ -186,7 +186,7 @@ export const integrationConfigSchema = z
   .object({
     request: requestSchema,
     auth: authSchema,
-    pagination: paginationSchema.default({ type: "none" }),
+    pagination: paginationSchema.prefault({ type: "none" }),
     response: responseSchema,
     deviceInfo: deviceInfoSchema.optional().nullable().transform((v) => v ?? null),
     maxConcurrency: z.number().int().min(1).max(20).default(5),

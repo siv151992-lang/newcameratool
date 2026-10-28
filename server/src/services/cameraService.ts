@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchOf } from "../lib/validate.js";
 import { pool, withTransaction, type Queryable } from "../db/pool.js";
 import { registry } from "../integrations/registry.js";
 import { CameraApiError, type CameraConfig } from "../integrations/types.js";
@@ -119,14 +120,14 @@ export const cameraInputSchema = z
   .superRefine((v, ctx) => credentialIssues(v, ctx, true));
 export type CameraInput = z.infer<typeof cameraInputSchema>;
 
-export const cameraUpdateSchema = z
-  .object({
+export const cameraUpdateSchema = patchOf(
+  z.object({
     ...baseFields,
     // On update the password is optional: omit it to keep the stored one.
     password: z.string().min(1).max(256).optional(),
     username: z.string().trim().max(64).optional(),
-  })
-  .partial()
+  }),
+)
   .strict()
   .refine(thresholdsOk, thresholdMessage)
   .superRefine((v, ctx) => credentialIssues(v, ctx, false));

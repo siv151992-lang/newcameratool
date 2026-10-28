@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchOf } from "../lib/validate.js";
 import { config } from "../config.js";
 import { pool, type Queryable } from "../db/pool.js";
 import { getCipher } from "../security/cipher.js";
@@ -19,8 +20,8 @@ const httpUrl = z
   .transform((v) => v.replace(/\/+$/, ""));
 const optionalText = (max: number) => z.string().trim().max(max).transform((v) => v || null).nullable();
 
-export const emailSettingsSchema = z
-  .object({
+export const emailSettingsSchema = patchOf(
+  z.object({
     smtpHost: optionalText(253),
     smtpPort: z.number().int().min(1).max(65535),
     smtpSecure: z.boolean(),
@@ -33,9 +34,8 @@ export const emailSettingsSchema = z
     invitationExpiryHours: z.number().int().min(1).max(24 * 30),
     emailVerificationExpiryHours: z.number().int().min(1).max(24 * 7),
     passwordResetExpiryMinutes: z.number().int().min(10).max(24 * 60),
-  })
-  .partial()
-  .strict();
+  }),
+).strict();
 export type EmailSettingsPatch = z.infer<typeof emailSettingsSchema>;
 
 export interface EmailSettings {

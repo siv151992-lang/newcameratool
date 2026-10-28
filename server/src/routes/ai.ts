@@ -5,7 +5,7 @@ import { chatSchema, runAssistant } from "../ai/assistant.js";
 import { getCameraForecast, getFleetInsights, insightsForClient } from "../ai/insightsService.js";
 import { buildReport, REPORT_PERIODS, summarizeReport, type ReportPeriod } from "../ai/report.js";
 import { actorOf, orgOf, requirePasswordConfirmation, requirePermission } from "../auth/middleware.js";
-import { param, parse } from "../lib/validate.js";
+import { patchOf, param, parse } from "../lib/validate.js";
 import { audit } from "../services/auditService.js";
 import { aiLimiter } from "./limits.js";
 
@@ -26,7 +26,7 @@ aiRouter.get("/status", requirePermission("cameras:read"), async (req, res) => {
 });
 
 aiRouter.patch("/settings", requirePermission("settings:write"), requirePasswordConfirmation, async (req, res) => {
-  const patch = parse(aiSettingsSchema.partial(), req.body);
+  const patch = parse(patchOf(aiSettingsSchema), req.body);
   const updated = await updateAiSettings(orgOf(req), patch, req.auth!.user.id);
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.ai_updated", entityType: "settings", entityId: "ai", details: patch });
   res.json(updated);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchOf } from "../lib/validate.js";
 import { pool } from "../db/pool.js";
 import { HttpError, notFound } from "../lib/errors.js";
 import { type Notifier, withSecret } from "../notifications/notifier.js";
@@ -11,13 +12,13 @@ export const channelInputSchema = z
     type: z.enum(["email", "webhook"]),
     name: z.string().trim().min(1).max(80),
     enabled: z.boolean().default(true),
-    config: z.record(z.unknown()),
+    config: z.record(z.string(), z.unknown()),
     minSeverity: z.enum(["info", "warning", "critical"]).default("warning"),
     cooldownMinutes: z.number().int().min(0).max(10080).default(60),
     notifyOnRecovery: z.boolean().default(true),
   })
   .strict();
-export const channelUpdateSchema = channelInputSchema.partial().omit({ type: true }).strict();
+export const channelUpdateSchema = patchOf(channelInputSchema).omit({ type: true }).strict();
 
 type StoredChannel = NotificationChannel & { secret_encrypted: string | null };
 

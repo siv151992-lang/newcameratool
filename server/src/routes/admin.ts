@@ -6,7 +6,7 @@ import { HttpError } from "../lib/errors.js";
 import { pool } from "../db/pool.js";
 import { registry } from "../integrations/registry.js";
 import { hostGuard } from "../security/hostGuardInstance.js";
-import { param, parse } from "../lib/validate.js";
+import { patchOf, param, parse } from "../lib/validate.js";
 import { notifier } from "../notifications/notifier.js";
 import { audit, exportAuditCsv, listAudit } from "../services/auditService.js";
 import {
@@ -68,7 +68,7 @@ settingsRouter.get("/monitoring", requirePermission("settings:read"), async (req
   res.json(await getMonitoringSettings(orgOf(req)));
 });
 settingsRouter.patch("/monitoring", requirePermission("settings:write"), async (req, res) => {
-  const patch = parse(monitoringSettingsSchema.partial(), req.body);
+  const patch = parse(patchOf(monitoringSettingsSchema), req.body);
   const serverWide = serverWideKeys(patch);
   if (serverWide.length && !isSystemAdmin(req)) {
     throw new HttpError(403, "FORBIDDEN", `Only the system administrator can change server-wide settings (${serverWide.join(", ")})`);
@@ -87,7 +87,7 @@ settingsRouter.get("/camera-password-policy", requirePermission("cameras:read"),
   res.json({ policy: await getCameraPasswordPolicy(orgOf(req)), counts: await cameraPasswordCounts(orgOf(req)) });
 });
 settingsRouter.patch("/camera-password-policy", requirePermission("settings:write"), async (req, res) => {
-  const patch = parse(cameraPasswordPolicySchema.partial(), req.body);
+  const patch = parse(patchOf(cameraPasswordPolicySchema), req.body);
   const policy = await updateCameraPasswordPolicy(orgOf(req), patch, req.auth!.user.id);
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.camera_password_policy_updated", entityType: "settings", entityId: "camera_password_policy", details: patch });
   res.json({ policy, counts: await cameraPasswordCounts(orgOf(req)) });

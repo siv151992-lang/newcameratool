@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchOf } from "../lib/validate.js";
 import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { getCipher } from "../security/cipher.js";
@@ -19,16 +20,15 @@ export interface ProviderCredentials {
   clientSecret: string | null;
 }
 
-const providerPatch = z
-  .object({
+const providerPatch = patchOf(
+  z.object({
     enabled: z.boolean(),
     clientId: z.string().trim().max(300).transform((v) => v || null).nullable(),
     /** Write-only: omit to keep, empty string to remove. */
     clientSecret: z.string().trim().max(500),
-  })
-  .partial()
-  .strict();
-export const providerSettingsSchema = z.object({ google: providerPatch, zoho: providerPatch }).partial().strict();
+  }),
+).strict();
+export const providerSettingsSchema = patchOf(z.object({ google: providerPatch, zoho: providerPatch })).strict();
 
 type StoredProvider = { enabled?: boolean; clientId?: string | null; clientSecretEncrypted?: string | null };
 type Stored = Partial<Record<Provider, StoredProvider>>;
