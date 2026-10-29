@@ -8,6 +8,7 @@ import type { Summary } from "../api/types";
 import { useAiStatus } from "../hooks/ai";
 import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
+import { AlertSound } from "./AlertSound";
 import { useToast } from "./toast";
 import { Button, Select } from "./ui";
 import { ZohoBand } from "./ZohoBand";
@@ -181,6 +182,7 @@ export function AppShell() {
           <div className="flex min-w-0 flex-1 justify-end sm:justify-start sm:pl-2">
             <OrganizationSwitcher />
           </div>
+          <AlertSound />
           <Button
             variant="ghost"
             size="sm"

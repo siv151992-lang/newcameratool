@@ -35,3 +35,15 @@ open stay as they are, and close if the problem clears. When the time is up, ale
 itself (or press **End maintenance**; the camera is checked at once). The camera list and page show
 "Maintenance until …". Operators and Org Admins can do this; each start and end is in the audit log.
 
+
+## Alert sound in the browser
+
+While the dashboard is open, it plays a sound when a new alert opens (checked every 15 seconds):
+three high beeps for a critical alert, two lower ones for a warning, with a message naming the
+alert and the camera. Alerts already open when the page opened make no sound, and cameras in
+maintenance raise none.
+
+The speaker button in the top bar sets it for this browser: **all new alerts** → **critical only**
+→ **off** (each click plays a sample). Browsers only allow sound after the page has been clicked
+or a key pressed; until then the message still shows, with a hint to click the page once. For a
+control-room screen, leave the dashboard open in a tab that is not muted.
