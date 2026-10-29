@@ -260,22 +260,28 @@ describe("storage checks", () => {
       { id: 2, name: "hddf", status: "ok", capacityMb: 60906, freeMb: 50000, property: "RW", formatType: "EXT4" },
     ]);
     await runCheck(id, "manual", deps);
-    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 2, ok: 2, error: 0, camerasWithout: 0 });
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 2, ok: 2, error: 0, camerasWithout: 0, offlineNotCounted: 0 });
     cam.setDisks([{ id: 1, name: "hdde", status: "ok", capacityMb: 121942, freeMb: 56362, property: "RW", formatType: "EXT4" }]);
     await runCheck(id, "manual", deps);
-    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 1, ok: 1, error: 0, camerasWithout: 0 });
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 1, ok: 1, error: 0, camerasWithout: 0, offlineNotCounted: 0 });
     const list = async (status: "sdproblem" | "sdok") => (await listCameras(testOrgId, listQuerySchema.parse({ status }))).items.map((c) => c.id);
     expect(await list("sdok")).toEqual([id]);
 
     cam.setDisks([{ id: 1, name: "hdde", status: "error", capacityMb: 121942, freeMb: 0, property: "RW" }]);
     await runCheck(id, "manual", deps);
-    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 1, ok: 0, error: 1, camerasWithout: 0 });
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 1, ok: 0, error: 1, camerasWithout: 0, offlineNotCounted: 0 });
     expect(await list("sdproblem")).toEqual([id]);
 
     cam.setDisks([]);
     await runCheck(id, "manual", deps);
-    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 0, ok: 0, error: 0, camerasWithout: 1 });
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 0, ok: 0, error: 0, camerasWithout: 1, offlineNotCounted: 0 });
     expect(await list("sdproblem")).toEqual([id]);
+    // Offline now: its last reading is stale, so its card is not counted (as with capacity), but said so.
+    cam.setDisks([{ id: 1, name: "hdde", status: "ok", capacityMb: 121942, freeMb: 56362, property: "RW", formatType: "EXT4" }]);
+    await runCheck(id, "manual", deps);
+    await pool.query("UPDATE camera_status SET connection_status = 'offline' WHERE camera_id = $1", [id]);
+    expect((await getSummary(testOrgId)).sdCard).toEqual({ total: 0, ok: 0, error: 0, camerasWithout: 0, offlineNotCounted: 1 });
+    expect(await list("sdok")).toEqual([]);
   });
 
   it("uses per-camera thresholds", async () => {

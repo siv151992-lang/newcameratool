@@ -314,7 +314,8 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
     // Read at least once: no SD card / storage device, or a device reporting an error (or OK).
     const bad = `EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id AND d.health_status IN ('unhealthy', 'degraded'))`;
     const none = `NOT EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id)`;
-    where.push(`c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND ${q.status === "sdproblem" ? `(${none} OR ${bad})` : `NOT ${none} AND NOT ${bad}`}`);
+    // Reachable cameras only, as the dashboard counts them (an offline camera is listed as offline).
+    where.push(`c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND s.connection_status <> 'offline' AND ${q.status === "sdproblem" ? `(${none} OR ${bad})` : `NOT ${none} AND NOT ${bad}`}`);
   }
   else if (q.status === "channelproblem") {
     // NVRs with a channel that has no video, or is not recording.
@@ -408,13 +409,15 @@ export async function getSummary(orgId: string) {
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state = 'recording')::int AS recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND s.recording_state IN ('idle', 'error'))::int AS not_recording,
             count(*) FILTER (WHERE c.monitoring_enabled AND NOT c.local_storage)::int AS without_local_storage,
-            coalesce(sum(d.devices) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_total,
-            coalesce(sum(d.bad) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL), 0)::int AS sd_error,
-            count(*) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL AND coalesce(d.devices, 0) = 0)::int AS sd_missing,
+            -- SD cards and NVR disks of reachable cameras only, like capacity: an offline camera's last reading is stale.
+            coalesce(sum(d.devices) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL AND s.connection_status <> 'offline'), 0)::int AS sd_total,
+            coalesce(sum(d.bad) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL AND s.connection_status <> 'offline'), 0)::int AS sd_error,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL AND s.connection_status <> 'offline' AND coalesce(d.devices, 0) = 0)::int AS sd_missing,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.device_type = 'camera' AND c.local_storage AND s.last_success_at IS NOT NULL AND s.connection_status = 'offline')::int AS sd_offline,
             count(*) FILTER (WHERE c.device_type = 'nvr')::int AS nvr_total,
             count(*) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.connection_status = 'offline')::int AS nvr_offline,
-            coalesce(sum(d.devices) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.last_success_at IS NOT NULL), 0)::int AS nvr_disks,
-            coalesce(sum(d.bad) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.last_success_at IS NOT NULL), 0)::int AS nvr_disk_error,
+            coalesce(sum(d.devices) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.last_success_at IS NOT NULL AND s.connection_status <> 'offline'), 0)::int AS nvr_disks,
+            coalesce(sum(d.bad) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled AND s.last_success_at IS NOT NULL AND s.connection_status <> 'offline'), 0)::int AS nvr_disk_error,
             coalesce(sum(ch.total) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels,
             coalesce(sum(ch.no_video) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels_no_video,
             coalesce(sum(ch.not_recording) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels_not_recording,
@@ -464,9 +467,10 @@ export async function getSummary(orgId: string) {
     camerasWithStorageData: r.cameras_with_storage_data,
     offlineWithStorageData: r.offline_with_storage_data,
     withoutLocalStorage: r.without_local_storage,
-    /** SD cards (storage devices) of monitored cameras that record locally and were read at least once:
-     * how many, how many report an error, and how many such cameras have none. */
-    sdCard: { total: r.sd_total, ok: r.sd_total - r.sd_error, error: r.sd_error, camerasWithout: r.sd_missing },
+    /** SD cards (storage devices) of reachable monitored cameras that record locally and were read at
+     * least once: how many, how many report an error, how many such cameras have none, and how many
+     * such cameras are offline now (their cards not counted). */
+    sdCard: { total: r.sd_total, ok: r.sd_total - r.sd_error, error: r.sd_error, camerasWithout: r.sd_missing, offlineNotCounted: r.sd_offline },
     /** NVRs: how many, offline, their hard disks (and how many report an error), and their channels. */
     nvr: {
       total: r.nvr_total, offline: r.nvr_offline, disks: r.nvr_disks, diskError: r.nvr_disk_error,

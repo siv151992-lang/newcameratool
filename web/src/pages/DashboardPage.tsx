@@ -197,5 +197,6 @@ function sdCardHint(sd: Summary["sdCard"]): string {
   const parts = [`${sd.ok} OK`];
   if (sd.error) parts.push(`${sd.error} card error${sd.error === 1 ? "" : "s"}`);
   if (sd.camerasWithout) parts.push(`${sd.camerasWithout} camera${sd.camerasWithout === 1 ? "" : "s"} without a card`);
+  if (sd.offlineNotCounted) parts.push(`${sd.offlineNotCounted} offline not counted`);
   return parts.join(" · ");
 }
