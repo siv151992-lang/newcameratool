@@ -260,3 +260,19 @@ The load test can be repeated: `npm run mock-camera` has a `--search-recording` 
 | `ports are not available: exposing port TCP 0.0.0.0:80` (or 443) | Another program or Windows already uses that port. Set `HTTP_PORT=8080` and `HTTPS_PORT=8443` in `.env`, run `docker compose up -d`, and open `https://localhost:8443` |
 | API/worker keep restarting with `password authentication failed for user "cctv"` | The database was created with a different password than `.env` now gives (Postgres keeps its first password). Put the original `POSTGRES_PASSWORD` back in `.env` and run `docker compose up -d`; or, if the database holds nothing you need, `docker compose down -v` and start again |
 | Logs | `docker compose logs -f api worker`. Logs never contain passwords or request bodies |
+
+## Finding cameras on the network
+
+**Cameras → Scan network** looks for cameras in an address range: a network (`192.168.1.0/24`), a range
+(`192.168.1.10-60`) or one address, at most 1024 addresses. Only addresses inside **Settings → Camera
+networks** are touched; the rest are skipped (and said so).
+
+Each address is tried on ports 80, 443, 554 (RTSP), 8000 (Hikvision) and 37777 (Dahua). A device that
+answers is identified from what it replies **without a login** (Hikvision's API login challenge; the
+web page of Dahua, Uniview, Hanwha, Axis, Reolink, Bosch, Panasonic) and from an ONVIF discovery probe.
+No credentials are sent. Devices already registered are marked. Choose the ones to add, correct a brand
+where needed, and continue: the import opens with them, shared credentials and connection tests on.
+
+The server scans from where it runs: in Docker it reaches the cameras' networks through the host's
+routing, like its regular checks. A full /24 takes a few seconds to half a minute. Each scan is
+recorded in the audit log.

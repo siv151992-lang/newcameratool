@@ -117,6 +117,17 @@ export class HostGuard {
     }
   }
 
+  /** Whether an IP address may be contacted now (the allowed networks as currently saved). */
+  async allows(address: string): Promise<boolean> {
+    await this.refresh();
+    try {
+      this.checkAddress(address);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Resolves the host and returns the first permitted address to connect to. */
   async resolve(host: string): Promise<{ address: string; family: 4 | 6 }> {
     const normalized = normalizeHost(host);

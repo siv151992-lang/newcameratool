@@ -34,6 +34,7 @@ import { testCameraConfig, testSavedCamera } from "../services/connectionService
 import { uptimeCsv, uptimeReport } from "../services/uptimeService.js";
 import { commitImport, csvTemplate, importRequestSchema, publicValidation, validateImport } from "../services/importService.js";
 import { getSnapshot } from "../services/liveViewService.js";
+import { scanNetwork, scanRequestSchema } from "../services/networkScanService.js";
 import { pingCamera } from "../services/pingService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
 import { CLIP_MAX_SECONDS, listRecordings, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, recordingClip, prepareStream } from "../services/liveVideoService.js";
@@ -202,6 +203,12 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
   const outcome = await runCheck(param(req), "manual", { registry, notifier });
   if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
   res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req), orgOf(req)) });
+});
+
+// Looks for cameras in an address range (inside the allowed camera networks; no credentials sent).
+camerasRouter.post("/scan", write, importLimiter, async (req, res) => {
+  const { range } = parse(scanRequestSchema, req.body);
+  res.json(await scanNetwork(orgOf(req), range, actorOf(req), req.ip));
 });
 
 // The camera's current view becomes its normal picture (after it was moved or refocused on purpose).

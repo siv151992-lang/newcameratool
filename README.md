@@ -69,6 +69,11 @@ and recordings.
 picture, or a camera turned away from its view, each judged against the camera's own usual picture. See
 [docs/picture-health.md](docs/picture-health.md).
 
+**Network scan:** **Cameras → Scan network** finds cameras in an address range (up to 1024 addresses, inside the
+allowed camera networks only), tells their brand from what they answer without a login and from ONVIF discovery,
+marks the ones already added, and hands the chosen ones to the import, where shared credentials are entered and
+tested. No passwords are sent during the scan.
+
 **More checks and reports:** recording retention (days stored against a required number), camera clock drift,
 camera password policy, an uptime report (% online per camera and site, CSV), maintenance mode (silence a camera's
 alerts during planned work), a **Ping** button (ICMP and the camera's web and RTSP ports, from the server), and

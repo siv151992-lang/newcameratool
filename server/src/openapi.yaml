@@ -403,6 +403,18 @@ paths:
       responses:
         "200": { description: "{ outcome, camera }" }
         "409": { description: A check for this camera is already running }
+  /cameras/scan:
+    post:
+      tags: [Cameras]
+      summary: Look for cameras in an address range (cameras:write)
+      description: Only addresses inside the allowed camera networks are touched. Each is tried on ports 80, 443, 554, 8000 and 37777; devices found are identified from their replies without a login and from ONVIF discovery. No credentials are sent. At most 1024 addresses (a /22).
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, required: [range], properties: { range: { type: string, example: "192.168.1.0/24" } } }
+      responses:
+        "200": { description: "{ range, scanned, skipped, devices: [{ ip, openPorts, brand, evidence, port, protocol, onvif, alreadyAdded }], durationMs }" }
+        "400": { description: Not a range, too large, or outside the allowed camera networks }
   /cameras/{id}/picture/reset-reference:
     parameters:
       - { $ref: "#/components/parameters/CameraId" }

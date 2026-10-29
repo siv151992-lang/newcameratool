@@ -1,4 +1,4 @@
-import { Plus, Upload } from "lucide-react";
+import { Plus, Radar, Upload } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CameraTable } from "../components/CameraTable";
 import { Button, PageHeader } from "../components/ui";
@@ -16,6 +16,9 @@ export function CamerasPage() {
         actions={
           can("cameras:write") && (
             <>
+              <Button icon={<Radar className="h-4 w-4" />} onClick={() => navigate("/cameras/scan")}>
+                Scan network
+              </Button>
               <Button icon={<Upload className="h-4 w-4" />} onClick={() => navigate("/cameras/import")}>
                 Import CSV
               </Button>

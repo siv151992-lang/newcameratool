@@ -1,8 +1,8 @@
 import clsx from "clsx";
 import { CheckCircle2, Download, FileUp, ShieldCheck, XCircle } from "lucide-react";
 import Papa from "papaparse";
-import { useRef, useState, type ChangeEvent } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { ImportRow, ImportRowResult, ImportValidation } from "../api/types";
 import { Button, Card, Checkbox, ConfirmDialog, ErrorMessage, Field, Input, PageHeader, Select } from "../components/ui";
@@ -58,6 +58,18 @@ export function ImportPage() {
     useShared: false, sharedUsername: "admin", sharedPassword: "", sharedMode: "missing",
     monitoringEnabled: true, testConnectivity: false, testConcurrency: 3, skipFailedTests: false,
   });
+
+  // Cameras found by a network scan: their rows (no passwords), ready for shared credentials.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const scanRows = (location.state as { scanRows?: ImportRow[] } | null)?.scanRows;
+    if (!scanRows?.length) return;
+    setRows(scanRows);
+    setFileName(`Network scan: ${scanRows.length} camera${scanRows.length === 1 ? "" : "s"}`);
+    setOpts((o) => ({ ...o, useShared: true, sharedMode: "all", testConnectivity: true }));
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
 
   const reset = () => {
     setRows([]);
