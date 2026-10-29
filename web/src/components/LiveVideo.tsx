@@ -32,6 +32,18 @@ export const PLAYBACK_BUFFERS = {
   large: { label: "Large 10 s", start: 0.5, target: 10, refill: 2.5 },
 } as const;
 export type PlaybackBuffer = keyof typeof PLAYBACK_BUFFERS;
+
+/**
+ * The speed (of normal) that builds the reserve: video in hand ahead of the picture, in seconds,
+ * against the reserve wanted. Slower the closer it is to running out.
+ */
+export function buildRate(ahead: number, target: number): number {
+  if (ahead < 1) return 0.7;
+  if (ahead < 2) return 0.82;
+  if (ahead < target / 2) return 0.92;
+  if (ahead < target) return 0.97;
+  return 1;
+}
 /** Milliseconds from pressing play: the server prepared it, the video connection opened, video arrived, the picture played. */
 export interface StartTimings { prepared: number; opened: number; firstVideo: number; playing: number }
 /** Never wait longer than this for the start reserve (a slow camera still plays). */
@@ -366,10 +378,11 @@ export function LiveVideo({
       const { speed: wanted, onArrival: report, reserve, onBuffer: showBuffer } = rate.current;
       showBuffer?.(Math.max(0, end - el.currentTime));
       if (wanted <= 1 || fast <= 1) {
-        // Build the reserve up while playing, a little slower; normal speed once it is there.
-        const ahead = end - el.currentTime;
-        const build = ahead < reserve.target / 2 ? 0.9 : ahead < reserve.target ? 0.96 : 1;
-        el.playbackRate = wanted < 1 ? wanted * build : build;
+        // Cameras send recordings at real-time pace, so a reserve only builds by playing a little
+        // slower than they send. The lower it is, the slower: a short dip (the camera changing
+        // recording files) then never empties it, and the picture keeps moving instead of stopping
+        // to buffer. Normal speed once the reserve is there.
+        el.playbackRate = (wanted < 1 ? wanted : 1) * buildRate(end - el.currentTime, reserve.target);
         return;
       }
       const now = performance.now();
@@ -381,7 +394,7 @@ export function LiveVideo({
       const ahead = end - el.currentTime;
       const target = arrival * (ahead > 4 ? 1.15 : ahead < 1 ? 0.8 : 1);
       el.playbackRate = Math.min(16, Math.max(0.5, target));
-    }, 1000);
+    }, 250);
 
     return () => {
       el.removeEventListener("waiting", onWaiting);
