@@ -319,8 +319,15 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
   const timelineMin = prevDay.data ? dayStart - DAY : dayStart;
   const latest = day.data ? ms(nextDay.data?.cameraNow ?? day.data.cameraNow) : dayStart + DAY;
   const timelineMax = Math.min(dayStart + (nextDay.data ? 2 : 1) * DAY, latest);
+  /** Moves the playing video to a time it has already loaded (set by the player). */
+  const seekWithin = useRef<((seconds: number) => boolean) | null>(null);
   // Playing from a time in a gap starts at the next recording.
   const seek = (at: number) => {
+    // Already loaded (a little back, or ahead in the reserve): straight there, no new connection.
+    if (from && speed <= 1 && seekWithin.current?.((at - ms(from)) / 1000)) {
+      setError(null);
+      return;
+    }
     const inside = segs.find((x) => x.start <= at && at < x.end);
     const next = segs.find((x) => x.start > at);
     const t = inside ? at : next?.start;
@@ -411,6 +418,7 @@ function RecordingsBody({ cameraId, name, channel }: { cameraId: string; name: s
               buffer={bufferLevel}
               onBuffer={setInHand}
               onStarted={started}
+              seekWithin={seekWithin}
             />
           ) : (
             <button

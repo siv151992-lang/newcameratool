@@ -24,9 +24,11 @@ const CODECS = ["avc1.640029", "avc1.64002A", "avc1.640033", "hvc1.1.6.L153.B0"]
  * - refill: seconds in hand before playing on after running dry.
  */
 export const PLAYBACK_BUFFERS = {
-  small: { label: "Small 2 s", start: 0.5, target: 2, refill: 1 },
-  normal: { label: "Normal 5 s", start: 0.5, target: 5, refill: 2.5 },
-  large: { label: "Large 10 s", start: 3, target: 10, refill: 5 },
+  // start: video in hand before playing (also after a seek); refill: before playing on after running
+  // dry (short, so a hiccup is a short pause); target: the reserve built up while playing.
+  small: { label: "Small 2 s", start: 0.5, target: 2, refill: 0.8 },
+  normal: { label: "Normal 5 s", start: 0.5, target: 5, refill: 1.5 },
+  large: { label: "Large 10 s", start: 1, target: 10, refill: 2.5 },
 } as const;
 export type PlaybackBuffer = keyof typeof PLAYBACK_BUFFERS;
 /** Milliseconds from pressing play: the server prepared it, the video connection opened, video arrived, the picture played. */
@@ -47,6 +49,7 @@ export function LiveVideo({
   buffer: bufferLevel = "normal",
   onBuffer,
   onStarted,
+  seekWithin,
 }: {
   cameraId: string;
   name: string;
@@ -72,6 +75,11 @@ export function LiveVideo({
   onBuffer?: (seconds: number) => void;
   /** Recordings: how long the start took in the browser (ms): prepare, video connection open, first video, picture. */
   onStarted?: (t: StartTimings) => void;
+  /**
+   * Set to a function that moves playback to a time (seconds of this playback) already loaded,
+   * without asking the camera again: true when it did, false when that time is not loaded.
+   */
+  seekWithin?: { current: ((seconds: number) => boolean) | null };
 }) {
   const video = useRef<HTMLVideoElement>(null);
   // Read at call time, so a new callback does not restart the stream.
@@ -138,6 +146,21 @@ export function LiveVideo({
       }
     };
     el.addEventListener("waiting", onWaiting);
+    if (seekWithin) {
+      seekWithin.current = (t: number) => {
+        const ranges = buffer?.buffered;
+        if (!ranges || stopped) return false;
+        for (let i = 0; i < ranges.length; i++) {
+          // Inside what is loaded, with a little to play from there (else the camera is asked).
+          if (t >= ranges.start(i) && t < ranges.end(i) - 0.5) {
+            el.currentTime = t;
+            void el.play().catch(() => undefined);
+            return true;
+          }
+        }
+        return false;
+      };
+    }
 
     const flush = () => {
       if (!buffer || buffer.updating) return;
@@ -147,7 +170,8 @@ export function LiveVideo({
         const end = ranges.end(ranges.length - 1);
         if (!playbackStart && end - el.currentTime > 3) el.currentTime = end - 0.5; // fell behind: jump to live
         // Drop what has been played (recordings may be played slowly, so not what is still ahead).
-        const keepFrom = playbackStart ? el.currentTime - 10 : end - 15;
+        // Recordings keep the last minute, so a seek back within it plays at once (seekWithin).
+        const keepFrom = playbackStart ? el.currentTime - 60 : end - 15;
         if (keepFrom - ranges.start(0) > 15) return buffer.remove(ranges.start(0), keepFrom);
       }
       const next = queue.shift();
@@ -359,6 +383,7 @@ export function LiveVideo({
     return () => {
       el.removeEventListener("waiting", onWaiting);
       el.removeEventListener("playing", onPlayingOnce);
+      if (seekWithin) seekWithin.current = null;
       clearInterval(pace);
       clearInterval(watchdog);
       window.clearTimeout(retryTimer);
@@ -367,7 +392,7 @@ export function LiveVideo({
       el.removeAttribute("src");
       el.load();
     };
-  }, [cameraId, onFailed, playbackStart, fast, channel]);
+  }, [cameraId, onFailed, playbackStart, fast, channel, seekWithin]);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center">
