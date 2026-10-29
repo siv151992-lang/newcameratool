@@ -60,8 +60,12 @@ export function lastRefusal(streamName: string): { request: string; status: stri
  * of after a refusal (a round trip less on every play and seek; a stale one is just refused and
  * answered again), and when it refused a clock range (not asked again for an hour).
  */
-const challenges = new Map<string, { scheme: "digest" | "basic"; params: Record<string, string>; nc: number; at: number }>();
-const CHALLENGE_REUSE_MS = 10 * 60_000;
+/**
+ * The relay's own requests (PAUSE, TEARDOWN, a seek's PLAY) are signed only with a nonce the camera
+ * accepted this recently: an expired one counts as a failed login, and enough of them lock the
+ * server out (Hikvision: all RTSP, about 30 minutes). Without one the connection is just closed.
+ */
+const FRESH_LOGIN_MS = 30_000;
 const rangeRefusedAt = new Map<string, number>();
 const RANGE_REFUSAL_MS = 3_600_000;
 
@@ -360,6 +364,9 @@ function relayConnection(socket: net.Socket) {
   /** The camera's playback session, to end it properly (TEARDOWN) when the video service goes. */
   let session: { id: string; uri: string } | undefined;
   let tornDown = false;
+  /** When the camera last accepted a signed request (its nonce was valid then). */
+  let loginOkAt = 0;
+  const loginFresh = () => challenge?.scheme === "basic" || Date.now() - loginOkAt < FRESH_LOGIN_MS;
   /** Video sent on this session: only a session that played is kept for a seek. */
   let frames = 0;
   /** The camera's answers to DESCRIBE and SETUP, to answer them again when a seek reuses the session. */
@@ -374,7 +381,7 @@ function relayConnection(socket: net.Socket) {
   let alias: { client: string; camera: string } | undefined;
 
   const endSession = (cam: net.Socket) => {
-    if (!session || tornDown || !cam.writable || queue) return false;
+    if (!session || tornDown || !cam.writable || queue || !loginFresh()) return false;
     tornDown = true;
     const m: RtspMessage = { first: `TEARDOWN ${session.uri} RTSP/1.0`, headers: [["CSeq", OWN_TEARDOWN_CSEQ], ["Session", session.id]], body: Buffer.alloc(0) };
     authorize(m, "TEARDOWN", session.uri);
@@ -403,7 +410,7 @@ function relayConnection(socket: net.Socket) {
    */
   const parkable = (cam: net.Socket | undefined): cam is net.Socket => {
     const name = target?.streamName;
-    if (!cam || cam.destroyed || !name || !session || tornDown || !cam.writable || queue || !frames || alias || reopening) return false;
+    if (!cam || cam.destroyed || !name || !session || tornDown || !cam.writable || queue || !frames || alias || reopening || !loginFresh()) return false;
     return targetStartUtc(target!) !== undefined && !seekRefused(cameraKey) && !parked.has(name);
   };
   const park = (cam: net.Socket) => {
@@ -534,6 +541,8 @@ function relayConnection(socket: net.Socket) {
 
   const onCameraMessage = (m: RtspMessage) => {
     if (parkedNow) return; // the PAUSE's answer
+    // The camera accepted a signed request: its nonce is good for a while yet.
+    if (challenge && ok2xx(m)) loginOkAt = Date.now();
     const cseq = header(m, "CSeq");
     const request = cseq ? pending.get(cseq) : undefined;
     if (request) pending.delete(cseq!);
@@ -553,8 +562,6 @@ function relayConnection(socket: net.Socket) {
       const basic = offered.find((v) => /^basic\b/i.test(v));
       if (digest || basic) {
         challenge = { ...(digest ? { scheme: "digest" as const, params: parseChallenge(digest) } : { scheme: "basic" as const, params: {} }), nc: 0, at: Date.now() };
-        if (challenges.size > 5000) challenges.clear();
-        challenges.set(cameraKey, challenge);
         pending.set(cseq!, { ...request, retried: true });
         sendRequest(request.message, request.unscaled, request.unranged);
         return;
@@ -652,6 +659,11 @@ function relayConnection(socket: net.Socket) {
       return true;
     }
     if (method === "PLAY" && session && resumed!.setups.length) {
+      // Signed only with a nonce the camera accepted lately; otherwise a new session, asked afresh.
+      if (!loginFresh()) {
+        reopen(m);
+        return true;
+      }
       const at = targetStartUtc(target!)!;
       const out: RtspMessage = { first: `PLAY ${session.uri} RTSP/1.0`, headers: [["CSeq", cseq ?? "1"], ["Session", session.id], ["Range", `clock=${clockTime(at)}-`]], body: Buffer.alloc(0) };
       if (target!.onvif) setHeader(out, "Require", "onvif-replay");
@@ -680,6 +692,9 @@ function relayConnection(socket: net.Socket) {
     fromCamera = Buffer.alloc(0);
     session = undefined;
     tornDown = false;
+    // A new connection, a new nonce: signing with the old one would count as a failed login.
+    challenge = undefined;
+    loginOkAt = 0;
     const setups = resumed!.setups;
     resumed = undefined;
     let n = 0;
@@ -830,8 +845,9 @@ function relayConnection(socket: net.Socket) {
       const host = net.isIP(found.host) === 6 ? `[${found.host}]` : found.host;
       cameraOrigin = `rtsp://${host}:${found.port}`;
       cameraKey = `${found.host}:${found.port}`;
-      const known = challenges.get(cameraKey);
-      if (known && Date.now() - known.at < CHALLENGE_REUSE_MS) challenge = known;
+      // No login from an earlier connection: a camera counts a request signed with a nonce it has
+      // since expired as a failed login, and Hikvision locks the server out of RTSP after a few.
+      // Asking without a login first (answered 401 with a fresh nonce) is not a failed login.
       void connect(found).catch((err) => {
         logger.warn({ err: (err as Error).message, host: found.host }, "Recording playback: the camera cannot be contacted");
         const tr = traces.get(found.streamName);

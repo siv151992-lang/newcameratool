@@ -61,10 +61,12 @@ function fakeReplayCamera() {
   /** Playback sessions open (a camera with few connections refuses more: 453). */
   const open = new Set<string>();
   let busyAnswers = 0;
+  let failedLogins = 0;
   const requests: { first: string; headers: Record<string, string> }[] = [];
   const md5 = (s: string) => createHash("md5").update(s).digest("hex");
   const server = net.createServer((socket) => {
     const sessionId = String(1233 + ++connections);
+    const nonce = `n0nce${connections}`;
     socket.on("close", () => open.delete(sessionId));
     let buf: Buffer = Buffer.alloc(0);
     socket.on("data", (chunk) => {
@@ -76,8 +78,13 @@ function fakeReplayCamera() {
           socket.write([`RTSP/1.0 ${status}`, `CSeq: ${headers.cseq}`, ...extra, ...(body ? [`Content-Length: ${Buffer.byteLength(body)}`] : []), "", body].join("\r\n"));
         const auth = /response="([^"]+)"/.exec(headers.authorization ?? "")?.[1];
         const digestUri = /uri="([^"]+)"/.exec(headers.authorization ?? "")?.[1];
-        const expected = md5(`${md5("admin:cam:secret")}:n0nce:${md5(`${method}:${digestUri}`)}`);
-        if (method !== "OPTIONS" && (auth !== expected || digestUri !== uri)) return send("401 Unauthorized", ['WWW-Authenticate: Digest realm="cam", nonce="n0nce"']);
+        // Like a Hikvision camera: a nonce of its own for every connection, and a signed request that
+        // does not match (an old nonce, a wrong password) counted as a failed login.
+        const expected = md5(`${md5("admin:cam:secret")}:${nonce}:${md5(`${method}:${digestUri}`)}`);
+        if (method !== "OPTIONS" && (auth !== expected || digestUri !== uri)) {
+          if (headers.authorization) failedLogins += 1;
+          return send("401 Unauthorized", [`WWW-Authenticate: Digest realm="cam", nonce="${nonce}"`]);
+        }
         if (method === "OPTIONS") return send("200 OK", ["Public: DESCRIBE, SETUP, PLAY, TEARDOWN"]);
         const onvif = uri!.includes("/onvif-media");
         if (onvif && headers.require !== "onvif-replay") return send("551 Option not supported");
@@ -119,7 +126,7 @@ function fakeReplayCamera() {
       }, () => undefined);
     });
   });
-  return { server, requests, options, connections: () => connections, busyAnswers: () => busyAnswers, openSessions: () => open.size };
+  return { server, requests, options, connections: () => connections, busyAnswers: () => busyAnswers, openSessions: () => open.size, failedLogins: () => failedLogins };
 }
 
 /** A minimal RTSP client, like go2rtc: sends requests one at a time and collects replies and data. */
@@ -283,14 +290,13 @@ describe("Replay relay", () => {
     cam.options.refuseRange = false;
   });
 
-  it("answers a camera's login at once on the next playback, without being refused first", async () => {
+  it("never signs a new connection with an earlier one's login: the camera's nonce may have expired (a failed login)", async () => {
     cam.requests.length = 0;
     const url = registerReplay(`rtsp://127.0.0.1:${relayPort}`, "login_again", { host: "127.0.0.1", port: camPort, path: "/Streaming/tracks/101", username: "admin", password: "secret", onvif: false });
     const c = rtspClient(relayPort);
     expect((await c.request("DESCRIBE", url)).first).toBe("RTSP/1.0 200 OK");
-    // One DESCRIBE reached the camera, already signed in (earlier playbacks learned its challenge).
-    // (Sessions of earlier playbacks ending meanwhile aside.)
-    expect(cam.requests.filter((r) => !/^(TEARDOWN|PAUSE)\b/.test(r.first)).map((r) => [r.first.split(" ")[0], Boolean(r.headers.authorization)])).toEqual([["DESCRIBE", true]]);
+    // Asked first without a login (not a failed login), then signed with this connection's nonce.
+    expect(cam.requests.filter((r) => !/^(TEARDOWN|PAUSE)\b/.test(r.first)).map((r) => [r.first.split(" ")[0], Boolean(r.headers.authorization)])).toEqual([["DESCRIBE", false], ["DESCRIBE", true]]);
     c.close();
   });
 
@@ -410,9 +416,26 @@ describe("Replay relay", () => {
     cam.options.latePauseMs = 0;
   });
 
+  it("causes no failed logins on the camera through playback, seeks and closing (Hikvision locks the server out after a few)", async () => {
+    const before = cam.failedLogins();
+    cam.options.confirmSeek = true;
+    parkTime.ms = 8000;
+    const first = await playFrom("nolock", "20261024T101500Z");
+    first.c.close();
+    await waitFor(() => cam.requests.at(-1)?.first.startsWith("PAUSE") ?? false);
+    const second = await playFrom("nolock", "20261024T103000Z");
+    parkTime.ms = 50;
+    second.c.close();
+    await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN") && r.headers.session === first.session));
+    expect(cam.failedLogins()).toBe(before);
+    parkTime.ms = 8000;
+    cam.options.confirmSeek = false;
+  });
+
   it("opens a new session out of go2rtc's sight when the camera does not confirm the seek", async () => {
     parkTime.ms = 8000;
     // Like a Hikvision camera: one playback at a time, and a seek not confirmed.
+    const failedBefore = cam.failedLogins();
     endKeptSessions(); // earlier tests' playbacks
     await waitFor(() => cam.openSessions() === 0);
     cam.options.maxSessions = 1;
@@ -435,6 +458,8 @@ describe("Replay relay", () => {
     expect(newSession).not.toBe(first.session);
     // The new session waited for the camera to close the old one: never refused.
     expect(cam.busyAnswers()).toBe(0);
+    // And no failed login on the way (the new connection asked for its own nonce).
+    expect(cam.failedLogins()).toBe(failedBefore);
     // That camera's next seek opens a new session directly (no kept session to try first).
     second.c.close();
     await waitFor(() => cam.requests.some((r) => r.first.startsWith("TEARDOWN") && r.headers.session === newSession));
