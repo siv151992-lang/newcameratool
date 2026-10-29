@@ -162,6 +162,45 @@ async function putStream(name: string, src: string) {
   }
 }
 
+/** Hides any user name and password in an address (go2rtc's errors repeat the camera's address). */
+const withoutCredentials = (text: string) => text.replace(/(rtsps?|https?):\/\/[^/@\s]*@/gi, "$1://");
+
+/**
+ * Why live video does not play, in words: tested from both ends. The server asks the camera's RTSP
+ * port for the stream (what go2rtc asks), and go2rtc is asked for one picture of the stream, which
+ * makes it connect to the camera itself and say what went wrong. Nothing is changed.
+ */
+export async function liveProblem(orgId: string, cameraId: string, channel?: number): Promise<string> {
+  if (!liveVideoEnabled()) return "Live video is not set up on this server (LIVE_VIDEO_URL).";
+  const row = await getCameraRow(cameraId, orgId);
+  const adapter = registry.get(row.brand_key);
+  const { requestTimeoutMs } = await getMonitoringSettings();
+  const config = await getCameraConfig(cameraId, requestTimeoutMs);
+  const nvrChannel = channel && row.device_type === "nvr" ? channel : undefined;
+  const cached = liveSources.get(nvrChannel ? `${cameraId}:c${nvrChannel}` : cameraId);
+  let path = cached ? new URL(cached.src).pathname + new URL(cached.src).search : nvrChannel ? adapter.channelRtspPaths?.(nvrChannel)[0] : adapter.rtspPath;
+  const parts: string[] = [];
+  if (path) {
+    const status = await probeRtsp({ host: config.host, port: RTSP_PORT, path, username: config.username, password: config.password }).catch(() => 0);
+    parts.push(status === 200
+      ? `The server reached the camera's video (RTSP port ${RTSP_PORT}, ${path}): the camera is fine.`
+      : `From the server, ${probeReason(status)} (RTSP port ${RTSP_PORT}, ${path}).`);
+  } else path = "";
+  const name = streamName(cameraId, nvrChannel);
+  try {
+    const res = await fetch(`${base()}/api/frame.jpeg?src=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(15_000) });
+    if (res.ok) parts.push("The video service (go2rtc) got a picture from the camera too, so video should play: reload the page and try again.");
+    else {
+      const why = withoutCredentials((await res.text().catch(() => "")).trim().slice(0, 300));
+      parts.push(`The video service (go2rtc) could not get the video: ${why || `HTTP ${res.status}`}.`);
+    }
+  } catch (err) {
+    const msg = (err as Error).name === "TimeoutError" ? "it did not answer within 15 seconds" : `it cannot be reached at ${base()} (${(err as Error).message})`;
+    parts.push(`The video service (go2rtc): ${msg}. Check that its container is running (docker compose ps).`);
+  }
+  return parts.join(" ");
+}
+
 // ------------------------------------------------------------------ playback of recordings
 
 /**

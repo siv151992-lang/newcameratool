@@ -207,6 +207,14 @@ export function LiveVideo({
       fail(problem ? `The recording could not be played. ${problem}` : otherwise);
     };
 
+    /** Live video that did not open: says so at once, then why (tested from the server and from go2rtc). */
+    const liveFailed = (message: string) => {
+      if (stopped) return;
+      fail(`${message} Checking why…`);
+      void api<{ problem: string }>(`/cameras/${cameraId}/live/problem${channel ? `?channel=${channel}` : ""}`)
+        .then((p) => setError(`The camera's video could not be opened. ${p.problem}`), () => setError(message));
+    };
+
     const playbackProblem = () =>
       api<{ problem: string | null }>(`/cameras/${cameraId}/playback/problem`).then((p) => p.problem, () => null);
 
@@ -260,7 +268,7 @@ export function LiveVideo({
         const msg = JSON.parse(ev.data) as { type: string; value: string };
         if (msg.type === "error") {
           if (gotVideo) return dropped(`The video stopped: ${msg.value}`);
-          if (!playbackStart) return fail(`The camera stream could not be opened: ${msg.value}`);
+          if (!playbackStart) return liveFailed(`The camera stream could not be opened: ${msg.value}.`);
           // go2rtc only says "wrong response on SETUP": add what the camera actually answered.
           void playbackProblem().then((p) => playbackFailed(p, `The camera stream could not be opened: ${msg.value}.`));
           return;
@@ -285,7 +293,7 @@ export function LiveVideo({
         if (gotVideo) {
           return dropped(playbackStart ? "Playback stopped (end of the recording, or the camera closed it)." : "The video stopped. Close and open the live view to try again.");
         }
-        if (!playbackStart) return fail("The camera's video could not be opened. Check that RTSP is turned on in the camera (port 554).");
+        if (!playbackStart) return liveFailed("The camera's video could not be opened.");
         // What the camera actually did (the server's relay saw it), rather than a guess.
         void playbackProblem().then((p) => playbackFailed(p, "The recording could not be opened. Check that the camera user has the Playback permission and that RTSP is on (port 554)."));
       };
@@ -297,7 +305,7 @@ export function LiveVideo({
       if (stopped || !ws) return;
       const quiet = performance.now() - lastData;
       if (!gotVideo && quiet > 25_000) {
-        if (!playbackStart) fail("The camera did not send video. Check that RTSP is turned on in the camera (port 554), or use pictures.");
+        if (!playbackStart) liveFailed("The camera did not send video.");
         else {
           lastData = performance.now(); // ask once
           void playbackProblem().then((p) => playbackFailed(p, "The camera did not send the recording. Try another time, or check the camera's playback settings."));

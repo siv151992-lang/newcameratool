@@ -37,7 +37,7 @@ import { getSnapshot } from "../services/liveViewService.js";
 import { scanNetwork, scanRequestSchema } from "../services/networkScanService.js";
 import { pingCamera } from "../services/pingService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
-import { CLIP_MAX_SECONDS, listRecordings, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, recordingClip, prepareStream } from "../services/liveVideoService.js";
+import { CLIP_MAX_SECONDS, listRecordings, liveProblem, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, recordingClip, prepareStream } from "../services/liveVideoService.js";
 import { lastRefusal, playbackDiagnosis, playbackTimings } from "../services/rtspReplayRelay.js";
 import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
 
@@ -225,6 +225,11 @@ camerasRouter.post("/:id/ping", check, deviceLimiter, async (req, res) => {
 // Live video: registers the camera's stream, then the page opens /api/cameras/:id/live/ws (liveVideoProxy).
 /** An NVR channel (?channel=N or "channel" in the body), for live view and recordings of one of its cameras. */
 const channelOf = (raw: unknown) => parse(z.object({ channel: z.coerce.number().int().min(1).max(256).optional() }), { channel: raw ?? undefined }).channel;
+
+// Why live video does not play: tested from the server and from go2rtc (nothing is changed).
+camerasRouter.get("/:id/live/problem", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+  res.json({ problem: await liveProblem(orgOf(req), param(req), channelOf(req.query.channel)) });
+});
 
 camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
   const channel = channelOf(req.query.channel);

@@ -27,6 +27,11 @@ const fake = http.createServer((req, res) => {
     return res.end();
   }
   if (url.pathname === "/api/streams") return res.end(JSON.stringify(Object.fromEntries(go2rtc.streams)));
+  // One picture of a stream: like go2rtc when it cannot reach the camera (its error names the address).
+  if (url.pathname === "/api/frame.jpeg") {
+    res.statusCode = 500;
+    return res.end(`streams: dial tcp 127.0.0.1:554: i/o timeout (${go2rtc.streams.get(url.searchParams.get("src")!) ?? "no stream"})`);
+  }
   // A recorded clip: an MP4 file of the stream for `duration` seconds.
   if (url.pathname === "/api/stream.mp4") {
     go2rtc.mp4.push(`${url.searchParams.get("src")}|${url.searchParams.get("duration")}`);
@@ -117,6 +122,17 @@ describe("live video", () => {
     expect(reply).toMatch(/^HTTP\/1\.1 101 /);
     expect(reply).toContain('"type":"mse"');
     expect(go2rtc.wsPaths).toEqual([`/api/ws?src=camera_${id}`]);
+  });
+
+  it("says why live video does not play, tested from the server and from go2rtc, without the password", async () => {
+    const admin = await sessionCookie("admin");
+    const id = await addCamera(admin);
+    await request(app).post(`/api/cameras/${id}/live/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf).expect(200);
+    const { problem } = (await request(app).get(`/api/cameras/${id}/live/problem`).set("Cookie", admin.cookie).expect(200)).body;
+    expect(problem).toMatch(/^From the server, the camera did not answer on its RTSP port \(RTSP port 554, \/Streaming\/Channels\/102\)\./);
+    expect(problem).toContain("The video service (go2rtc) could not get the video: streams: dial tcp 127.0.0.1:554: i/o timeout (rtsp://127.0.0.1:554/Streaming/Channels/102).");
+    expect(problem).not.toContain("Cam");
+    expect(problem).not.toContain("admin:");
   });
 
   it("works when go2rtc cannot save its config file (read-only mount)", async () => {
