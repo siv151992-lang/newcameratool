@@ -212,7 +212,18 @@ export function LiveVideo({
       if (stopped) return;
       fail(`${message} Checking why…`);
       void api<{ problem: string }>(`/cameras/${cameraId}/live/problem${channel ? `?channel=${channel}` : ""}`)
-        .then((p) => setError(`The camera's video could not be opened. ${p.problem}`), () => setError(message));
+        .then(
+          (p) => {
+            // Where the message is shown: here, and by the live view around it (which shows pictures instead).
+            const why = `The camera's video could not be opened. ${p.problem}`;
+            setError(why);
+            onFailed(why);
+          },
+          () => {
+            setError(message);
+            onFailed(message);
+          },
+        );
     };
 
     const playbackProblem = () =>

@@ -42,20 +42,25 @@ export function attachLiveVideo(server: http.Server) {
 }
 
 async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer) {
-  const refuse = (status: string) => socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  // Every refusal is logged with its reason: the browser only sees that the connection closed.
+  const refuse = (status: string, reason: string) => {
+    logger.warn({ path: req.url?.split("?")[0], status, reason, origin: req.headers.origin, host: req.headers.host }, `Live video connection refused: ${reason}`);
+    socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  };
   const url = new URL(req.url ?? "/", "http://localhost");
   const match = PATH.exec(url.pathname);
   // An NVR channel (live view of one of its cameras).
   const channelParam = url.searchParams.get("channel");
   const channel = channelParam && /^\d{1,3}$/.test(channelParam) && Number(channelParam) >= 1 ? Number(channelParam) : undefined;
-  if (!match || !config.LIVE_VIDEO_URL) return refuse("404 Not Found");
+  if (!match) return refuse("404 Not Found", "not a video address");
+  if (!config.LIVE_VIDEO_URL) return refuse("404 Not Found", "LIVE_VIDEO_URL is not set");
   const key = req.headers["sec-websocket-key"];
-  if (typeof key !== "string" || !/^[A-Za-z0-9+/]{22}==$/.test(key)) return refuse("400 Bad Request");
-  if (!sameOrigin(req)) return refuse("403 Forbidden");
+  if (typeof key !== "string" || !/^[A-Za-z0-9+/]{22}==$/.test(key)) return refuse("400 Bad Request", "not a WebSocket request");
+  if (!sameOrigin(req)) return refuse("403 Forbidden", "the page's address (Origin) is not the address it was sent to (Host): a proxy in between may rewrite the Host header");
   const token = cookie(req.headers.cookie, SESSION_COOKIE);
   const auth = token ? await getSession(token) : null;
-  if (!auth) return refuse("401 Unauthorized");
-  if (!auth.user.organizationId || !auth.user.permissions.includes("cameras:live")) return refuse("403 Forbidden");
+  if (!auth) return refuse("401 Unauthorized", token ? "the session has expired or was signed out" : "no session cookie came with the connection");
+  if (!auth.user.organizationId || !auth.user.permissions.includes("cameras:live")) return refuse("403 Forbidden", "the user may not view live video");
   let name: string;
   try {
     if (match[2]!.toLowerCase() === "live") {
@@ -65,8 +70,8 @@ async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer
       await getCameraRow(match[1]!, auth.user.organizationId);
       name = playbackStreamName(match[1]!, auth.sessionId);
     }
-  } catch {
-    return refuse("502 Bad Gateway");
+  } catch (err) {
+    return refuse("502 Bad Gateway", `the stream could not be prepared: ${(err as Error).message}`);
   }
 
   const target = new URL(config.LIVE_VIDEO_URL);
@@ -81,6 +86,13 @@ async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer
     s.on("error", close);
     s.on("close", close);
   }
+  upstream.once("error", (err) => logger.warn({ err: err.message, target: target.host }, "Live video: the video service (go2rtc) cannot be reached"));
+  // go2rtc's answer to the handshake: 101 when it takes the viewer.
+  upstream.once("data", (chunk: Buffer) => {
+    const status = chunk.toString("latin1", 0, Math.min(chunk.length, 80)).split("\r\n")[0];
+    if (!/^HTTP\/1\.1 101\b/.test(status ?? "")) logger.warn({ status, stream: name }, "Live video: the video service (go2rtc) did not take the viewer");
+    else logger.info({ stream: name }, "Live video: viewer connected to the video service");
+  });
   upstream.on("connect", () => {
     const path = `${target.pathname.replace(/\/+$/, "")}/api/ws?src=${encodeURIComponent(name)}`;
     upstream.write(
