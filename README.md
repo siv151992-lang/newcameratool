@@ -1,17 +1,22 @@
 # CCTV Storage Monitor
 
-A web dashboard for monitoring the SD card / storage status of IP cameras across an office network,
-regardless of manufacturer. The backend contacts each registered camera on a schedule, normalises its
-storage data, tracks history, and raises alerts when storage fills up, a disk reports a fault, a camera
-goes offline, or its credentials stop working.
+A web dashboard for monitoring IP cameras and NVRs across an office network, regardless of
+manufacturer. The backend contacts each registered camera on a schedule, normalises its storage and
+recording data, tracks history, and raises alerts when storage fills up, a disk reports a fault, a camera
+goes offline or stops recording, or its credentials stop working. Cameras can also be watched live and
+their recordings played back from the dashboard.
 
-**Hikvision (ISAPI) is fully implemented.** Dahua / CP Plus / Amcrest (CGI), Axis (VAPIX), Uniview (LAPI) and
+**Hikvision / Prama (ISAPI) is fully implemented and used on real cameras.** Dahua / CP Plus / Amcrest (CGI), Axis (VAPIX), Uniview (LAPI) and
 generic ONVIF (SOAP, WS-Security), Hanwha Vision / Wisenet (SUNAPI), Panasonic / i-PRO, Reolink (JSON API, HTTPS) and Bosch (ONVIF Profile S/G) adapters are also available, marked
 *unverified* until they have been confirmed on real hardware — use Test Connection when adding such a camera. Prama (Hikvision India) is
 supported, and brands sold on Hikvision or Dahua firmware (HiLook, HiWatch, Annke, LTS; Lorex, IC Realtime, Imou) use those adapters;
 Vivotek, Sony, Avigilon, Milesight, Tiandy, TP-Link VIGI and Mobotix cameras are read over ONVIF.
+**Milestone XProtect** is supported through its Open Network Bridge: the bridge is added once, as an NVR, and
+each XProtect camera is one of its channels (see [docs/nvrs-and-recordings.md](docs/nvrs-and-recordings.md)).
 
-**New brands without code changes:** administrators can add a brand in **Settings → Camera brands** when its
+**New brands without code changes:** in **Settings → Camera brands → Add brand**, give the brand's name and one of
+its cameras: the app tries the ways it already knows (Hikvision, Dahua, … ONVIF) and adds the brand working like
+the one that reads the camera. For a brand with an API of its own, administrators can describe it when its
 storage API is a single HTTP request returning JSON or XML (Basic, Digest, API key, bearer token or no
 authentication). A wizard maps the response onto the common storage model, tests it against a real camera on the
 server, and only a tested configuration can be enabled. Brands with other APIs need a custom adapter in code.
@@ -23,7 +28,8 @@ See **[docs/brand-integrations.md](docs/brand-integrations.md)**. Developers add
 | Backend | Node.js 22 + TypeScript, Express 5, Zod validation (`server/`) |
 | Database | PostgreSQL 16 with SQL migrations (`server/migrations/`) |
 | Monitoring | Separate worker process with database leases (`server/src/worker.ts`) |
-| Deployment | Docker Compose: Postgres, API (also serves the UI), worker, Caddy for HTTPS |
+| Video | go2rtc (live view and playback in the browser, MSE over WebSocket), with an RTSP replay relay in the API |
+| Deployment | Docker Compose: Postgres, API (also serves the UI), worker, go2rtc, Caddy for HTTPS |
 
 ## What works
 
@@ -49,6 +55,26 @@ from the newest recording found by `/ISAPI/ContentMgmt/search` compared with the
 Axis `Storage.S<n>.RecordingStatus` parameters, Hanwha (inferred from `recording.cgi` storage settings, `storageinfo` and `eventstatus`, as the camera has no live recording flag), Uniview `/LAPI/V1.0/Storage/Status`, Dahua
 `/cgi-bin/record.cgi?action=getRecordStatus`, ONVIF `GetRecordingJobs` on `/onvif/recording_service`. A failed
 recording read never fails the storage check; the state just shows as *Unknown*.
+
+**Live view and recordings:** live video of any camera or NVR channel, a 2×2 / 3×3 / 4×4 live grid, and a
+recordings player modelled on Milestone XProtect's: a timeline with a centred playhead and a date band, day
+calendar, speeds, zoom, playback buffer, save picture, export a clip as MP4, and full screen. Seeks reuse the
+camera's open playback session where the camera confirms it, and end sessions properly otherwise, so cameras
+with few connections are not exhausted. See [docs/nvrs-and-recordings.md](docs/nvrs-and-recordings.md).
+
+**NVRs:** their hard disks and every channel (video, recording), with dashboard tiles and per-channel live view
+and recordings.
+
+**More checks and reports:** recording retention (days stored against a required number), camera clock drift,
+camera password policy, an uptime report (% online per camera and site, CSV), maintenance mode (silence a camera's
+alerts during planned work), a **Ping** button (ICMP and the camera's web and RTSP ports, from the server), and
+sorting of the camera list by any status.
+
+**Notifications:** email, webhooks (Microsoft Teams, Slack, Google Chat or any URL), and an alert sound in the
+browser while the dashboard is open (all alerts, critical only, or off). See [docs/notifications.md](docs/notifications.md).
+
+**Accounts:** several organizations with their own cameras, roles (Org Admin, Operator, Viewer), invitations,
+email verification and password reset, and sign-in with Google or Zoho. See [docs/accounts-and-sign-in.md](docs/accounts-and-sign-in.md).
 
 Also included: bulk import from CSV, Excel or Bosch Project Assistant lists (parsed in the browser; preview, per-row validation, duplicate detection,
 shared credentials, optional rate-limited connectivity tests), camera detail page with usage history chart,
@@ -175,9 +201,9 @@ cameras are needed: tests use the simulated camera and mocked responses.
 
 ## Known limitations
 
-- **Brands are tested against simulated responses, not physical hardware in this environment.** Hikvision
-  is modelled on real camera output; Dahua, Axis, Uniview and ONVIF are marked *unverified* until confirmed.
-  Validate with **Test connection** on your camera models and firmware.
+- **Only Hikvision / Prama has been confirmed on real cameras.** The other brands, and Milestone's Open Network
+  Bridge, are tested against simulated devices and marked *unverified* until confirmed. Validate with
+  **Test connection** on your camera models and firmware.
 - **AI Mode forecasts are straight-line trends.** They do not model schedules (e.g. weekday-only recording)
   and are shown with a confidence level; the assistant needs `ANTHROPIC_API_KEY` and internet access, and
   its answers should be checked on the camera pages before acting on them.
@@ -185,11 +211,12 @@ cameras are needed: tests use the simulated camera and mocked responses.
   as reported and treated as *unknown* health rather than guessed.
 - Cameras that **overwrite** old recordings normally sit near 100% used. Turn off *Raise alerts for high
   storage usage* in **Settings → Thresholds** (or raise per-camera thresholds) so only real faults alert.
-- Email is the only notification channel so far. The notifier has a driver interface ready for
-  Slack/Teams/Telegram.
+- The alert sound plays only while the dashboard is open in a browser tab that is not muted, and only after the
+  page has been clicked once (a browser rule).
+- Playback depends on the camera's RTSP service (port 554) and its limit on simultaneous connections.
 - Import from CSV, Excel (.xlsx) or tab-separated text (including Bosch Project Assistant lists), up to 500 rows per file.
-- Docker images and the Compose file were written but could not be built in the development environment used
-  to create this project; the compiled production build was run directly instead.
+- Updating a running installation: `git pull`, then `docker compose up -d --build` (the images are built from the
+  code on the server), and reload the browser with Ctrl+F5.
 
 In Docker, run the status command with `docker compose exec api node dist/cli/status.js` (add `--check` to refresh first).
 
