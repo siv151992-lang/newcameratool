@@ -325,6 +325,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
               <option value="nostoragedevice">No SD card detected</option>
               <option value="nolocalstorage">No local storage (records elsewhere)</option>
               <option value="channelproblem">NVR channel problem</option>
+              <option value="pictureproblem">Picture problem (black, covered, blurred…)</option>
             </optgroup>
           </Select>
           <Select aria-label="Filter by location" className="w-full" value={location} onChange={(e) => setLocation(e.target.value)}>

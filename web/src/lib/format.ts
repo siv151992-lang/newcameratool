@@ -95,6 +95,7 @@ export const ALERT_TYPE_LABELS: Record<string, string> = {
   nvr_channel: "NVR channel problem",
   recording_retention: "Recordings shorter than required",
   clock_wrong: "Camera clock is wrong",
+  picture_problem: "Picture problem (black, covered, blurred, frozen, moved)",
 };
 
 /** Category of the last error, so users can tell unreachable vs auth vs API vs disk problems apart. */

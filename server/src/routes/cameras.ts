@@ -11,6 +11,7 @@ import { notifier } from "../notifications/notifier.js";
 import { audit } from "../services/auditService.js";
 import { cameraReportCsv } from "../services/cameraReportService.js";
 import {
+  resetPictureReference,
   cameraInputSchema,
   cameraUpdateSchema,
   createCamera,
@@ -201,6 +202,12 @@ camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) 
   const outcome = await runCheck(param(req), "manual", { registry, notifier });
   if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
   res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req), orgOf(req)) });
+});
+
+// The camera's current view becomes its normal picture (after it was moved or refocused on purpose).
+camerasRouter.post("/:id/picture/reset-reference", write, async (req, res) => {
+  await resetPictureReference(orgOf(req), param(req), actorOf(req), req.ip);
+  res.status(204).end();
 });
 
 // Ping from this server: ICMP (when allowed) and the camera's web and RTSP ports.

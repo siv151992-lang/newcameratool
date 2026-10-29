@@ -65,6 +65,10 @@ with few connections are not exhausted. See [docs/nvrs-and-recordings.md](docs/n
 **NVRs:** their hard disks and every channel (video, recording), with dashboard tiles and per-channel live view
 and recordings.
 
+**Picture health:** a snapshot every 30 minutes, checked for a black, blank or covered, blurred or frozen
+picture, or a camera turned away from its view, each judged against the camera's own usual picture. See
+[docs/picture-health.md](docs/picture-health.md).
+
 **More checks and reports:** recording retention (days stored against a required number), camera clock drift,
 camera password policy, an uptime report (% online per camera and site, CSV), maintenance mode (silence a camera's
 alerts during planned work), a **Ping** button (ICMP and the camera's web and RTSP ports, from the server), and

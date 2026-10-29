@@ -92,6 +92,11 @@ export class MockHikvisionCamera {
   recordedDays = 30;
   /** Search mode: longest period (days) one search may cover; longer ones are refused, as some firmware does. */
   searchMaxDays = Infinity;
+  /** The picture the camera sends (snapshot): set another to simulate a black, covered or moved camera. */
+  picture: Buffer = MOCK_PICTURE;
+  /** Send the very same bytes every time (a frozen image); a live camera's always differ. */
+  frozen = false;
+  private pictureCount = 0;
   requests: { path: string; authorized: boolean }[] = [];
   private server?: http.Server;
   private readonly nonces = new Set<string>();
@@ -167,9 +172,9 @@ export class MockHikvisionCamera {
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
     this.requests.push({ path: req.url ?? "/", authorized });
     if (!authorized) return this.challenge(res);
-    if (/^\/ISAPI\/Streaming\/channels\/\d+01\/picture$/.test(path) && this.mode === "ok") {
+    if (/^\/ISAPI\/Streaming\/channels\/\d+0[12]\/picture$/.test(path) && this.mode === "ok") {
       res.setHeader("Content-Type", "image/jpeg");
-      return res.end(MOCK_PICTURE);
+      return res.end(this.frozen ? this.picture : livePicture(this.picture, ++this.pictureCount));
     }
     res.setHeader("Content-Type", "application/xml");
     if (this.mode === "server-error") {
@@ -256,4 +261,17 @@ export class MockHikvisionCamera {
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server!.close(() => resolve()));
   }
+}
+
+/**
+ * The picture as a live camera sends it: never the same bytes twice (sensor noise, its clock on the
+ * image). A comment segment with a counter, after the start marker, keeps the image itself unchanged.
+ */
+function livePicture(jpg: Buffer, n: number): Buffer {
+  if (jpg[0] !== 0xff || jpg[1] !== 0xd8) return jpg;
+  const text = Buffer.from(`frame ${n}`, "latin1");
+  const com = Buffer.alloc(4);
+  com.writeUInt16BE(0xfffe, 0);
+  com.writeUInt16BE(text.length + 2, 2);
+  return Buffer.concat([jpg.subarray(0, 2), com, text, jpg.subarray(2)]);
 }

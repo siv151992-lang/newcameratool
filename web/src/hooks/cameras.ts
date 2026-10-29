@@ -150,3 +150,16 @@ export function useDownloadCameraReport() {
   return { download, downloading };
 }
 
+/** Uses the camera's current view as its normal picture (after moving or refocusing it on purpose). */
+export function useResetPictureReference() {
+  const invalidate = useInvalidateCameras();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: (id: string) => api<void>(`/cameras/${id}/picture/reset-reference`, { method: "POST" }),
+    onSuccess: () => {
+      invalidate();
+      toast("success", "The current view is the reference now; the next checks learn it");
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+}

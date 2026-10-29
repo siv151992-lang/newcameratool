@@ -118,6 +118,8 @@ export interface Camera {
   maintenance: { until: string; note: string | null } | null;
   /** "nvr": a network video recorder (its hard disks and channels are checked). */
   deviceType: "camera" | "nvr";
+  /** Whether the picture is checked (black, covered, blurred, frozen, moved). */
+  pictureChecks: boolean;
   /** NVRs: channel counts, and why channels could not be read (null for cameras). */
   channels: { total: number; noVideo: number; notRecording: number; error: string | null; checkedAt: string | null } | null;
   /** The camera password against the organization's camera password policy. */
@@ -155,6 +157,8 @@ export interface Camera {
     };
     /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
     clock: { offsetSeconds: number | null; checkedAt: string | null; error: string | null };
+    /** The picture as last checked; state null when not checked (error says why). */
+    picture: { state: "ok" | "black" | "blank" | "blurred" | "frozen" | "moved" | null; detail: string | null; error: string | null; checkedAt: string | null };
   };
   device: { model: string | null; serialNumber: string | null; firmwareVersion: string | null };
 }
@@ -216,6 +220,8 @@ export interface Summary {
   offlineWithStorageData: number;
   withoutLocalStorage: number;
   criticalArea: { total: number; offline: number; withProblems: number };
+  /** Pictures that cannot be used, of the pictures checked (reachable cameras). */
+  picture: { problems: number; checked: number };
   sdCard: { total: number; ok: number; error: number; camerasWithout: number; offlineNotCounted: number };
   nvr: { total: number; offline: number; disks: number; diskError: number; channels: number; channelsNoVideo: number; channelsNotRecording: number };
   alerts: { active: number; acknowledged: number; critical: number };
@@ -340,6 +346,7 @@ export interface MonitoringSettings {
   recordingAlertsEnabled: boolean;
   minRecordingDays: number;
   clockDriftAlertMinutes: number;
+  pictureCheckMinutes: number;
   deviceInfoRefreshHours: number;
   historyRetentionDays: number;
   historyIntervalMinutes: number;

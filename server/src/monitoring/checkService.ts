@@ -24,6 +24,7 @@ import { credentialsFor, getCameraConfig } from "../services/cameraService.js";
 import { getMonitoringSettings, type MonitoringSettings } from "../services/settingsService.js";
 import { type CheckResult, evaluateConditions, passwordAgeCondition, raiseForCriticalArea, storageHealth, thresholdsFor } from "./evaluate.js";
 import { getCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
+import { analysePicture, judgePicture, type PictureBaseline, type PictureState } from "./picture.js";
 
 export const INSTANCE_ID = `${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
 
@@ -124,7 +125,7 @@ export async function runCheck(
   let integrationVersion: string | undefined;
   try {
     const cam = await pool.query(
-      "SELECT brand_key, monitoring_enabled, local_storage, deleted_at, organization_id, device_type FROM cameras WHERE id = $1",
+      "SELECT brand_key, monitoring_enabled, local_storage, deleted_at, organization_id, device_type, picture_checks FROM cameras WHERE id = $1",
       [cameraId],
     );
     const row = cam.rows[0];
@@ -162,6 +163,10 @@ export async function runCheck(
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
       if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);
       await refreshClock(cameraId, adapter, cfg, trigger);
+      // The picture of a camera (an NVR's channels are cameras of their own elsewhere).
+      if (settings.pictureCheckMinutes > 0 && row.picture_checks && row.device_type !== "nvr") {
+        await refreshPicture(cameraId, adapter, cfg, trigger, settings.pictureCheckMinutes, deps.registry);
+      }
     } catch (err) {
       attempts = (err as { attempts?: number }).attempts ?? attempts;
       result = toFailure(err, [config?.password]);
@@ -266,6 +271,54 @@ async function refreshClock(cameraId: string, adapter: CameraBrandAdapter, cfg: 
   }
 }
 
+/**
+ * Checks the camera's picture: a snapshot (the small one where the camera has it), judged against
+ * the previous one and the camera's own baseline. A problem counts once seen twice in a row, so one
+ * odd picture (a headlight, a person in front of the lens) raises nothing. Best effort: a picture
+ * that cannot be fetched leaves the state unknown (no alert raised or resolved), with the reason.
+ */
+async function refreshPicture(
+  cameraId: string, adapter: CameraBrandAdapter, cfg: CameraConfig, trigger: "scheduled" | "manual", everyMinutes: number, registry: BrandRegistry,
+) {
+  const { rows } = await pool.query(
+    `SELECT picture_checked_at, picture_state, picture_metrics->>'hash' AS hash, picture_baseline, picture_suspect, picture_suspect_count
+     FROM camera_status WHERE camera_id = $1`,
+    [cameraId],
+  );
+  const prev = rows[0];
+  if (!prev) return;
+  const last = prev.picture_checked_at as Date | null;
+  if (trigger === "scheduled" && last && Date.now() - last.getTime() < everyMinutes * 60_000) return;
+  let onvif: CameraBrandAdapter | undefined;
+  try {
+    onvif = registry.get("onvif");
+  } catch {
+    onvif = undefined;
+  }
+  const take = adapter.getSmallSnapshot?.bind(adapter) ?? adapter.getSnapshot?.bind(adapter) ?? onvif?.getSnapshot?.bind(onvif);
+  const fail = (reason: string) =>
+    pool.query("UPDATE camera_status SET picture_state = NULL, picture_error = $2, picture_checked_at = now() WHERE camera_id = $1", [cameraId, reason.slice(0, 300)]);
+  if (!take) return fail("This camera's brand gives no picture to check");
+  try {
+    const snap = await take(cfg);
+    if (snap.contentType !== "image/jpeg") return fail("The camera's picture is not a JPEG, so it cannot be checked");
+    const metrics = analysePicture(snap.data);
+    const judged = judgePicture(metrics, prev.hash ?? null, (prev.picture_baseline ?? {}) as PictureBaseline);
+    // Two in a row: the first sighting of a problem is only a suspicion.
+    const seen = judged.state === "ok" ? 0 : prev.picture_suspect === judged.state ? Number(prev.picture_suspect_count) + 1 : 1;
+    const state: PictureState | null = judged.state === "ok" || seen >= 2 ? judged.state : (prev.picture_state as PictureState | null) ?? "ok";
+    const detail = state === judged.state ? judged.detail : state === "ok" ? "The picture looks normal." : null;
+    await pool.query(
+      `UPDATE camera_status SET picture_state = $2, picture_detail = COALESCE($3, picture_detail), picture_error = NULL, picture_checked_at = now(),
+              picture_metrics = $4, picture_baseline = $5, picture_suspect = $6, picture_suspect_count = $7 WHERE camera_id = $1`,
+      [cameraId, state, detail, JSON.stringify(metrics), JSON.stringify(judged.baseline), judged.state === "ok" ? null : judged.state, seen],
+    );
+  } catch (err) {
+    const msg = err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : `the picture could not be read (${(err as Error).message.slice(0, 120)})`;
+    await fail(`Picture not checked: ${msg}`);
+  }
+}
+
 /** Days of recordings are read at most this often per camera (and on every manual check). */
 const RECORDING_RANGE_REFRESH_MS = 6 * 3600_000;
 
@@ -314,7 +367,8 @@ async function persist(
               c.organization_id, c.brand_key, c.priority, cr.password_changed_at, (c.maintenance_until > now()) AS in_maintenance,
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success,
-              s.recording_days, s.recording_days_at_least, s.recording_range_error, s.clock_offset_seconds
+              s.recording_days, s.recording_days_at_least, s.recording_range_error, s.clock_offset_seconds,
+              c.picture_checks, c.device_type, s.picture_state, s.picture_detail
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id
        LEFT JOIN camera_credentials cr ON cr.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
@@ -451,6 +505,9 @@ async function persist(
         ? { days: Number(cam.recording_days), atLeast: Boolean(cam.recording_days_at_least) }
         : undefined,
       clockOffsetSeconds: result.ok && cam.clock_offset_seconds !== null ? Number(cam.clock_offset_seconds) : undefined,
+      picture: settings.pictureCheckMinutes <= 0 || !cam.picture_checks || cam.device_type === "nvr"
+        ? "off"
+        : result.ok && cam.picture_state ? { state: cam.picture_state, detail: cam.picture_detail ?? "" } : undefined,
       openTypes: await openAlertTypes(cameraId, db),
     });
     if (channels) {

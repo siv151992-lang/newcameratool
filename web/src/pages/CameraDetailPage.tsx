@@ -17,7 +17,7 @@ import { useAiStatus } from "../hooks/ai";
 import { CameraForecastPanel } from "./AiPage";
 import { Button, Card, Dialog, EmptyState, ErrorMessage, Spinner } from "../components/ui";
 import { useAuth } from "../hooks/auth";
-import { useCheckNow, useRemoveCameras, useSetMaintenance, useSetMonitoring, useTestSavedCamera } from "../hooks/cameras";
+import { useCheckNow, useRemoveCameras, useResetPictureReference, useSetMaintenance, useSetMonitoring, useTestSavedCamera } from "../hooks/cameras";
 import { MaintenanceDialog } from "../components/MaintenanceDialog";
 import { absoluteTime, ALERT_TYPE_LABELS, describeClockOffset, ERROR_LABELS, errorCategory, formatBytes, formatDays, formatPercent, relativeTime } from "../lib/format";
 
@@ -94,6 +94,15 @@ function Banner({ icon, title, body }: { icon: ReactNode; title: string; body: R
   );
 }
 
+const PICTURE_LABELS: Record<NonNullable<CameraDetail["status"]["picture"]["state"]>, string> = {
+  ok: "OK",
+  black: "Black picture",
+  blank: "Blank or covered",
+  blurred: "Blurred",
+  frozen: "Frozen",
+  moved: "View has moved",
+};
+
 export function CameraDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
@@ -122,6 +131,7 @@ export function CameraDetailPage() {
   const checkNow = useCheckNow();
   const setMonitoring = useSetMonitoring();
   const endMaintenance = useSetMaintenance();
+  const resetPicture = useResetPictureReference();
   const [maintaining, setMaintaining] = useState(false);
   const remove = useRemoveCameras();
   const testConn = useTestSavedCamera();
@@ -340,6 +350,33 @@ export function CameraDetailPage() {
                   )}
                   {s.clock.checkedAt && (
                     <span className="block text-xs text-ink-muted" title={absoluteTime(s.clock.checkedAt)}>Checked {relativeTime(s.clock.checkedAt)}</span>
+                  )}
+                </Info>
+              </div>
+            )}
+            {c.deviceType === "camera" && (
+              <div className="col-span-2">
+                <Info label="Picture">
+                  {!c.pictureChecks ? (
+                    <span className="text-ink-secondary">Not checked for this camera (turn it on under Edit)</span>
+                  ) : s.picture.state ? (
+                    <>
+                      <span className={clsx("font-medium", s.picture.state === "ok" ? "text-good" : "text-warn")}>{PICTURE_LABELS[s.picture.state]}</span>
+                      {s.picture.state !== "ok" && s.picture.detail && <span className="block text-ink-secondary">{s.picture.detail}</span>}
+                    </>
+                  ) : s.picture.error ? (
+                    <span className="text-ink-secondary">{s.picture.error}</span>
+                  ) : (
+                    <span className="text-ink-secondary">Not checked yet</span>
+                  )}
+                  {s.picture.checkedAt && (
+                    <span className="block text-xs text-ink-muted" title={absoluteTime(s.picture.checkedAt)}>Checked {relativeTime(s.picture.checkedAt)}</span>
+                  )}
+                  {c.pictureChecks && s.picture.state && can("cameras:write") && (
+                    <Button size="sm" variant="ghost" className="mt-1 -ml-2" loading={resetPicture.isPending} onClick={() => resetPicture.mutate(c.id)}
+                      title="After the camera was moved or refocused on purpose: its normal picture is learnt again from the next checks">
+                      Use the current view as the reference
+                    </Button>
                   )}
                 </Info>
               </div>

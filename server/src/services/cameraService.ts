@@ -88,6 +88,8 @@ const baseFields = {
   priority: z.enum(["critical", "normal"]).default("normal"),
   /** "nvr": a network video recorder; its hard disks are its storage and its channels are checked too. */
   deviceType: z.enum(["camera", "nvr"]).default("camera"),
+  /** Check the picture (black, covered, blurred, frozen, moved); off for scenes that are dark by nature. */
+  pictureChecks: z.boolean().default(true),
   warningThreshold: threshold,
   criticalThreshold: threshold,
   caCertificate: pemSchema,
@@ -142,7 +144,7 @@ export function defaultPort(brandKey: string, protocol: "http" | "https") {
 
 const SELECT_CAMERA = `
   SELECT c.id, c.name, c.host, c.port, c.protocol, c.brand_key, b.display_name AS brand_name,
-         c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.device_type, c.warning_threshold, c.critical_threshold,
+         c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.device_type, c.picture_checks, c.warning_threshold, c.critical_threshold,
          (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
          CASE WHEN c.maintenance_until > now() THEN c.maintenance_until END AS maintenance_until, c.maintenance_note,
          c.created_at, c.updated_at,
@@ -154,6 +156,7 @@ const SELECT_CAMERA = `
          s.recording_state, s.recording_detail, s.recording_checked_at,
          s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least,
          s.clock_offset_seconds, s.clock_checked_at, s.clock_error,
+         s.picture_state, s.picture_detail, s.picture_error, s.picture_checked_at,
          s.channels_error, s.channels_at,
          (SELECT json_build_object('total', count(*), 'noVideo', count(*) FILTER (WHERE ch.online = false),
                                    'notRecording', count(*) FILTER (WHERE ch.online IS DISTINCT FROM false AND ch.recording IN ('idle', 'error')))
@@ -204,6 +207,7 @@ export function toCameraView(r: CameraRow) {
     /** Planned work: no new alerts or notifications until then (null when not in maintenance). */
     maintenance: r.maintenance_until ? { until: r.maintenance_until as Date, note: (r.maintenance_note as string | null) ?? null } : null,
     deviceType: (r.device_type as "camera" | "nvr" | undefined) ?? "camera",
+    pictureChecks: (r.picture_checks as boolean | undefined) ?? true,
     /** NVRs: how many channels, how many without video and how many not recording (null for cameras). */
     channels: r.device_type === "nvr"
       ? { ...((r.channel_counts as { total: number; noVideo: number; notRecording: number } | null) ?? { total: 0, noVideo: 0, notRecording: 0 }), error: (r.channels_error as string | null) ?? null, checkedAt: r.channels_at ?? null }
@@ -250,6 +254,13 @@ export function toCameraView(r: CameraRow) {
       },
       /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
       clock: { offsetSeconds: r.clock_offset_seconds ?? null, checkedAt: r.clock_checked_at ?? null, error: r.clock_error ?? null },
+      /** The picture as last checked: ok, black, blank, blurred, frozen or moved; null when not checked (error says why). */
+      picture: {
+        state: (r.picture_state as string | null) ?? null,
+        detail: (r.picture_detail as string | null) ?? null,
+        error: (r.picture_error as string | null) ?? null,
+        checkedAt: r.picture_checked_at ?? null,
+      },
     },
     device: {
       model: r.device_model ?? null,
@@ -263,7 +274,7 @@ export type CameraView = ReturnType<typeof toCameraView>;
 export const listQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   brand: z.string().trim().max(40).optional(),
-  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled", "nostoragedevice", "nolocalstorage", "sdproblem", "sdok", "channelproblem"]).optional(),
+  status: z.enum(["online", "offline", "unknown", "healthy", "warning", "critical", "disabled", "nostoragedevice", "nolocalstorage", "sdproblem", "sdok", "channelproblem", "pictureproblem"]).optional(),
   location: z.string().trim().max(120).optional(),
   minUsage: z.coerce.number().min(0).max(100).optional(),
   maxUsage: z.coerce.number().min(0).max(100).optional(),
@@ -316,6 +327,10 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
     const none = `NOT EXISTS (SELECT 1 FROM storage_devices d WHERE d.camera_id = c.id)`;
     // Reachable cameras only, as the dashboard counts them (an offline camera is listed as offline).
     where.push(`c.monitoring_enabled AND c.local_storage AND s.last_success_at IS NOT NULL AND s.connection_status <> 'offline' AND ${q.status === "sdproblem" ? `(${none} OR ${bad})` : `NOT ${none} AND NOT ${bad}`}`);
+  }
+  else if (q.status === "pictureproblem") {
+    // A picture that cannot be used, on a camera that is reachable (an offline camera is listed as offline).
+    where.push(`c.monitoring_enabled AND c.picture_checks AND s.connection_status <> 'offline' AND s.picture_state IN ('black', 'blank', 'blurred', 'frozen', 'moved')`);
   }
   else if (q.status === "channelproblem") {
     // NVRs with a channel that has no video, or is not recording.
@@ -421,6 +436,8 @@ export async function getSummary(orgId: string) {
             coalesce(sum(ch.total) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels,
             coalesce(sum(ch.no_video) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels_no_video,
             coalesce(sum(ch.not_recording) FILTER (WHERE c.device_type = 'nvr' AND c.monitoring_enabled), 0)::int AS nvr_channels_not_recording,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.picture_checks AND s.connection_status <> 'offline' AND s.picture_state IN ('black', 'blank', 'blurred', 'frozen', 'moved'))::int AS picture_problems,
+            count(*) FILTER (WHERE c.monitoring_enabled AND c.picture_checks AND s.connection_status <> 'offline' AND s.picture_state IS NOT NULL)::int AS picture_checked,
             count(*) FILTER (WHERE c.priority = 'critical')::int AS critical_area,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND s.connection_status = 'offline')::int AS critical_area_offline,
             count(*) FILTER (WHERE c.priority = 'critical' AND c.monitoring_enabled AND EXISTS (
@@ -476,6 +493,8 @@ export async function getSummary(orgId: string) {
       total: r.nvr_total, offline: r.nvr_offline, disks: r.nvr_disks, diskError: r.nvr_disk_error,
       channels: r.nvr_channels, channelsNoVideo: r.nvr_channels_no_video, channelsNotRecording: r.nvr_channels_not_recording,
     },
+    /** Pictures that cannot be used (black, covered, blurred, frozen, moved), of those checked (reachable cameras). */
+    picture: { problems: r.picture_problems, checked: r.picture_checked },
     criticalArea: { total: r.critical_area, offline: r.critical_area_offline, withProblems: r.critical_area_problems },
     alerts: alerts.rows[0],
   };
@@ -500,7 +519,7 @@ function recordsElsewhere(brand: string): boolean {
 }
 
 export async function createCamera(
-  orgId: string, input: Omit<CameraInput, "localStorage" | "priority" | "deviceType"> & { localStorage?: boolean; priority?: "critical" | "normal"; deviceType?: "camera" | "nvr" }, actor: Actor, ip?: string | null, db?: Queryable,
+  orgId: string, input: Omit<CameraInput, "localStorage" | "priority" | "deviceType" | "pictureChecks"> & { localStorage?: boolean; priority?: "critical" | "normal"; deviceType?: "camera" | "nvr"; pictureChecks?: boolean }, actor: Actor, ip?: string | null, db?: Queryable,
 ) {
   const port = input.port ?? defaultPort(input.brand, input.protocol);
   const cipher = getCipher();
@@ -510,12 +529,13 @@ export async function createCamera(
     const { rows } = await client
       .query<{ id: string }>(
         `INSERT INTO cameras (name, host, port, protocol, brand_key, model, location, monitoring_enabled,
-                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id, priority, device_type)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id, priority, device_type, picture_checks)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
           input.caCertificate, actor.id, server ? false : (input.localStorage ?? true), orgId, input.priority ?? "normal", server ? "nvr" : (input.deviceType ?? "camera"),
+          input.pictureChecks ?? true,
         ],
       )
       .catch(translateUniqueViolation);
@@ -587,7 +607,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
       .query(
         `UPDATE cameras SET name = $2, host = $3, port = $4, protocol = $5, brand_key = $6, model = $7, location = $8,
                 monitoring_enabled = $9, warning_threshold = $10, critical_threshold = $11,
-                ca_certificate = $12, local_storage = $13, priority = $14, device_type = $15, updated_at = now()
+                ca_certificate = $12, local_storage = $13, priority = $14, device_type = $15, picture_checks = $16, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -607,6 +627,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
           recordsElsewhere(brand) ? false : (patch.localStorage ?? current.local_storage),
           patch.priority ?? current.priority,
           recordsElsewhere(brand) ? "nvr" : (patch.deviceType ?? current.device_type),
+          patch.pictureChecks ?? current.picture_checks ?? true,
         ],
       )
       .catch(translateUniqueViolation);
@@ -769,6 +790,26 @@ export async function setLocalStorage(orgId: string, ids: string[], localStorage
  * Puts cameras in maintenance until a time (planned work: they are still checked, but open no new
  * alerts and send no notifications), or ends it (until = null).
  */
+/**
+ * Uses the camera's current view as its normal picture (after it was moved or refocused on
+ * purpose): its baseline is learnt afresh from the next checks, and an open picture alert closes.
+ */
+export async function resetPictureReference(orgId: string, id: string, actor: Actor, ip?: string | null) {
+  await getCameraRow(id, orgId);
+  await pool.query(
+    `UPDATE camera_status SET picture_baseline = '{}', picture_suspect = NULL, picture_suspect_count = 0,
+            picture_state = CASE WHEN picture_state IS NULL THEN NULL ELSE 'ok' END, picture_detail = 'Learning this view as the reference.'
+     WHERE camera_id = $1`,
+    [id],
+  );
+  await pool.query(
+    `UPDATE alerts SET status = 'resolved', resolved_at = now(), resolved_by = $2, resolution_note = 'View set as the reference'
+     WHERE camera_id = $1 AND type = 'picture_problem' AND status <> 'resolved'`,
+    [id, actor.id],
+  );
+  await audit({ actor, ip, organizationId: orgId, action: "camera.picture_reference_reset", entityType: "camera", entityId: id, details: {} });
+}
+
 export async function setMaintenance(orgId: string, ids: string[], until: Date | null, note: string | null, actor: Actor, ip?: string | null) {
   return withTransaction(async (db) => {
     const { rows } = await db.query<{ id: string }>(

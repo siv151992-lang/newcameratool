@@ -140,7 +140,7 @@ function SectionLayout({ sections, current }: { sections: Section[]; current: Se
 const ORGANIZATION_KEYS = new Set<keyof MonitoringSettings>([
   "pollIntervalSeconds", "offlineFailureThreshold", "authFailureThreshold", "storageUnavailableMinutes",
   "warningThresholdPercent", "criticalThresholdPercent", "fullThresholdPercent", "recoveryHysteresisPercent",
-  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays", "clockDriftAlertMinutes",
+  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays", "clockDriftAlertMinutes", "pictureCheckMinutes",
 ]);
 
 type NumKey = { [K in keyof MonitoringSettings]: MonitoringSettings[K] extends number ? K : never }[keyof MonitoringSettings];
@@ -185,6 +185,12 @@ const GROUPS: { key: string; title: string; fields: { key: NumKey; label: string
         label: "Camera clock off by more than",
         unit: "minutes",
         hint: "Alert when a camera's clock is wrong by more than this, so its recordings carry the wrong time. 0 turns it off.",
+      },
+      {
+        key: "pictureCheckMinutes",
+        label: "Check each camera's picture every",
+        unit: "minutes",
+        hint: "Takes a small snapshot and alerts when the picture is black, covered, blurred, frozen or the view has moved. 0 turns it off; it can also be turned off per camera.",
       },
       { key: "deviceInfoRefreshHours", label: "Refresh device info every", unit: "hours" },
     ],

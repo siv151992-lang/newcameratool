@@ -261,6 +261,8 @@ export interface CameraBrandAdapter {
   getClock?(camera: CameraConfig): Promise<number>;
   /** Optional: the current picture, for the live view. */
   getSnapshot?(camera: CameraConfig, channel?: number): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
+  /** Optional: a small current picture (the sub stream's) for the picture health check; else getSnapshot. */
+  getSmallSnapshot?(camera: CameraConfig): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
   /** Optional, for NVRs: the RTSP paths of a channel's live video, to try in order (sub stream first). */
   channelRtspPaths?(channel: number): string[];
 }

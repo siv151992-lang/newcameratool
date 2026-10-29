@@ -23,9 +23,18 @@ export const ALERT_TYPES = [
   "nvr_channel",
   "recording_retention",
   "clock_wrong",
+  "picture_problem",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";
+
+const PICTURE_TITLES: Record<string, string> = {
+  black: "Picture is black",
+  blank: "Picture is blank or covered",
+  blurred: "Picture is blurred",
+  frozen: "Picture is frozen",
+  moved: "Camera view has moved",
+};
 
 export const SEVERITY_RANK: Record<Severity, number> = { info: 0, warning: 1, critical: 2 };
 
@@ -99,6 +108,8 @@ export interface EvaluationInput {
   clockOffsetSeconds?: number;
   /** How many days of recordings the camera holds (atLeast: the search stopped, there are more); absent when unknown. */
   recordingDays?: { days: number; atLeast: boolean };
+  /** The camera's picture as last checked; "off" when picture checks do not apply (resolves the alert); absent when unknown. */
+  picture?: { state: string; detail: string } | "off";
 }
 
 export interface Evaluation {
@@ -245,6 +256,15 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
         description: `The camera's clock is ${describeOffset(off)}, so its recordings carry the wrong time. Set the camera to take its time from an NTP server (and the right time zone).`,
         context: { offsetSeconds: off },
       });
+    }
+  }
+
+  // A picture that cannot be used (black, covered, blurred, frozen, moved): the camera records nothing useful.
+  if (input.picture) {
+    evaluated.push("picture_problem");
+    const p = input.picture;
+    if (p !== "off" && p.state in PICTURE_TITLES) {
+      active.push({ type: "picture_problem", severity: "warning", title: PICTURE_TITLES[p.state]!, description: p.detail, context: { state: p.state } });
     }
   }
 

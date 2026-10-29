@@ -92,6 +92,15 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     return fetchSnapshot(this.http, camera, this.apiPath(camera, `/ISAPI/Streaming/channels/${channel}01/picture`));
   }
 
+  /** The sub stream's picture (small, quick to check), else the main one. */
+  async getSmallSnapshot(camera: CameraConfig) {
+    try {
+      return await fetchSnapshot(this.http, camera, this.apiPath(camera, "/ISAPI/Streaming/channels/102/picture"));
+    } catch {
+      return this.getSnapshot(camera);
+    }
+  }
+
   /** NVR channel N: stream N02 (sub), then N01 (main). */
   channelRtspPaths(channel: number) {
     return [`/Streaming/Channels/${channel}02`, `/Streaming/Channels/${channel}01`];

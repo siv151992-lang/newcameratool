@@ -403,6 +403,15 @@ paths:
       responses:
         "200": { description: "{ outcome, camera }" }
         "409": { description: A check for this camera is already running }
+  /cameras/{id}/picture/reset-reference:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+    post:
+      tags: [Cameras]
+      summary: Use the camera's current view as its normal picture (cameras:write)
+      description: After the camera was moved or refocused on purpose. Its baseline (usual detail and reference view, by day and night) is learnt afresh from the next checks, and an open picture alert is resolved.
+      responses:
+        "204": { description: Done }
   /cameras/{id}/ping:
     parameters:
       - { $ref: "#/components/parameters/CameraId" }
