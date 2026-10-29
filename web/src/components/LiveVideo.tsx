@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { Loader2 } from "lucide-react";
 import { Spinner } from "./ui";
 import { ZoomPan } from "./ZoomPan";
 
@@ -28,7 +29,7 @@ export const PLAYBACK_BUFFERS = {
   // dry (short, so a hiccup is a short pause); target: the reserve built up while playing.
   small: { label: "Small 2 s", start: 0.5, target: 2, refill: 0.8 },
   normal: { label: "Normal 5 s", start: 0.5, target: 5, refill: 1.5 },
-  large: { label: "Large 10 s", start: 1, target: 10, refill: 2.5 },
+  large: { label: "Large 10 s", start: 0.5, target: 10, refill: 2.5 },
 } as const;
 export type PlaybackBuffer = keyof typeof PLAYBACK_BUFFERS;
 /** Milliseconds from pressing play: the server prepared it, the video connection opened, video arrived, the picture played. */
@@ -89,6 +90,8 @@ export function LiveVideo({
   rate.current = { speed, onArrival, reserve: PLAYBACK_BUFFERS[bufferLevel], onBuffer, onStarted };
   const fast = speed > 1 ? speed : 1;
   const [playing, setPlaying] = useState(false);
+  /** The first picture is decoded: it shows (paused) while the start reserve fills, instead of a black screen. */
+  const [hasFrame, setHasFrame] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -405,10 +408,17 @@ export function LiveVideo({
           playsInline
           aria-label={`Live video from ${name}`}
           onPlaying={() => setPlaying(true)}
+          onLoadedData={() => setHasFrame(true)}
           onTimeUpdate={(e) => onTime?.(e.currentTarget.currentTime)}
         />
       </ZoomPan>
-      {!playing && !error && <div className="absolute inset-0 flex items-center justify-center"><Spinner label="Starting video" /></div>}
+      {!playing && !error && (hasFrame ? (
+        <span role="status" className="pointer-events-none absolute left-2 top-2 flex items-center gap-1.5 rounded bg-black/60 px-2 py-1 text-xs text-white">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Buffering…
+        </span>
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center"><Spinner label="Starting video" /></div>
+      ))}
     </div>
   );
 }
