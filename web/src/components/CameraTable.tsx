@@ -58,6 +58,15 @@ interface ColumnDef {
   render: (c: Camera) => ReactNode;
 }
 
+const PICTURE_LABELS: Record<NonNullable<Camera["status"]["picture"]["state"]>, string> = {
+  ok: "OK",
+  black: "Black",
+  blank: "Blank or covered",
+  blurred: "Blurred",
+  frozen: "Frozen",
+  moved: "View moved",
+};
+
 const COLUMNS: ColumnDef[] = [
   { key: "brand", label: "Brand", sortKey: "brand", cellClassName: "min-w-[90px] max-w-[130px] text-ink-secondary", render: (c) => c.brandName },
   { key: "location", label: "Location", sortKey: "location", cellClassName: "min-w-[80px] text-ink-secondary", render: (c) => c.location ?? "—" },
@@ -83,6 +92,21 @@ const COLUMNS: ColumnDef[] = [
             {r.daysAvailable !== null ? `${r.daysAtLeast ? "≥ " : ""}${formatDays(r.daysAvailable)} stored` : r.rangeError ? "Days not read" : ""}
           </div>
         </>
+      );
+    },
+  },
+  {
+    key: "picture",
+    label: "Picture",
+    cellClassName: "whitespace-nowrap",
+    render: (c) => {
+      const p = c.status.picture;
+      if (c.deviceType === "nvr" || !c.pictureChecks) return <span className="text-ink-muted" title={c.deviceType === "nvr" ? "NVRs are not checked themselves" : "Picture check off for this camera"}>—</span>;
+      if (!p.state) return <span className="text-xs text-ink-muted" title={p.error ?? undefined}>{p.error ? "Not read" : "Not checked yet"}</span>;
+      return (
+        <span className={clsx("text-sm font-medium", p.state === "ok" ? "text-good" : "text-warn")} title={[p.detail, p.checkedAt ? `Checked ${relativeTime(p.checkedAt)}` : ""].filter(Boolean).join(" · ") || undefined}>
+          {PICTURE_LABELS[p.state]}
+        </span>
       );
     },
   },

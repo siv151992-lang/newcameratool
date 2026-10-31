@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, Download, HardDrive, ImageOff, MemoryStick, Plus, RefreshCw, Server, ShieldAlert, Video, WifiOff } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Camera, CheckCircle2, Download, HardDrive, MemoryStick, Plus, RefreshCw, Server, ShieldAlert, Video, WifiOff } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -97,13 +97,6 @@ export function DashboardPage() {
           icon={<MemoryStick className={`${icon} ${s && s.sdCard.error + s.sdCard.camerasWithout > 0 ? "text-bad" : "text-good"}`} />}
           hint={s ? sdCardHint(s.sdCard) : undefined}
           to={s && s.sdCard.error + s.sdCard.camerasWithout > 0 ? "/cameras?type=camera&status=sdproblem" : "/cameras?type=camera&status=sdok"}
-        />
-        <StatTile
-          label="Picture problems"
-          value={s?.picture.problems ?? "—"}
-          icon={<ImageOff className={`${icon} ${s?.picture.problems ? "text-warn" : s?.picture.checked ? "text-good" : ""}`} />}
-          hint={s ? (s.picture.checked ? (s.picture.problems ? "Black, covered, blurred, frozen or moved" : `${s.picture.checked} pictures OK`) : "Not checked yet") : undefined}
-          to="/cameras?status=pictureproblem"
         />
         <StatTile
           label="Total capacity"

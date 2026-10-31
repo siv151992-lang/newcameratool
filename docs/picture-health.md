@@ -25,7 +25,7 @@ default (**Settings → Monitoring → Check each camera's picture every**; 0 tu
 
 **Where it shows**: an alert (*Picture is black*, *… blank or covered*, *… blurred*, *… frozen*,
 *Camera view has moved*; critical for critical-area cameras) that closes by itself when the picture
-is fine again; the dashboard's **Picture problems** tile and the cameras filter *Picture problem*;
+is fine again; on the **Cameras** page, the **Picture** column, the **Picture problems** button (shows only those cameras) and the filter *Picture problem*;
 and the **Picture** line on the camera's page, with what was found.
 
 **What it costs**: one snapshot per camera per check, the small sub-stream picture where the camera
