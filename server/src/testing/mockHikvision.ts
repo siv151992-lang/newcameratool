@@ -98,6 +98,29 @@ export class MockHikvisionCamera {
   frozen = false;
   private pictureCount = 0;
   requests: { path: string; authorized: boolean }[] = [];
+  /** Has the ISAPI alert stream (camera events); off: 404, like older firmware. */
+  eventStreamApi = true;
+  /** How often an open alert stream gets the camera's heartbeat ("videoloss inactive"). */
+  heartbeatMs = 10_000;
+  private readonly streams = new Set<http.ServerResponse>();
+
+  /** How many alert streams are open now. */
+  get openStreams() {
+    return this.streams.size;
+  }
+
+  /** Sends an event to every open alert stream, as the camera does (e.g. "shelteralarm", "videoloss", "illaccess"). */
+  sendEvent(eventType: string, state: "active" | "inactive" = "active", channel = 1) {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\r\n<EventNotificationAlert version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">\r\n<ipAddress>127.0.0.1</ipAddress>\r\n<portNo>80</portNo>\r\n<protocol>HTTP</protocol>\r\n<channelID>${channel}</channelID>\r\n<dateTime>${new Date().toISOString()}</dateTime>\r\n<activePostCount>1</activePostCount>\r\n<eventType>${eventType}</eventType>\r\n<eventState>${state}</eventState>\r\n<eventDescription>${eventType} alarm</eventDescription>\r\n</EventNotificationAlert>\r\n`;
+    const part = `--boundary\r\nContent-Type: application/xml; charset="UTF-8"\r\nContent-Length: ${Buffer.byteLength(xml)}\r\n\r\n${xml}`;
+    for (const res of this.streams) res.write(part);
+  }
+
+  /** Ends every open alert stream (the camera closing it). */
+  closeStreams() {
+    for (const res of this.streams) res.end();
+    this.streams.clear();
+  }
   private server?: http.Server;
   private readonly nonces = new Set<string>();
   private readonly realm = "IP Camera(SIM)";
@@ -172,6 +195,20 @@ export class MockHikvisionCamera {
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
     this.requests.push({ path: req.url ?? "/", authorized });
     if (!authorized) return this.challenge(res);
+    if (path === "/ISAPI/Event/notification/alertStream" && this.mode === "ok" && this.eventStreamApi) {
+      res.writeHead(200, { "Content-Type": "multipart/mixed; boundary=boundary", Connection: "close" });
+      res.flushHeaders();
+      this.streams.add(res);
+      const beat = setInterval(() => {
+        const xml = `<EventNotificationAlert version="2.0"><channelID>1</channelID><eventType>videoloss</eventType><eventState>inactive</eventState></EventNotificationAlert>`;
+        res.write(`--boundary\r\nContent-Type: application/xml; charset="UTF-8"\r\nContent-Length: ${xml.length}\r\n\r\n${xml}\r\n`);
+      }, this.heartbeatMs);
+      res.on("close", () => {
+        clearInterval(beat);
+        this.streams.delete(res);
+      });
+      return;
+    }
     if (/^\/ISAPI\/Streaming\/channels\/\d+0[12]\/picture$/.test(path) && this.mode === "ok") {
       res.setHeader("Content-Type", "image/jpeg");
       return res.end(this.frozen ? this.picture : livePicture(this.picture, ++this.pictureCount));

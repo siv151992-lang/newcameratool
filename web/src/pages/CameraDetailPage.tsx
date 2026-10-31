@@ -4,7 +4,7 @@ import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, 
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, toQuery } from "../api/client";
-import type { Alert, CameraDetail, CameraHistory, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings, Page } from "../api/types";
+import type { Alert, CameraDetail, CameraEventRow, CameraHistory, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
 import { LiveViewDialog } from "../components/LiveView";
 import { PingDialog } from "../components/PingDialog";
@@ -381,6 +381,13 @@ export function CameraDetailPage() {
                 </Info>
               </div>
             )}
+            {c.cameraEventsSupported && (
+              <div className="col-span-2">
+                <Info label="Camera events">
+                  <CameraEventsState camera={c} />
+                </Info>
+              </div>
+            )}
             <div className="col-span-2">
               <Info label="Most recent error">
                 {s.lastErrorCode ? (
@@ -397,6 +404,7 @@ export function CameraDetailPage() {
         </Card>
 
         {c.deviceType === "nvr" && <NvrChannelsCard camera={c} />}
+        {c.cameraEventsSupported && <CameraEventsCard cameraId={c.id} />}
 
         <Card
           title="Storage utilisation history"
@@ -583,6 +591,63 @@ function PasswordDetail({ camera: c }: { camera: CameraDetail }) {
 }
 
 /** An NVR's channels: each camera on it, whether the NVR has its video and whether it is recording. */
+/** Whether the camera's event stream is open, and why not. */
+function CameraEventsState({ camera: c }: { camera: CameraDetail }) {
+  const e = c.status.events;
+  if (!c.cameraEvents) return <span className="text-ink-secondary">Off for this camera (turn it on under Edit)</span>;
+  if (e.state === "connected") {
+    return (
+      <>
+        <span className="font-medium text-good">Connected</span>
+        <span className="block text-ink-secondary">Tampering, video loss, disk errors and failed logins raise an alert as soon as the camera reports them.</span>
+        {e.since && <span className="block text-xs text-ink-muted" title={absoluteTime(e.since)}>Since {relativeTime(e.since)}</span>}
+      </>
+    );
+  }
+  if (e.state === "unsupported") return <span className="text-ink-secondary">This camera has no event stream (older firmware): {e.error}</span>;
+  if (e.state === "failed") return <><span className="font-medium text-warn">Not connected</span><span className="block text-ink-secondary">{e.error}</span></>;
+  return <span className="text-ink-secondary">Not connected: opened while the camera is online and its login works (within a minute)</span>;
+}
+
+const EVENT_KIND_LABELS: Record<CameraEventRow["kind"], string> = {
+  tamper: "Tampering",
+  video_loss: "Video loss",
+  device_fault: "Fault",
+  illegal_login: "Failed login",
+};
+
+/** What the camera reported on its own, newest first. */
+function CameraEventsCard({ cameraId }: { cameraId: string }) {
+  const events = useQuery({
+    queryKey: ["camera-events", cameraId],
+    queryFn: () => api<CameraEventRow[]>(`/cameras/${cameraId}/events?limit=20`),
+    refetchInterval: 30_000,
+  });
+  return (
+    <Card title="Camera events" actions={<span className="text-xs text-ink-muted">Reported by the camera itself, as they happen</span>}>
+      {events.isLoading ? (
+        <div className="p-4"><Spinner /></div>
+      ) : events.error ? (
+        <div className="p-4"><ErrorMessage error={events.error as Error} /></div>
+      ) : !events.data?.length ? (
+        <EmptyState title="No events" description="Nothing reported: no tampering, video loss, faults or failed logins." />
+      ) : (
+        <ul className="divide-y divide-line">
+          {events.data.map((e) => (
+            <li key={e.id} className="flex flex-wrap items-baseline gap-x-3 px-4 py-2 text-sm">
+              <span className="w-32 shrink-0 text-xs text-ink-muted tabular" title={absoluteTime(e.occurredAt)}>{relativeTime(e.occurredAt)}</span>
+              <span className={clsx("font-medium", e.state === "active" ? (e.kind === "tamper" || e.kind === "video_loss" ? "text-bad" : "text-warn") : "text-good")}>
+                {EVENT_KIND_LABELS[e.kind]}{e.state === "inactive" ? " ended" : ""}
+              </span>
+              <span className="text-ink-secondary">{e.detail}{e.channel ? ` (channel ${e.channel})` : ""}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
   const ch = c.channels;
   const { can } = useAuth();

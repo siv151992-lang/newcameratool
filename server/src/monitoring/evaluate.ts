@@ -24,6 +24,11 @@ export const ALERT_TYPES = [
   "recording_retention",
   "clock_wrong",
   "picture_problem",
+  // Reported by the camera itself over its event stream (see cameraEventService), not by checks.
+  "tamper",
+  "video_loss",
+  "device_fault",
+  "illegal_login",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";

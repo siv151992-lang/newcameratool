@@ -5,6 +5,8 @@ import { logger } from "./lib/logger.js";
 import { startupHint } from "./lib/startupHint.js";
 import { INSTANCE_ID } from "./monitoring/checkService.js";
 import { Scheduler } from "./monitoring/scheduler.js";
+import { EventStreams } from "./monitoring/eventStreams.js";
+import { config } from "./config.js";
 import { notifier } from "./notifications/notifier.js";
 import { getCipher } from "./security/cipher.js";
 import { syncBrands } from "./services/brandService.js";
@@ -15,11 +17,13 @@ async function main() {
   await syncBrands(registry);
   const scheduler = new Scheduler({ registry, notifier });
   scheduler.start();
+  const streams = new EventStreams({ registry, notifier }, { max: config.CAMERA_EVENT_STREAMS_MAX });
+  streams.start();
   logger.info({ instance: INSTANCE_ID }, "Monitoring worker started");
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Stopping worker, waiting for in-flight checks");
-    await scheduler.stop();
+    await Promise.all([scheduler.stop(), streams.stop()]);
     await pool.end();
     process.exit(0);
   };

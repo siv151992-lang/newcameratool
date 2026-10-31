@@ -1,4 +1,6 @@
 /** Normalised, vendor-neutral types shared by all camera brand adapters. */
+import type { CameraEvent } from "./events.js";
+export type { CameraEvent } from "./events.js";
 
 export type DeviceHealth = "healthy" | "degraded" | "unhealthy" | "unknown";
 export type StorageHealth = "healthy" | "warning" | "critical" | "unknown";
@@ -265,4 +267,10 @@ export interface CameraBrandAdapter {
   getSmallSnapshot?(camera: CameraConfig): Promise<{ contentType: "image/jpeg" | "image/png"; data: Buffer }>;
   /** Optional, for NVRs: the RTSP paths of a channel's live video, to try in order (sub stream first). */
   channelRtspPaths?(channel: number): string[];
+  /**
+   * Optional: opens the camera's event stream and hands over its events (tampering, video loss,
+   * faults, failed logins) until the stream ends, goes quiet or `signal` aborts. `onOpen` is called
+   * once the camera has accepted it. Rejects with API_UNAVAILABLE when the camera has no event stream.
+   */
+  openEventStream?(camera: CameraConfig, onEvent: (e: CameraEvent) => void, signal: AbortSignal, onOpen?: () => void): Promise<void>;
 }

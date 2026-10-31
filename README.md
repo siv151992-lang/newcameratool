@@ -74,6 +74,12 @@ allowed camera networks only), tells their brand from what they answer without a
 marks the ones already added, and hands the chosen ones to the import, where shared credentials are entered and
 tested. No passwords are sent during the scan.
 
+**Camera events:** the worker keeps each Hikvision / Prama (and Dahua) camera's event stream open, so
+tampering, video loss, storage and network faults and failed logins on the camera raise an alert the moment the
+camera reports them, not at the next check. **Firmware:** every camera's model and firmware version by model,
+with the cameras still on older firmware than others of their model (CSV). See
+[docs/camera-events.md](docs/camera-events.md).
+
 **More checks and reports:** recording retention (days stored against a required number), camera clock drift,
 camera password policy, an uptime report (% online per camera and site, CSV), maintenance mode (silence a camera's
 alerts during planned work), a **Ping** button (ICMP and the camera's web and RTSP ports, from the server), and
@@ -222,6 +228,8 @@ cameras are needed: tests use the simulated camera and mocked responses.
   storage usage* in **Settings → Thresholds** (or raise per-camera thresholds) so only real faults alert.
 - The alert sound plays only while the dashboard is open in a browser tab that is not muted, and only after the
   page has been clicked once (a browser rule).
+- Camera events come only from Hikvision / Prama and Dahua (Dahua unverified), and only for the events enabled on
+  the camera itself (Video Tampering, exceptions); each camera keeps one extra connection open to the worker.
 - Playback depends on the camera's RTSP service (port 554) and its limit on simultaneous connections.
 - Import from CSV, Excel (.xlsx) or tab-separated text (including Bosch Project Assistant lists), up to 500 rows per file.
 - Updating a running installation: `git pull`, then `docker compose up -d --build` (the images are built from the
@@ -229,4 +237,4 @@ cameras are needed: tests use the simulated camera and mocked responses.
 
 In Docker, run the status command with `docker compose exec api node dist/cli/status.js` (add `--check` to refresh first).
 
-More: [Accounts, organizations and sign-in](docs/accounts-and-sign-in.md) · [Live view, recordings and NVRs](docs/nvrs-and-recordings.md) · [Alert notifications](docs/notifications.md) · [Uptime report](docs/uptime.md) · [Architecture and security](docs/architecture.md) · [Operations](docs/operations.md) · [Adding a camera brand](docs/adding-a-camera-brand.md) · API docs at `/api/docs`.
+More: [Accounts, organizations and sign-in](docs/accounts-and-sign-in.md) · [Live view, recordings and NVRs](docs/nvrs-and-recordings.md) · [Alert notifications](docs/notifications.md) · [Uptime report](docs/uptime.md) · [Camera events and firmware](docs/camera-events.md) · [Architecture and security](docs/architecture.md) · [Operations](docs/operations.md) · [Adding a camera brand](docs/adding-a-camera-brand.md) · API docs at `/api/docs`.

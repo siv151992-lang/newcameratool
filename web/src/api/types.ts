@@ -120,6 +120,10 @@ export interface Camera {
   deviceType: "camera" | "nvr";
   /** Whether the picture is checked (black, covered, blurred, frozen, moved). */
   pictureChecks: boolean;
+  /** Whether the camera's event stream is kept open (tampering, video loss, faults, failed logins as they happen). */
+  cameraEvents: boolean;
+  /** The brand's integration has an event stream at all. */
+  cameraEventsSupported: boolean;
   /** NVRs: channel counts, and why channels could not be read (null for cameras). */
   channels: { total: number; noVideo: number; notRecording: number; error: string | null; checkedAt: string | null } | null;
   /** The camera password against the organization's camera password policy. */
@@ -159,6 +163,8 @@ export interface Camera {
     clock: { offsetSeconds: number | null; checkedAt: string | null; error: string | null };
     /** The picture as last checked; state null when not checked (error says why). */
     picture: { state: "ok" | "black" | "blank" | "blurred" | "frozen" | "moved" | null; detail: string | null; error: string | null; checkedAt: string | null };
+    /** The camera's event stream: connected, unsupported or failed (error says why); null when not open. */
+    events: { state: "connected" | "unsupported" | "failed" | null; error: string | null; since: string | null; lastEventAt: string | null };
   };
   device: { model: string | null; serialNumber: string | null; firmwareVersion: string | null };
 }
@@ -722,4 +728,41 @@ export interface CameraPasswordPolicy {
 export interface CameraPasswordPolicyView {
   policy: CameraPasswordPolicy;
   counts: { ok: number; weak: number; expired: number };
+}
+
+export interface CameraEventRow {
+  id: string;
+  occurredAt: string;
+  kind: "tamper" | "video_loss" | "device_fault" | "illegal_login";
+  eventType: string;
+  state: "active" | "inactive";
+  channel: number | null;
+  detail: string;
+}
+
+export interface FirmwareModel {
+  brand: string;
+  brandName: string;
+  model: string | null;
+  cameras: number;
+  unknown: number;
+  outdated: number;
+  newest: string | null;
+  versions: { version: string; cameras: number }[];
+}
+export interface FirmwareInventory {
+  summary: { cameras: number; unknown: number; outdated: number; models: number; versions: number };
+  models: FirmwareModel[];
+}
+export interface FirmwareCamera {
+  id: string;
+  name: string;
+  host: string;
+  location: string | null;
+  deviceType: "camera" | "nvr";
+  firmwareVersion: string | null;
+  serialNumber: string | null;
+  readAt: string | null;
+  connectionStatus: string | null;
+  outdated: boolean;
 }

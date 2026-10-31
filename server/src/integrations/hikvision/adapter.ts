@@ -7,6 +7,7 @@ import {
   type BrandMeta,
   type CameraBrandAdapter,
   type CameraConfig,
+  type CameraEvent,
   type ConnectionResult,
   type DeviceInfo,
   type NvrChannel,
@@ -36,6 +37,8 @@ import {
   wallClockText,
 } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
+import { HikvisionEventReader } from "../events.js";
+import { readEventStream } from "../eventStream.js";
 
 export const HIKVISION_STORAGE_PATH = "/ISAPI/ContentMgmt/Storage";
 export const HIKVISION_DEVICE_INFO_PATH = "/ISAPI/System/deviceInfo";
@@ -67,7 +70,7 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     supportStatus: "supported",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices", "nas"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices", "nas", "camera-events"],
     storageEndpoint: `GET ${HIKVISION_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -99,6 +102,12 @@ export class HikvisionAdapter implements CameraBrandAdapter {
     } catch {
       return this.getSnapshot(camera);
     }
+  }
+
+  /** Tampering, video loss, faults and failed logins as the camera reports them (ISAPI alert stream). */
+  openEventStream(camera: CameraConfig, onEvent: (e: CameraEvent) => void, signal: AbortSignal, onOpen?: () => void) {
+    const reader = new HikvisionEventReader(onEvent);
+    return readEventStream(this.http, camera, this.apiPath(camera, "/ISAPI/Event/notification/alertStream"), (c) => reader.push(c), signal, onOpen);
   }
 
   /** NVR channel N: stream N02 (sub), then N01 (main). */

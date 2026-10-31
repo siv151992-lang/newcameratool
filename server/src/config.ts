@@ -61,6 +61,9 @@ const schema = z.object({
   INVITATION_EXPIRY_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(72),
   EMAIL_VERIFICATION_EXPIRY_HOURS: z.coerce.number().int().min(1).max(24 * 7).default(24),
   PASSWORD_RESET_EXPIRY_MINUTES: z.coerce.number().int().min(10).max(24 * 60).default(60),
+  // Camera event streams (tampering, video loss, faults) kept open by the worker: at most this many
+  // (one connection per camera; 0 turns them off).
+  CAMERA_EVENT_STREAMS_MAX: z.coerce.number().int().min(0).max(50_000).default(5000),
   // AI Mode assistant and report summaries (optional). Without a key, AI Mode still shows the
   // statistical forecasts, anomalies and recommendations; only the assistant is unavailable.
   ANTHROPIC_API_KEY: z.string().optional(),

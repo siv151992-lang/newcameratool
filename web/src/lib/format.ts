@@ -96,6 +96,10 @@ export const ALERT_TYPE_LABELS: Record<string, string> = {
   recording_retention: "Recordings shorter than required",
   clock_wrong: "Camera clock is wrong",
   picture_problem: "Picture problem (black, covered, blurred, frozen, moved)",
+  tamper: "Camera tampered with (reported by the camera)",
+  video_loss: "Video loss (reported by the camera)",
+  device_fault: "Fault reported by the camera (disk, network, recording)",
+  illegal_login: "Failed logins on the camera",
 };
 
 /** Category of the last error, so users can tell unreachable vs auth vs API vs disk problems apart. */

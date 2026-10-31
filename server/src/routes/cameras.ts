@@ -36,6 +36,8 @@ import { commitImport, csvTemplate, importRequestSchema, publicValidation, valid
 import { getSnapshot } from "../services/liveViewService.js";
 import { scanNetwork, scanRequestSchema } from "../services/networkScanService.js";
 import { pingCamera } from "../services/pingService.js";
+import { listCameraEvents } from "../services/cameraEventService.js";
+import { firmwareCameras, firmwareCamerasQuery, firmwareCsv, firmwareInventory } from "../services/firmwareService.js";
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
 import { CLIP_MAX_SECONDS, listRecordings, liveProblem, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, recordingClip, prepareStream } from "../services/liveVideoService.js";
 import { lastRefusal, playbackDiagnosis, playbackTimings } from "../services/rtspReplayRelay.js";
@@ -81,6 +83,21 @@ camerasRouter.get("/uptime.csv", read, async (req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="uptime-${days}-days-${r.to.slice(0, 10)}.csv"`);
   res.send(uptimeCsv(r));
+});
+
+// Firmware inventory: models and firmware versions, the cameras on an older version than the newest here.
+camerasRouter.get("/firmware", read, async (req, res) => {
+  res.json(await firmwareInventory(orgOf(req)));
+});
+camerasRouter.get("/firmware/cameras", read, async (req, res) => {
+  res.json(await firmwareCameras(orgOf(req), parse(firmwareCamerasQuery, req.query)));
+});
+camerasRouter.get("/firmware.csv", read, async (req, res) => {
+  const { csv, rows } = await firmwareCsv(orgOf(req));
+  await audit({ actor: actorOf(req), ip: req.ip, action: "camera.firmware_exported", entityType: "camera", details: { rows } });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="firmware-inventory-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
 });
 
 camerasRouter.get("/summary", read, async (req, res) => {
@@ -215,6 +232,12 @@ camerasRouter.post("/scan", write, importLimiter, async (req, res) => {
 camerasRouter.post("/:id/picture/reset-reference", write, async (req, res) => {
   await resetPictureReference(orgOf(req), param(req), actorOf(req), req.ip);
   res.status(204).end();
+});
+
+// What the camera reported on its own (tampering, video loss, faults, failed logins), newest first.
+camerasRouter.get("/:id/events", read, async (req, res) => {
+  const { limit } = parse(z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }), req.query);
+  res.json(await listCameraEvents(orgOf(req), param(req), limit));
 });
 
 // Ping from this server: ICMP (when allowed) and the camera's web and RTSP ports.

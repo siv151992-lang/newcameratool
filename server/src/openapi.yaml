@@ -424,6 +424,37 @@ paths:
       description: After the camera was moved or refocused on purpose. Its baseline (usual detail and reference view, by day and night) is learnt afresh from the next checks, and an open picture alert is resolved.
       responses:
         "204": { description: Done }
+  /cameras/{id}/events:
+    parameters:
+      - { $ref: "#/components/parameters/CameraId" }
+      - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+    get:
+      tags: [Cameras]
+      summary: What the camera reported on its own (tampering, video loss, faults, failed logins), newest first
+      responses:
+        "200": { description: "[{ id, occurredAt, kind: tamper | video_loss | device_fault | illegal_login, eventType, state: active | inactive, channel, detail }]" }
+        "404": { description: Camera not found }
+  /cameras/firmware:
+    get:
+      tags: [Cameras]
+      summary: Firmware inventory by brand and model, with the cameras on older firmware than the newest here
+      responses:
+        "200": { description: "{ summary: { cameras, unknown, outdated, models, versions }, models: [{ brand, brandName, model, cameras, unknown, outdated, newest, versions: [{ version, cameras }] }] }" }
+  /cameras/firmware/cameras:
+    get:
+      tags: [Cameras]
+      summary: The cameras of one brand and model, with their firmware and whether it is older than the newest here
+      parameters:
+        - { name: brand, in: query, required: true, schema: { type: string } }
+        - { name: model, in: query, description: "Empty: cameras whose model is not known", schema: { type: string } }
+      responses:
+        "200": { description: "[{ id, name, host, location, deviceType, firmwareVersion, serialNumber, readAt, connectionStatus, outdated }]" }
+  /cameras/firmware.csv:
+    get:
+      tags: [Cameras]
+      summary: The firmware inventory as CSV, one camera a row
+      responses:
+        "200": { description: CSV file, content: { text/csv: {} } }
   /cameras/{id}/ping:
     parameters:
       - { $ref: "#/components/parameters/CameraId" }

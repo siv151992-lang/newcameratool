@@ -1,9 +1,11 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
+import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type CameraEvent, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
 import { dahuaTime, dahuaTimeMs, parseDahuaChannels, parseDahuaDeviceInfo, parseDahuaError, parseDahuaFiles, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
+import { DahuaEventReader } from "../events.js";
+import { readEventStream } from "../eventStream.js";
 import { OnvifAdapter } from "../onvif/adapter.js";
 import { DahuaRpc, parseRpcDeviceInfo, parseRpcStorage, RPC_BASES, type RpcBase } from "./rpc.js";
 
@@ -18,7 +20,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },
-    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices"],
+    capabilities: ["storage-status", "recording-status", "device-info", "connection-test", "live-view", "playback", "multiple-storage-devices", "camera-events"],
     storageEndpoint: `GET ${DAHUA_STORAGE_PATH}`,
     defaultTimeoutMs: 10000,
     notes:
@@ -81,6 +83,12 @@ export class DahuaAdapter implements CameraBrandAdapter {
   readonly rtspFallbacks = ["/cam/realmonitor?channel=1&subtype=0"];
 
   /** The current picture for the live view (Channel 1). */
+  /** Tampering, video loss, storage faults and failed logins as the camera reports them (eventManager attach, heartbeat every 20 s). */
+  openEventStream(camera: CameraConfig, onEvent: (e: CameraEvent) => void, signal: AbortSignal, onOpen?: () => void) {
+    const reader = new DahuaEventReader(onEvent);
+    return readEventStream(this.http, camera, "/cgi-bin/eventManager.cgi?action=attach&codes=%5BAll%5D&heartbeat=20", (c) => reader.push(c), signal, onOpen);
+  }
+
   getSnapshot(camera: CameraConfig, channel = 1) {
     return fetchSnapshot(this.http, camera, `/cgi-bin/snapshot.cgi?channel=${channel}`);
   }

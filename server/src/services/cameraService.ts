@@ -90,6 +90,8 @@ const baseFields = {
   deviceType: z.enum(["camera", "nvr"]).default("camera"),
   /** Check the picture (black, covered, blurred, frozen, moved); off for scenes that are dark by nature. */
   pictureChecks: z.boolean().default(true),
+  /** Keep the camera's event stream open: tampering, video loss, disk errors and failed logins as they happen. */
+  cameraEvents: z.boolean().default(true),
   warningThreshold: threshold,
   criticalThreshold: threshold,
   caCertificate: pemSchema,
@@ -144,7 +146,7 @@ export function defaultPort(brandKey: string, protocol: "http" | "https") {
 
 const SELECT_CAMERA = `
   SELECT c.id, c.name, c.host, c.port, c.protocol, c.brand_key, b.display_name AS brand_name,
-         c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.device_type, c.picture_checks, c.warning_threshold, c.critical_threshold,
+         c.model, c.location, c.monitoring_enabled, c.local_storage, c.priority, c.device_type, c.picture_checks, c.event_stream, c.warning_threshold, c.critical_threshold,
          (c.ca_certificate IS NOT NULL) AS has_ca_certificate,
          CASE WHEN c.maintenance_until > now() THEN c.maintenance_until END AS maintenance_until, c.maintenance_note,
          c.created_at, c.updated_at,
@@ -157,6 +159,7 @@ const SELECT_CAMERA = `
          s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least,
          s.clock_offset_seconds, s.clock_checked_at, s.clock_error,
          s.picture_state, s.picture_detail, s.picture_error, s.picture_checked_at,
+         s.events_state, s.events_error, s.events_since, s.events_last_at,
          s.channels_error, s.channels_at,
          (SELECT json_build_object('total', count(*), 'noVideo', count(*) FILTER (WHERE ch.online = false),
                                    'notRecording', count(*) FILTER (WHERE ch.online IS DISTINCT FROM false AND ch.recording IN ('idle', 'error')))
@@ -208,6 +211,9 @@ export function toCameraView(r: CameraRow) {
     maintenance: r.maintenance_until ? { until: r.maintenance_until as Date, note: (r.maintenance_note as string | null) ?? null } : null,
     deviceType: (r.device_type as "camera" | "nvr" | undefined) ?? "camera",
     pictureChecks: (r.picture_checks as boolean | undefined) ?? true,
+    cameraEvents: (r.event_stream as boolean | undefined) ?? true,
+    /** The brand's integration has an event stream at all. */
+    cameraEventsSupported: hasEventStream(r.brand_key),
     /** NVRs: how many channels, how many without video and how many not recording (null for cameras). */
     channels: r.device_type === "nvr"
       ? { ...((r.channel_counts as { total: number; noVideo: number; notRecording: number } | null) ?? { total: 0, noVideo: 0, notRecording: 0 }), error: (r.channels_error as string | null) ?? null, checkedAt: r.channels_at ?? null }
@@ -260,6 +266,13 @@ export function toCameraView(r: CameraRow) {
         detail: (r.picture_detail as string | null) ?? null,
         error: (r.picture_error as string | null) ?? null,
         checkedAt: r.picture_checked_at ?? null,
+      },
+      /** The camera's event stream: connected (live), unsupported or failed (error says why); null when not open. */
+      events: {
+        state: (r.events_state as "connected" | "unsupported" | "failed" | null) ?? null,
+        error: (r.events_error as string | null) ?? null,
+        since: r.events_since ?? null,
+        lastEventAt: r.events_last_at ?? null,
       },
     },
     device: {
@@ -510,6 +523,15 @@ function translateUniqueViolation(err: unknown): never {
 }
 
 /** Brands that are recording servers (Milestone XProtect): their storage is theirs, not read here. */
+/** Whether the brand's integration has an event stream (tampering, video loss, … as they happen). */
+function hasEventStream(brand: string): boolean {
+  try {
+    return typeof registry.get(brand).openEventStream === "function";
+  } catch {
+    return false;
+  }
+}
+
 function recordsElsewhere(brand: string): boolean {
   try {
     return registry.get(brand).meta.recordsElsewhere === true;
@@ -519,7 +541,7 @@ function recordsElsewhere(brand: string): boolean {
 }
 
 export async function createCamera(
-  orgId: string, input: Omit<CameraInput, "localStorage" | "priority" | "deviceType" | "pictureChecks"> & { localStorage?: boolean; priority?: "critical" | "normal"; deviceType?: "camera" | "nvr"; pictureChecks?: boolean }, actor: Actor, ip?: string | null, db?: Queryable,
+  orgId: string, input: Omit<CameraInput, "localStorage" | "priority" | "deviceType" | "pictureChecks" | "cameraEvents"> & { localStorage?: boolean; priority?: "critical" | "normal"; deviceType?: "camera" | "nvr"; pictureChecks?: boolean; cameraEvents?: boolean }, actor: Actor, ip?: string | null, db?: Queryable,
 ) {
   const port = input.port ?? defaultPort(input.brand, input.protocol);
   const cipher = getCipher();
@@ -529,13 +551,14 @@ export async function createCamera(
     const { rows } = await client
       .query<{ id: string }>(
         `INSERT INTO cameras (name, host, port, protocol, brand_key, model, location, monitoring_enabled,
-                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id, priority, device_type, picture_checks)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
+                              warning_threshold, critical_threshold, ca_certificate, created_by, local_storage, organization_id, priority, device_type, picture_checks, event_stream)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
           input.caCertificate, actor.id, server ? false : (input.localStorage ?? true), orgId, input.priority ?? "normal", server ? "nvr" : (input.deviceType ?? "camera"),
           input.pictureChecks ?? true,
+          input.cameraEvents ?? true,
         ],
       )
       .catch(translateUniqueViolation);
@@ -607,7 +630,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
       .query(
         `UPDATE cameras SET name = $2, host = $3, port = $4, protocol = $5, brand_key = $6, model = $7, location = $8,
                 monitoring_enabled = $9, warning_threshold = $10, critical_threshold = $11,
-                ca_certificate = $12, local_storage = $13, priority = $14, device_type = $15, picture_checks = $16, updated_at = now()
+                ca_certificate = $12, local_storage = $13, priority = $14, device_type = $15, picture_checks = $16, event_stream = $17, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -628,6 +651,7 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
           patch.priority ?? current.priority,
           recordsElsewhere(brand) ? "nvr" : (patch.deviceType ?? current.device_type),
           patch.pictureChecks ?? current.picture_checks ?? true,
+          patch.cameraEvents ?? current.event_stream ?? true,
         ],
       )
       .catch(translateUniqueViolation);

@@ -26,6 +26,8 @@ export interface CameraResponse {
   body: string;
   /** The body as received, for `binary` requests (images). */
   raw?: Buffer;
+  /** For `stream` requests answered 2xx: settles when the stream ends. */
+  done?: Promise<void>;
 }
 
 export interface CameraRequest {
@@ -50,11 +52,19 @@ export interface CameraRequest {
   displayPath?: string;
   /** Keep the body as bytes in `raw` (images), with this size limit instead of the default. */
   binary?: { maxBytes: number };
+  /**
+   * A long-lived reply (an event stream): once the camera answers 2xx, the request resolves at once
+   * (empty body, `done` set) and the body's bytes go to `onData` as they arrive, with no size limit.
+   * The connection is closed when nothing arrives for `idleMs`, or when `signal` aborts; `done`
+   * settles then (rejecting with TIMEOUT when idle). Replies other than 2xx are read as usual.
+   */
+  stream?: { onData: (chunk: Buffer) => void; idleMs: number; signal?: AbortSignal };
 }
 
 const RESERVED_HEADERS = new Set(["host", "authorization", "proxy-authorization", "cookie", "content-length", "transfer-encoding", "connection"]);
 
 interface RawResponse extends CameraResponse {
+  done?: Promise<void>;
   challenges: string[];
 }
 
@@ -104,7 +114,7 @@ export class CameraHttpClient {
     if (res.status === 403) {
       throw new CameraApiError("PERMISSION_DENIED", "The camera user does not have permission to use this API", { httpStatus: 403 });
     }
-    return { status: res.status, headers: res.headers, body: res.body, raw: res.raw };
+    return { status: res.status, headers: res.headers, body: res.body, raw: res.raw, done: res.done };
   }
 
   private buildAuthorization(camera: CameraConfig, method: string, path: string, challenges: string[]): string {
@@ -199,6 +209,43 @@ export class CameraHttpClient {
 
     return new Promise<RawResponse>((resolve, reject) => {
       const req = (isHttps ? https : http).request(options, (res) => {
+        const status = res.statusCode ?? 0;
+        if (request.stream && status >= 200 && status < 300) {
+          // An event stream: hand its bytes over as they come, closing it when it goes quiet.
+          clearTimeout(timer);
+          const { onData, idleMs, signal } = request.stream;
+          let idle: NodeJS.Timeout;
+          const quiet = () => {
+            clearTimeout(idle);
+            idle = setTimeout(() => req.destroy(Object.assign(timeoutError(idleMs), { message: `The camera sent nothing for ${Math.round(idleMs / 1000)} seconds` })), idleMs);
+          };
+          quiet();
+          const abort = () => req.destroy();
+          signal?.addEventListener("abort", abort, { once: true });
+          const done = new Promise<void>((ended, failed) => {
+            const finish = (err?: Error) => {
+              clearTimeout(idle);
+              signal?.removeEventListener("abort", abort);
+              if (err && !signal?.aborted) failed(err instanceof CameraApiError ? err : classifyNetworkError(err));
+              else ended();
+            };
+            res.on("data", (c: Buffer) => {
+              quiet();
+              try {
+                onData(c);
+              } catch (err) {
+                req.destroy(err as Error);
+              }
+            });
+            res.on("end", () => finish());
+            res.on("close", () => finish(res.readableEnded ? undefined : (res.errored ?? undefined)));
+            res.on("error", (e) => finish(e));
+            req.on("error", (e) => finish(e));
+          });
+          if (signal?.aborted) abort();
+          resolve({ status, headers: res.headers, body: "", challenges: [], done });
+          return;
+        }
         const chunks: Buffer[] = [];
         let size = 0;
         res.on("data", (c: Buffer) => {

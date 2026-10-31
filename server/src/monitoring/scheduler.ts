@@ -76,6 +76,7 @@ export class Scheduler {
     const counts = {
       checks: await purge("DELETE FROM storage_checks WHERE checked_at < now() - make_interval(days => $1)", s.historyRetentionDays),
       connectionEvents: await purge("DELETE FROM connection_events WHERE occurred_at < now() - make_interval(days => $1)", s.historyRetentionDays),
+      cameraEvents: await purge("DELETE FROM camera_events WHERE occurred_at < now() - make_interval(days => $1)", s.historyRetentionDays),
       deliveries: await purge("DELETE FROM notification_deliveries WHERE created_at < now() - make_interval(days => $1)", s.historyRetentionDays),
       resolvedAlerts: await purge("DELETE FROM alerts WHERE status = 'resolved' AND resolved_at < now() - make_interval(days => $1)", s.auditRetentionDays),
       audit: await purge("DELETE FROM audit_logs WHERE created_at < now() - make_interval(days => $1)", s.auditRetentionDays),
