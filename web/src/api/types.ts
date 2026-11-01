@@ -117,7 +117,7 @@ export interface Camera {
   /** Planned work: no new alerts or notifications until then; null when not in maintenance. */
   maintenance: { until: string; note: string | null } | null;
   /** "nvr": a network video recorder (its hard disks and channels are checked). */
-  deviceType: "camera" | "nvr";
+  deviceType: "camera" | "nvr" | "access";
   /** Whether the picture is checked (black, covered, blurred, frozen, moved). */
   pictureChecks: boolean;
   /** Whether the camera's event stream is kept open (tampering, video loss, faults, failed logins as they happen). */
@@ -165,6 +165,8 @@ export interface Camera {
     picture: { state: "ok" | "black" | "blank" | "blurred" | "frozen" | "moved" | null; detail: string | null; error: string | null; checkedAt: string | null };
     /** The camera's event stream: connected, unsupported or failed (error says why); null when not open. */
     events: { state: "connected" | "unsupported" | "failed" | null; error: string | null; since: string | null; lastEventAt: string | null };
+    /** Access systems: when the readers and doors were last read, and why not. */
+    access: { error: string | null; readAt: string | null };
   };
   device: { model: string | null; serialNumber: string | null; firmwareVersion: string | null };
 }
@@ -310,6 +312,10 @@ export interface Brand {
   /** Which credentials cameras of this brand need: username + password, one API key/token, or none. */
   credentials?: "user_password" | "secret" | "none";
   defaultProtocol?: "http" | "https";
+  /** "access": an access controller or access control server, not a camera. */
+  deviceKind?: "access";
+  /** Its credentials are only ever sent over HTTPS. */
+  httpsOnly?: boolean;
 }
 
 /** Settings → Email & sign-in (system administrator). The SMTP password is never returned. */
@@ -765,4 +771,52 @@ export interface FirmwareCamera {
   readAt: string | null;
   connectionStatus: string | null;
   outdated: boolean;
+}
+
+export interface AccessSystem {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  protocol: "http" | "https";
+  brand: string;
+  brandName: string;
+  location: string | null;
+  monitoringEnabled: boolean;
+  connection: ConnectionStatus;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  accessError: string | null;
+  readAt: string | null;
+  points: { readers: number; readersOffline: number; doors: number; doorsOpen: number; doorAlarms: number; tamper: number };
+  openAlerts: number;
+  lastDay: { total: number; denied: number };
+}
+export interface AccessOverview {
+  summary: { systems: number; systemsOffline: number; readers: number; readersOffline: number; doors: number; doorsOpen: number; doorAlarms: number; tamper: number; deniedLastDay: number };
+  systems: AccessSystem[];
+}
+export interface AccessPointRow {
+  id: string;
+  kind: "reader" | "door" | "controller";
+  externalId: string;
+  name: string;
+  model: string | null;
+  online: boolean | null;
+  doorState: "open" | "closed" | "held_open" | "forced" | null;
+  lockState: "locked" | "unlocked" | null;
+  tamper: boolean | null;
+  statusText: string | null;
+  updatedAt: string;
+}
+export type AccessEventCategory = "granted" | "denied" | "door" | "alarm" | "tamper" | "fault" | "other";
+export interface AccessEventRow {
+  id: string;
+  occurredAt: string;
+  category: AccessEventCategory;
+  description: string;
+  person: string | null;
+  point: string | null;
+  systemId: string;
+  systemName: string;
 }

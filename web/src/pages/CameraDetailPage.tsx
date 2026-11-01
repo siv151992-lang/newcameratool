@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, Radar, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { api, toQuery } from "../api/client";
 import type { Alert, CameraDetail, CameraEventRow, CameraHistory, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings, Page } from "../api/types";
 import { Diagnostics } from "../components/Diagnostics";
@@ -139,6 +139,8 @@ export function CameraDetailPage() {
   if (camera.isLoading) return <Spinner label="Loading camera" />;
   if (camera.error || !camera.data) return <ErrorMessage error={camera.error ?? new Error("Camera not found")} />;
   const c = camera.data;
+  // An access system has its own page.
+  if (c.deviceType === "access") return <Navigate to={`/access/${c.id}`} replace />;
   const s = c.status;
   const warning = c.warningThreshold ?? settings.data?.warningThresholdPercent ?? 80;
   const critical = c.criticalThreshold ?? settings.data?.criticalThresholdPercent ?? 90;

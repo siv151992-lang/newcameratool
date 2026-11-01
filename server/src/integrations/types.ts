@@ -160,6 +160,46 @@ export function mergeSegments(segments: RecordedSegment[]): RecordedSegment[] {
   return merged;
 }
 
+/** A reader, door or controller of an access system, as the system reports it (undefined: not reported). */
+export interface AccessPoint {
+  kind: "reader" | "door" | "controller";
+  /** The system's own id for it (stable between reads). */
+  externalId: string;
+  name: string;
+  model?: string;
+  online?: boolean;
+  /** Doors: open, closed, held open too long, or forced open. */
+  doorState?: "open" | "closed" | "held_open" | "forced";
+  lockState?: "locked" | "unlocked";
+  tamper?: boolean;
+  /** The system's own words for its state. */
+  statusText?: string;
+}
+
+export type AccessEventCategory = "granted" | "denied" | "door" | "alarm" | "tamper" | "fault" | "other";
+
+/** An access event: a card or face accepted or refused, a door opened or forced, a tamper, a fault. */
+export interface AccessEventReading {
+  /** UTC epoch ms. */
+  at: number;
+  category: AccessEventCategory;
+  description: string;
+  /** The person's name as the system gives it (never a card number). */
+  person?: string;
+  /** The reader or door it happened at. */
+  point?: string;
+  /** Unique per event within the system (its id, or its fields together). */
+  key: string;
+}
+
+export interface AccessReading {
+  points: AccessPoint[];
+  /** Events after the time asked for, oldest first. */
+  events: AccessEventReading[];
+  /** Why events could not be read (the points still were). */
+  eventsError?: string;
+}
+
 export interface DeviceInfo {
   deviceName?: string;
   model?: string;
@@ -211,6 +251,10 @@ export interface BrandMeta {
   defaultProtocol?: "http" | "https";
   /** Compatibility notes: models and firmware known to work. */
   compatibility?: string;
+  /** "access": an access controller, terminal or access control server (readers, doors, access events), not a camera. */
+  deviceKind?: "access";
+  /** Its credentials are only ever sent over HTTPS (a login that sends the password itself, an API key). */
+  httpsOnly?: boolean;
 }
 
 export interface CameraBrandAdapter {
@@ -273,4 +317,10 @@ export interface CameraBrandAdapter {
    * once the camera has accepted it. Rejects with API_UNAVAILABLE when the camera has no event stream.
    */
   openEventStream?(camera: CameraConfig, onEvent: (e: CameraEvent) => void, signal: AbortSignal, onOpen?: () => void): Promise<void>;
+  /**
+   * Access systems: their readers, doors and controllers, and the access events from about `afterMs`
+   * (UTC epoch ms; a second earlier, as event times are often whole seconds: events already read
+   * come again and are told apart by their key).
+   */
+  getAccessStatus?(camera: CameraConfig, afterMs: number): Promise<AccessReading>;
 }

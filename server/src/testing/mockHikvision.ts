@@ -103,6 +103,8 @@ export class MockHikvisionCamera {
   /** How often an open alert stream gets the camera's heartbeat ("videoloss inactive"). */
   heartbeatMs = 10_000;
   private readonly streams = new Set<http.ServerResponse>();
+  /** Extra routes (after login), e.g. an access controller's ISAPI: return undefined to fall through. */
+  custom?: (req: { path: string; method: string; body: string }) => { status?: number; contentType: string; body: string } | undefined;
 
   /** How many alert streams are open now. */
   get openStreams() {
@@ -195,6 +197,12 @@ export class MockHikvisionCamera {
     const authorized = this.mode !== "auth-fail" && this.verify(req.headers.authorization, req.method ?? "GET");
     this.requests.push({ path: req.url ?? "/", authorized });
     if (!authorized) return this.challenge(res);
+    const extra = this.mode === "ok" ? this.custom?.({ path, method: req.method ?? "GET", body }) : undefined;
+    if (extra) {
+      res.statusCode = extra.status ?? 200;
+      res.setHeader("Content-Type", extra.contentType);
+      return res.end(extra.body);
+    }
     if (path === "/ISAPI/Event/notification/alertStream" && this.mode === "ok" && this.eventStreamApi) {
       res.writeHead(200, { "Content-Type": "multipart/mixed; boundary=boundary", Connection: "close" });
       res.flushHeaders();

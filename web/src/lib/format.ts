@@ -3,6 +3,8 @@ const CAPABILITY_LABELS: Record<string, string> = {
   "recording-status": "Recording",
   "device-info": "Device info",
   "connection-test": "Connection test",
+  "access-control": "Readers, doors and access events",
+  "camera-events": "Camera events (tampering, video loss)",
   "multiple-storage-devices": "Multiple disks",
   nas: "NAS",
 };
@@ -100,6 +102,10 @@ export const ALERT_TYPE_LABELS: Record<string, string> = {
   video_loss: "Video loss (reported by the camera)",
   device_fault: "Fault reported by the camera (disk, network, recording)",
   illegal_login: "Failed logins on the camera",
+  access_offline: "Access readers offline",
+  access_tamper: "Access reader tampered with",
+  door_forced: "Door forced open",
+  door_held_open: "Door held open",
 };
 
 /** Category of the last error, so users can tell unreachable vs auth vs API vs disk problems apart. */

@@ -57,7 +57,12 @@ describe("brand registry", () => {
     for (const key of ["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic"]) expect(registry.isSupported(key)).toBe(true);
     for (const key of ["hikvision", "prama", "hanwha", "panasonic"]) expect(registry.get(key).meta.supportStatus).toBe("supported");
     for (const key of ["dahua", "axis", "uniview", "onvif"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
-    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic", "reolink", "bosch", "milestone"]);
+    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "prama", "dahua", "hikvision-access", "suprema-biostar2", "gallagher", "axis", "uniview", "onvif", "hanwha", "panasonic", "reolink", "bosch", "milestone"]);
+    // Access control systems: not cameras, and not yet confirmed on real hardware.
+    for (const key of ["hikvision-access", "suprema-biostar2", "gallagher"]) expect(registry.get(key).meta).toMatchObject({ supportStatus: "unverified", deviceKind: "access" });
+    expect(registry.credentialsOf("gallagher")).toBe("secret");
+    expect(registry.requiresHttps("suprema-biostar2")).toBe(true);
+    expect(registry.resolveKey("BioStar 2")).toBe("suprema-biostar2");
   });
 
   it("resolves brand aliases", () => {

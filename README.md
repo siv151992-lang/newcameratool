@@ -80,6 +80,11 @@ camera reports them, not at the next check. **Firmware:** every camera's model a
 with the cameras still on older firmware than others of their model (CSV). See
 [docs/camera-events.md](docs/camera-events.md).
 
+**Access control:** access readers and doors on their own page: Hikvision access terminals and controllers directly,
+Suprema readers (BioStation 3, BioEntry W2 / P2) through their BioStar 2 server, Gallagher T-series readers through Command
+Centre. Readers online or offline, doors open, forced or held open, tamper, and granted / denied access events, with alerts.
+See [docs/access-control.md](docs/access-control.md).
+
 **More checks and reports:** recording retention (days stored against a required number), camera clock drift,
 camera password policy, an uptime report (% online per camera and site, CSV), maintenance mode (silence a camera's
 alerts during planned work), a **Ping** button (ICMP and the camera's web and RTSP ports, from the server), and
@@ -230,6 +235,8 @@ cameras are needed: tests use the simulated camera and mocked responses.
   page has been clicked once (a browser rule).
 - Camera events come only from Hikvision / Prama and Dahua (Dahua unverified), and only for the events enabled on
   the camera itself (Video Tampering, exceptions); each camera keeps one extra connection open to the worker.
+- Access control (Hikvision access, BioStar 2, Gallagher Command Centre) is tested against simulated systems only, and
+  its events are read at each check rather than instantly.
 - Playback depends on the camera's RTSP service (port 554) and its limit on simultaneous connections.
 - Import from CSV, Excel (.xlsx) or tab-separated text (including Bosch Project Assistant lists), up to 500 rows per file.
 - Updating a running installation: `git pull`, then `docker compose up -d --build` (the images are built from the
@@ -237,4 +244,4 @@ cameras are needed: tests use the simulated camera and mocked responses.
 
 In Docker, run the status command with `docker compose exec api node dist/cli/status.js` (add `--check` to refresh first).
 
-More: [Accounts, organizations and sign-in](docs/accounts-and-sign-in.md) · [Live view, recordings and NVRs](docs/nvrs-and-recordings.md) · [Alert notifications](docs/notifications.md) · [Uptime report](docs/uptime.md) · [Camera events and firmware](docs/camera-events.md) · [Architecture and security](docs/architecture.md) · [Operations](docs/operations.md) · [Adding a camera brand](docs/adding-a-camera-brand.md) · API docs at `/api/docs`.
+More: [Accounts, organizations and sign-in](docs/accounts-and-sign-in.md) · [Live view, recordings and NVRs](docs/nvrs-and-recordings.md) · [Alert notifications](docs/notifications.md) · [Uptime report](docs/uptime.md) · [Camera events and firmware](docs/camera-events.md) · [Access control](docs/access-control.md) · [Architecture and security](docs/architecture.md) · [Operations](docs/operations.md) · [Adding a camera brand](docs/adding-a-camera-brand.md) · API docs at `/api/docs`.
