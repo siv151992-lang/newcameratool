@@ -164,8 +164,8 @@ export class MockBioStar2 extends MockHttpsServer {
 /** Gallagher Command Centre: API key, discovery, doors, item types, items and events. */
 export class MockGallagher extends MockHttpsServer {
   readers: MockReader[] = [
-    { id: "601", name: "T15 Reader - Reception", model: "HBUS Reader", online: true },
-    { id: "602", name: "T20 Reader - Warehouse", model: "HBUS Reader", online: true },
+    { id: "601", name: "T15 Reader - Reception", model: "HBUS Terminal", online: true },
+    { id: "602", name: "T20 Reader - Warehouse", model: "HBUS Terminal", online: true },
   ];
   controllers: MockReader[] = [{ id: "501", name: "Controller 6000 - Block A", model: "Controller 6000", online: true }];
   doors: MockDoor[] = [{ id: "701", name: "Reception door", state: "closed", locked: true }, { id: "702", name: "Warehouse door", state: "closed", locked: true }];
@@ -180,34 +180,50 @@ export class MockGallagher extends MockHttpsServer {
     this.events.push({ id: String(this.nextId++), time: new Date(opts.at ?? Date.now()).toISOString(), type, group, source, ...opts });
   }
 
-  protected handle(req: http.IncomingMessage, _body: string, res: http.ServerResponse) {
+  /** Without the RESTStatus licence: no status subscriptions (403). */
+  statusLicence = true;
+
+  private flagsOf(id: string): { statusFlags: string[]; statusText: string } | undefined {
+    const r = [...this.readers, ...this.controllers].find((x) => x.id === id);
+    if (r) return { statusFlags: r.online ? (r.tamper ? ["tamper"] : []).concat(r.model?.startsWith("Controller") ? [] : ["normal"]) : ["controllerOffline"], statusText: r.online ? "Online" : "Controller offline.\n3 message(s) pending." };
+    const d = this.doors.find((x) => x.id === id);
+    if (d) {
+      const state = d.state === "closed" ? ["closed"] : ["open", ...(d.state === "forced" ? ["forced"] : d.state === "held_open" ? ["openTooLong"] : [])];
+      return { statusFlags: [...state, d.locked ? "locked" : "unlocked", "secure"], statusText: d.state === "closed" ? "Closed, secure" : "Open" };
+    }
+    return undefined;
+  }
+
+  protected handle(req: http.IncomingMessage, body: string, res: http.ServerResponse) {
     if (req.headers.authorization !== `GGL-API-KEY ${this.apiKey}`) return this.send(res, 401, { message: "Unauthorised" });
     const host = `https://${req.headers.host}`;
     const url = new URL(req.url ?? "/", host);
-    const flags = (r: MockReader) => [r.online ? "online" : "controllerOffline", ...(r.tamper ? ["tamper"] : [])];
     if (url.pathname === "/api") {
       return this.send(res, 200, {
         version: "9.10.1234",
         features: {
           doors: { doors: { href: `${host}/api/doors` } },
           events: { events: { href: `${host}/api/events` } },
-          items: { items: { href: `${host}/api/items` }, itemTypes: { href: `${host}/api/items/types` } },
+          items: { items: { href: `${host}/api/items` }, itemTypes: { href: `${host}/api/items/types` }, updates: { href: `${host}/api/items/updates` } },
         },
       });
     }
     if (url.pathname === "/api/doors") {
-      return this.send(res, 200, {
-        results: this.doors.map((d) => ({
-          id: d.id, name: d.name,
-          statusFlags: [d.state === "forced" ? "forced" : d.state === "held_open" ? "openTooLong" : d.state, d.locked ? "locked" : "unlocked"].concat(d.state === "forced" || d.state === "held_open" ? ["open"] : []),
-          statusText: d.state === "closed" ? "Closed, secure" : "Open",
-        })),
-      });
+      // The search page knows no status for items nobody monitors: "unknown".
+      const withStatus = (url.searchParams.get("fields") ?? "").includes("statusFlags");
+      return this.send(res, 200, { results: this.doors.map((d) => ({ id: d.id, name: d.name, ...(withStatus ? { statusFlags: ["unknown"], statusText: "Unknown" } : {}) })) });
     }
-    if (url.pathname === "/api/items/types") return this.send(res, 200, { itemTypes: [{ id: "11", name: "HBUS Reader" }, { id: "12", name: "Controller 6000" }, { id: "13", name: "Cardholder" }] });
+    if (url.pathname === "/api/items/updates" && req.method === "POST") {
+      if (!this.statusLicence) return this.send(res, 403, { message: "The site does not have the RESTStatus licence" });
+      const ids = (JSON.parse(body || "{}") as { itemIds?: string[] }).itemIds ?? [];
+      const updates = ids.map((id) => ({ id, ...this.flagsOf(id) })).filter((u) => u.statusFlags);
+      return this.send(res, 200, { updates, next: { href: `${host}/api/items/updates?bookmark=x` } });
+    }
+    if (url.pathname === "/api/items/types") return this.send(res, 200, { itemTypes: [{ id: "11", name: "HBUS Terminal" }, { id: "12", name: "Controller 6000" }, { id: "1", name: "Cardholder", canonicalTypeName: "cardholder" }, { id: "14", name: "HBUS Door Module" }] });
     if (url.pathname === "/api/items") {
       const list = url.searchParams.get("type") === "11" ? this.readers : url.searchParams.get("type") === "12" ? this.controllers : [];
-      return this.send(res, 200, { results: list.map((r) => ({ id: r.id, name: r.name, statusFlags: flags(r), statusText: r.online ? "Online" : "Offline" })) });
+      // Item search gives no status (fields: href, id, name, type, division …).
+      return this.send(res, 200, { results: list.map((r) => ({ id: r.id, name: r.name, type: { id: url.searchParams.get("type"), name: r.model } })) });
     }
     if (url.pathname === "/api/events") {
       const after = Date.parse(url.searchParams.get("after") ?? "1970-01-01");

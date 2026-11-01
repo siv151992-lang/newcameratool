@@ -57,6 +57,12 @@ describe("access control readings", () => {
     expect(fromFlags("door", { id: "1", name: "Front", statusFlags: ["forced", "open", "unlocked"] })).toMatchObject({ doorState: "forced", lockState: "unlocked", online: true, tamper: false });
     expect(fromFlags("reader", { id: "2", name: "T15", statusFlags: ["controllerOffline", "tamper"] })).toMatchObject({ online: false, tamper: true });
     expect(fromFlags("reader", { id: "3", name: "T20" })).toEqual({ kind: "reader", externalId: "3", name: "T20" });
+    // Per the REST reference: "secure" is not "locked", "unknown" is not offline, and a door is online only when open or closed.
+    expect(fromFlags("door", { id: "4", name: "Back", statusFlags: ["closed", "unlocked", "secure"] })).toMatchObject({ online: true, doorState: "closed", lockState: "unlocked" });
+    expect(fromFlags("door", { id: "5", name: "Side", statusFlags: ["unknown"] })).toEqual({ kind: "door", externalId: "5", name: "Side" });
+    expect(fromFlags("door", { id: "6", name: "Dock", statusFlags: ["deviceNotResponding"] })).toMatchObject({ online: false });
+    expect(fromFlags("controller", { id: "7", name: "C6000", statusFlags: ["notPolled"] })).toMatchObject({ online: undefined, statusText: expect.stringMatching(/Shunted/) });
+    expect(fromFlags("controller", { id: "8", name: "C7000", statusFlags: [] }, true)).toMatchObject({ online: true, tamper: false });
     expect(fromGallagherEvent({ id: "9", time: "2026-11-01T04:00:00Z", type: { name: "Card not authorised" }, group: { name: "Card Event" }, cardholder: { firstName: "Mei", lastName: "Lin" }, door: { name: "Front" } }))
       .toMatchObject({ category: "denied", person: "Mei Lin", point: "Front", key: "9" });
   });
