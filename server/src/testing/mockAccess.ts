@@ -167,7 +167,10 @@ export class MockGallagher extends MockHttpsServer {
     { id: "601", name: "T15 Reader - Reception", model: "HBUS Terminal", online: true },
     { id: "602", name: "T20 Reader - Warehouse", model: "HBUS Terminal", online: true },
   ];
-  controllers: MockReader[] = [{ id: "501", name: "Controller 6000 - Block A", model: "Controller 6000", online: true }];
+  controllers: MockReader[] = [
+    { id: "501", name: "Controller 6000 - Block A", model: "Controller 6000", online: true },
+    { id: "502", name: "Control unit - Gate house", model: "Control Unit", online: true },
+  ];
   doors: MockDoor[] = [{ id: "701", name: "Reception door", state: "closed", locked: true }, { id: "702", name: "Warehouse door", state: "closed", locked: true }];
   events: { id: string; time: string; type: string; group: string; source: string; cardholder?: string; door?: string }[] = [];
   private nextId = 1000;
@@ -185,7 +188,7 @@ export class MockGallagher extends MockHttpsServer {
 
   private flagsOf(id: string): { statusFlags: string[]; statusText: string } | undefined {
     const r = [...this.readers, ...this.controllers].find((x) => x.id === id);
-    if (r) return { statusFlags: r.online ? (r.tamper ? ["tamper"] : []).concat(r.model?.startsWith("Controller") ? [] : ["normal"]) : ["controllerOffline"], statusText: r.online ? "Online" : "Controller offline.\n3 message(s) pending." };
+    if (r) return { statusFlags: r.online ? (r.tamper ? ["tamper"] : []).concat(r.model?.startsWith("Control") ? [] : ["normal"]) : ["controllerOffline"], statusText: r.online ? "Online" : "Controller offline.\n3 message(s) pending." };
     const d = this.doors.find((x) => x.id === id);
     if (d) {
       const state = d.state === "closed" ? ["closed"] : ["open", ...(d.state === "forced" ? ["forced"] : d.state === "held_open" ? ["openTooLong"] : [])];
@@ -219,9 +222,10 @@ export class MockGallagher extends MockHttpsServer {
       const updates = ids.map((id) => ({ id, ...this.flagsOf(id) })).filter((u) => u.statusFlags);
       return this.send(res, 200, { updates, next: { href: `${host}/api/items/updates?bookmark=x` } });
     }
-    if (url.pathname === "/api/items/types") return this.send(res, 200, { itemTypes: [{ id: "11", name: "HBUS Terminal" }, { id: "12", name: "Controller 6000" }, { id: "1", name: "Cardholder", canonicalTypeName: "cardholder" }, { id: "14", name: "HBUS Door Module" }] });
+    if (url.pathname === "/api/items/types") return this.send(res, 200, { itemTypes: [{ id: "11", name: "HBUS Terminal" }, { id: "12", name: "Controller 6000" }, { id: "15", name: "Control Unit" }, { id: "1", name: "Cardholder", canonicalTypeName: "cardholder" }, { id: "14", name: "HBUS Door Module" }] });
     if (url.pathname === "/api/items") {
-      const list = url.searchParams.get("type") === "11" ? this.readers : url.searchParams.get("type") === "12" ? this.controllers : [];
+      const t = url.searchParams.get("type");
+      const list = t === "11" ? this.readers : t === "12" ? this.controllers.filter((c) => c.model !== "Control Unit") : t === "15" ? this.controllers.filter((c) => c.model === "Control Unit") : [];
       // Item search gives no status (fields: href, id, name, type, division …).
       return this.send(res, 200, { results: list.map((r) => ({ id: r.id, name: r.name, type: { id: url.searchParams.get("type"), name: r.model } })) });
     }

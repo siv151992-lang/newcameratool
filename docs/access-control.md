@@ -9,7 +9,7 @@ An access system is added once, and all its readers and doors come with it:
 |---|---|---|
 | **Hikvision** access terminals and controllers (DS-K1T face / card terminals, DS-K2600 controllers) | Each terminal or controller, by its address | Its admin user (Digest login, like the cameras) |
 | **Suprema** BioStation 3, BioEntry W2, BioEntry P2 and other Suprema devices | The **BioStar 2 server** they report to (its HTTPS address and port) | A BioStar 2 operator who may see devices, doors and events. **HTTPS only** (the login sends the password itself) |
-| **Gallagher** T-series readers on Controller 6000 / 7000 | The **Command Centre server** (HTTPS, port 8904) | The API key of a REST client item. Needs the REST licences (RESTStatus for live status, RESTEvents for events). **HTTPS only** |
+| **Gallagher** T-series readers on Controller 6000 / 7000 or control units | The **Command Centre server** (HTTPS, port 8904) | The API key of a REST client item. Needs the REST licences (RESTStatus for live status, RESTEvents for events). **HTTPS only** |
 
 Add it with **Access control → Add access system**. Test the connection: it shows how many readers and doors were
 found. For a server with its own (self-signed) certificate, use **Get the certificate** and trust it; certificate
@@ -70,7 +70,8 @@ critical for systems marked *critical area*, and are silent during maintenance.
 - Events come at each check, not instantly (Refresh now reads at once).
 - Gallagher: read through the documented REST API (discovery from `/api`, doors with their status flags, a status
   subscription for readers and controllers, the events after the last check). Readers and controllers are found by
-  their item type's name ("… Terminal", "… Reader", "Controller …"), as no fixed type names are documented for them.
+  their item type's name ("… Terminal", "… Reader", "Controller 6000 / 7000", "Control Unit"), as no fixed type names are
+  documented for them. Controllers and control units have no API of their own: Command Centre reports for them.
   Client certificates are not supported yet (see the setup above).
 - BioStar 2: door states come from door events (a door is shown as reported by its last event); readers' online
   state from the server's device list.

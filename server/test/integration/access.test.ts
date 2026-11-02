@@ -147,6 +147,7 @@ describe("access control", () => {
     await runCheck(id, "manual", deps);
     const points = (await agent.get(`/api/access/${id}/points`).expect(200)).body;
     expect(points.map((p: { kind: string; name: string; online: boolean | null }) => [p.kind, p.name, p.online])).toEqual([
+      ["controller", "Control unit - Gate house", true],
       ["controller", "Controller 6000 - Block A", true],
       ["reader", "T15 Reader - Reception", true],
       ["reader", "T20 Reader - Warehouse", true],
