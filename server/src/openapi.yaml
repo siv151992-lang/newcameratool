@@ -434,34 +434,6 @@ paths:
       responses:
         "200": { description: "[{ id, occurredAt, kind: tamper | video_loss | device_fault | illegal_login, eventType, state: active | inactive, channel, detail }]" }
         "404": { description: Camera not found }
-  /access:
-    get:
-      tags: [Access control]
-      summary: Access systems (controllers, BioStar 2 and Command Centre servers) with their readers' and doors' counts
-      description: Access systems are devices of type access, added, edited, checked and removed with the /cameras endpoints (brand hikvision-access, suprema-biostar2 or gallagher).
-      responses:
-        "200": { description: "{ summary: { systems, systemsOffline, readers, readersOffline, doors, doorsOpen, doorAlarms, tamper, deniedLastDay }, systems: [...] }" }
-  /access/{id}/points:
-    parameters:
-      - { $ref: "#/components/parameters/CameraId" }
-    get:
-      tags: [Access control]
-      summary: An access system's readers, doors and controllers as last read
-      responses:
-        "200": { description: "[{ id, kind: reader | door | controller, name, model, online, doorState, lockState, tamper, statusText, updatedAt }]" }
-        "404": { description: Access system not found }
-  /access/events:
-    get:
-      tags: [Access control]
-      summary: Access events, newest first
-      parameters:
-        - { name: systemId, in: query, schema: { type: string, format: uuid } }
-        - { name: category, in: query, schema: { type: string, enum: [granted, denied, door, alarm, tamper, fault, other] } }
-        - { name: problems, in: query, schema: { type: string, enum: ["true", "false"] } }
-        - { name: search, in: query, schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
-      responses:
-        "200": { description: "[{ id, occurredAt, category, description, person, point, systemId, systemName }]" }
   /cameras/firmware:
     get:
       tags: [Cameras]

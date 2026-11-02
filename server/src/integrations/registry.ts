@@ -1,6 +1,3 @@
-import { BioStar2Adapter } from "./access/biostar2.js";
-import { GallagherAdapter } from "./access/gallagher.js";
-import { HikvisionAccessAdapter } from "./access/hikvisionAccess.js";
 import { hostGuard } from "../security/hostGuardInstance.js";
 import { AxisAdapter } from "./axis/adapter.js";
 import { BoschAdapter } from "./bosch/adapter.js";
@@ -147,14 +144,12 @@ export class BrandRegistry {
 
   /** Credentials a camera of this brand needs, whatever the integration's status. */
   credentialsOf(key: string): "user_password" | "secret" | "none" {
-    const builtin = this.adapters.get(key);
-    return builtin ? (builtin.meta.credentials ?? "user_password") : (this.states.get(key)?.credentials ?? "user_password");
+    return this.adapters.has(key) ? "user_password" : (this.states.get(key)?.credentials ?? "user_password");
   }
 
   /** True when the brand's credentials are only ever sent over HTTPS. */
   requiresHttps(key: string): boolean {
-    const builtin = this.adapters.get(key);
-    return builtin ? builtin.meta.httpsOnly === true : (this.states.get(key)?.httpsOnly ?? false);
+    return !this.adapters.has(key) && (this.states.get(key)?.httpsOnly ?? false);
   }
 
   isBuiltin(key: string) {
@@ -222,16 +217,6 @@ export class BrandRegistry {
       tplinkvigi: "onvif",
       vigi: "onvif",
       mobotix: "onvif",
-      // Access control.
-      hikvisionaccess: "hikvision-access",
-      hikvisionaccesscontrol: "hikvision-access",
-      suprema: "suprema-biostar2",
-      biostar: "suprema-biostar2",
-      biostar2: "suprema-biostar2",
-      supremabiostar2: "suprema-biostar2",
-      gallagher: "gallagher",
-      gallaghercommandcentre: "gallagher",
-      commandcentre: "gallagher",
     };
     const key = aliases[s] ?? s;
     if (this.adapters.has(key) || this.planned.has(key) || this.states.has(key)) return key;
@@ -266,9 +251,6 @@ export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandReg
   registry.register(new HikvisionAdapter(http));
   registry.register(new PramaAdapter(http));
   registry.register(new DahuaAdapter(http));
-  registry.register(new HikvisionAccessAdapter(http));
-  registry.register(new BioStar2Adapter(http));
-  registry.register(new GallagherAdapter(http));
   registry.register(new AxisAdapter(http));
   registry.register(new UniviewAdapter(http));
   registry.register(new OnvifAdapter(http));

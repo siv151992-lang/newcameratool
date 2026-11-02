@@ -19,7 +19,6 @@ import { aiRouter } from "./routes/ai.js";
 import { alertsRouter } from "./routes/alerts.js";
 import { authRouter } from "./routes/auth.js";
 import { camerasRouter } from "./routes/cameras.js";
-import { accessRouter } from "./routes/access.js";
 import { integrationsRouter } from "./routes/integrations.js";
 import { apiLimiter } from "./routes/limits.js";
 
@@ -73,7 +72,6 @@ export function createApp() {
   const protectedApi = express.Router();
   protectedApi.use(requireAuth, requireCsrf);
   protectedApi.use("/cameras", camerasRouter);
-  protectedApi.use("/access", accessRouter);
   protectedApi.use("/alerts", alertsRouter);
   protectedApi.use("/brands", brandsRouter);
   protectedApi.use("/integrations", integrationsRouter);

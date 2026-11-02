@@ -107,13 +107,9 @@ export function credentialsFor(brandKey: string): "user_password" | "secret" | "
   return registry.credentialsOf(brandKey);
 }
 
-function credentialIssues(v: { brand?: string; username?: string; password?: string; protocol?: string }, ctx: z.RefinementCtx, creating: boolean) {
+function credentialIssues(v: { brand?: string; username?: string; password?: string }, ctx: z.RefinementCtx, creating: boolean) {
   if (!v.brand) return;
   const mode = credentialsFor(v.brand);
-  // Built-in systems whose login sends the password itself or an API key (configurable brands keep their own rules).
-  if (v.protocol === "http" && registry.isBuiltin(v.brand) && registry.requiresHttps(v.brand)) {
-    ctx.addIssue({ code: "custom", path: ["protocol"], message: "This system's login is only sent over HTTPS: choose HTTPS" });
-  }
   if (mode === "user_password" && creating && !v.username) ctx.addIssue({ code: "custom", path: ["username"], message: "Username is required" });
   if (mode === "user_password" && !creating && v.username === "") ctx.addIssue({ code: "custom", path: ["username"], message: "Username is required" });
   if (mode !== "none" && creating && !v.password) {
@@ -163,7 +159,7 @@ const SELECT_CAMERA = `
          s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least,
          s.clock_offset_seconds, s.clock_checked_at, s.clock_error,
          s.picture_state, s.picture_detail, s.picture_error, s.picture_checked_at,
-         s.events_state, s.events_error, s.events_since, s.events_last_at, s.access_error, s.access_at,
+         s.events_state, s.events_error, s.events_since, s.events_last_at,
          s.channels_error, s.channels_at,
          (SELECT json_build_object('total', count(*), 'noVideo', count(*) FILTER (WHERE ch.online = false),
                                    'notRecording', count(*) FILTER (WHERE ch.online IS DISTINCT FROM false AND ch.recording IN ('idle', 'error')))
@@ -213,7 +209,7 @@ export function toCameraView(r: CameraRow) {
     priority: r.priority as "critical" | "normal",
     /** Planned work: no new alerts or notifications until then (null when not in maintenance). */
     maintenance: r.maintenance_until ? { until: r.maintenance_until as Date, note: (r.maintenance_note as string | null) ?? null } : null,
-    deviceType: (r.device_type as "camera" | "nvr" | "access" | undefined) ?? "camera",
+    deviceType: (r.device_type as "camera" | "nvr" | undefined) ?? "camera",
     pictureChecks: (r.picture_checks as boolean | undefined) ?? true,
     cameraEvents: (r.event_stream as boolean | undefined) ?? true,
     /** The brand's integration has an event stream at all. */
@@ -278,8 +274,6 @@ export function toCameraView(r: CameraRow) {
         since: r.events_since ?? null,
         lastEventAt: r.events_last_at ?? null,
       },
-      /** Access systems: when the readers and doors were last read, and why not. */
-      access: { error: (r.access_error as string | null) ?? null, readAt: r.access_at ?? null },
     },
     device: {
       model: r.device_model ?? null,
@@ -300,8 +294,7 @@ export const listQuerySchema = z.object({
   recording: z.enum(["recording", "idle", "error", "unknown"]).optional(),
   password: z.enum(["ok", "weak", "expired"]).optional(),
   priority: z.enum(["critical", "normal"]).optional(),
-  /** camera, nvr, or access (access systems are listed only when asked for). */
-  type: z.enum(["camera", "nvr", "access"]).optional(),
+  type: z.enum(["camera", "nvr"]).optional(),
   sort: z.enum(["name", "host", "brand", "location", "connection", "health", "recording", "usage", "lastSuccess", "recordingDays", "password"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   page: z.coerce.number().int().min(1).default(1),
@@ -363,9 +356,7 @@ export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize"
   if (q.maxUsage !== undefined) where.push(`s.used_percentage <= ${p(q.maxUsage)}`);
   if (q.recording) where.push(`c.monitoring_enabled AND s.recording_state = ${p(q.recording)}`);
   if (q.priority) where.push(`c.priority = ${p(q.priority)}`);
-  // Access systems have their own page: the camera list shows them only when asked for.
   if (q.type) where.push(`c.device_type = ${p(q.type)}`);
-  else where.push("c.device_type <> 'access'");
   if (q.password) where.push(`(SELECT ${PASSWORD_STATUS_SQL} FROM camera_credentials cr WHERE cr.camera_id = c.id) = ${p(q.password)}`);
 
   return { clause: where.join(" AND "), params, p };
@@ -478,7 +469,7 @@ export async function getSummary(orgId: string) {
        SELECT count(*) AS total, count(*) FILTER (WHERE online = false) AS no_video,
               count(*) FILTER (WHERE online IS DISTINCT FROM false AND recording IN ('idle', 'error')) AS not_recording
        FROM nvr_channels WHERE camera_id = c.id) ch ON true
-     WHERE c.organization_id = $1 AND c.deleted_at IS NULL AND c.device_type <> 'access'`,
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL`,
     [orgId],
   );
   const r = rows[0];
@@ -541,23 +532,6 @@ function hasEventStream(brand: string): boolean {
   }
 }
 
-/** An access system's brand (access controller, BioStar 2, Command Centre): its device type is "access". */
-export function isAccessBrand(brand: string): boolean {
-  try {
-    return registry.get(brand).meta.deviceKind === "access";
-  } catch {
-    return false;
-  }
-}
-
-/** The device type a camera of this brand has: forced for recording servers and access systems. */
-function deviceTypeFor(brand: string, asked: string | undefined, current?: string): string {
-  if (isAccessBrand(brand)) return "access";
-  if (recordsElsewhere(brand)) return "nvr";
-  const t = asked ?? current ?? "camera";
-  return t === "access" ? "camera" : t;
-}
-
 function recordsElsewhere(brand: string): boolean {
   try {
     return registry.get(brand).meta.recordsElsewhere === true;
@@ -582,7 +556,7 @@ export async function createCamera(
         [
           input.name, input.host, port, input.protocol, input.brand, input.model, input.location,
           input.monitoringEnabled, input.warningThreshold ?? null, input.criticalThreshold ?? null,
-          input.caCertificate, actor.id, server || isAccessBrand(input.brand) ? false : (input.localStorage ?? true), orgId, input.priority ?? "normal", deviceTypeFor(input.brand, input.deviceType),
+          input.caCertificate, actor.id, server ? false : (input.localStorage ?? true), orgId, input.priority ?? "normal", server ? "nvr" : (input.deviceType ?? "camera"),
           input.pictureChecks ?? true,
           input.cameraEvents ?? true,
         ],
@@ -673,9 +647,9 @@ export async function updateCamera(orgId: string, id: string, patch: CameraUpdat
           patch.caCertificate === undefined
             ? (await client.query("SELECT ca_certificate FROM cameras WHERE id = $1", [id])).rows[0].ca_certificate
             : patch.caCertificate,
-          recordsElsewhere(brand) || isAccessBrand(brand) ? false : (patch.localStorage ?? current.local_storage),
+          recordsElsewhere(brand) ? false : (patch.localStorage ?? current.local_storage),
           patch.priority ?? current.priority,
-          deviceTypeFor(brand, patch.deviceType, current.device_type as string),
+          recordsElsewhere(brand) ? "nvr" : (patch.deviceType ?? current.device_type),
           patch.pictureChecks ?? current.picture_checks ?? true,
           patch.cameraEvents ?? current.event_stream ?? true,
         ],

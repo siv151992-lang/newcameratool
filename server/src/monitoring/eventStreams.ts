@@ -74,7 +74,7 @@ export class EventStreams {
        JOIN camera_brands b ON b.key = c.brand_key AND b.status = 'enabled' AND b.deleted_at IS NULL
        JOIN organizations o ON o.id = c.organization_id AND o.is_active
        LEFT JOIN camera_credentials cr ON cr.camera_id = c.id
-       WHERE c.deleted_at IS NULL AND c.monitoring_enabled AND c.event_stream AND c.device_type <> 'access'
+       WHERE c.deleted_at IS NULL AND c.monitoring_enabled AND c.event_stream
          AND s.connection_status = 'online' AND s.consecutive_auth_failures = 0
        ORDER BY (c.priority = 'critical') DESC, c.created_at`,
     );

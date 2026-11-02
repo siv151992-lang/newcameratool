@@ -29,11 +29,6 @@ export const ALERT_TYPES = [
   "video_loss",
   "device_fault",
   "illegal_login",
-  // Access control systems (readers, doors and controllers read at each check).
-  "access_offline",
-  "access_tamper",
-  "door_forced",
-  "door_held_open",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 export type Severity = "info" | "warning" | "critical";
@@ -98,15 +93,6 @@ export type CheckResult =
   | { ok: true; reading: StorageReading }
   | { ok: false; errorCode: CameraErrorCode; errorMessage: string };
 
-/** A reader, door or controller as stored after a check (states not reported keep their last value). */
-export interface AccessPointState {
-  kind: "reader" | "door" | "controller";
-  name: string;
-  online: boolean | null;
-  doorState: "open" | "closed" | "held_open" | "forced" | null;
-  tamper: boolean | null;
-}
-
 export interface EvaluationInput {
   result: CheckResult;
   connectionStatus: "online" | "offline" | "unknown";
@@ -129,10 +115,6 @@ export interface EvaluationInput {
   recordingDays?: { days: number; atLeast: boolean };
   /** The camera's picture as last checked; "off" when picture checks do not apply (resolves the alert); absent when unknown. */
   picture?: { state: string; detail: string } | "off";
-  /** An access system's readers, doors and controllers as read in this check; absent when not read. */
-  access?: AccessPointState[];
-  /** It is an access system, not a camera (in alert titles). */
-  accessSystem?: boolean;
 }
 
 export interface Evaluation {
@@ -156,7 +138,7 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
     active.push({
       type: "offline",
       severity: "critical",
-      title: input.accessSystem ? "Access system offline" : "Camera offline",
+      title: "Camera offline",
       description: `No response after ${input.consecutiveFailures} consecutive checks. Last error: ${msg}`,
       context: { consecutiveFailures: input.consecutiveFailures, errorCode: !result.ok ? result.errorCode : undefined },
     });
@@ -192,32 +174,6 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
         description: parts.join(" "),
         context: { videoLoss: lost.map((c) => c.channel), notRecording: notRecording.map((c) => c.channel) },
       });
-    }
-  }
-
-  // Access systems: readers or controllers offline, tamper, doors forced or held open. One alert of each per system.
-  if (input.access) {
-    evaluated.push("access_offline", "access_tamper", "door_forced", "door_held_open");
-    const names = (list: AccessPointState[]) => {
-      const shown = list.slice(0, 10).map((p) => p.name).join(", ");
-      return list.length > 10 ? `${shown} and ${list.length - 10} more` : shown;
-    };
-    const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-    const offline = input.access.filter((p) => p.kind !== "door" && p.online === false);
-    const tampered = input.access.filter((p) => p.tamper === true);
-    const forced = input.access.filter((p) => p.kind === "door" && p.doorState === "forced");
-    const held = input.access.filter((p) => p.kind === "door" && p.doorState === "held_open");
-    if (offline.length) {
-      active.push({ type: "access_offline", severity: "warning", title: `${plural(offline.length, "reader", "readers")} offline`, description: `Not connected: ${names(offline)}.`, context: { points: offline.map((p) => p.name) } });
-    }
-    if (tampered.length) {
-      active.push({ type: "access_tamper", severity: "critical", title: "Access reader tampered with", description: `Tamper reported by ${names(tampered)}.`, context: { points: tampered.map((p) => p.name) } });
-    }
-    if (forced.length) {
-      active.push({ type: "door_forced", severity: "critical", title: `${plural(forced.length, "door", "doors")} forced open`, description: `Opened without access: ${names(forced)}.`, context: { points: forced.map((p) => p.name) } });
-    }
-    if (held.length) {
-      active.push({ type: "door_held_open", severity: "warning", title: `${plural(held.length, "door", "doors")} held open`, description: `Open longer than allowed: ${names(held)}.`, context: { points: held.map((p) => p.name) } });
     }
   }
 

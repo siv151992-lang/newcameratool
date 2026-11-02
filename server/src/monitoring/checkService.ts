@@ -6,8 +6,6 @@ import {
   AUTH_ERROR_CODES,
   CameraApiError,
   NETWORK_ERROR_CODES,
-  type AccessPoint,
-  type AccessReading,
   type CameraBrandAdapter,
   type CameraConfig,
   type DeviceInfo,
@@ -24,7 +22,7 @@ import { redactSecrets } from "../security/redact.js";
 import { applyConditions, openAlertTypes } from "../services/alertService.js";
 import { credentialsFor, getCameraConfig } from "../services/cameraService.js";
 import { getMonitoringSettings, type MonitoringSettings } from "../services/settingsService.js";
-import { type AccessPointState, type CheckResult, evaluateConditions, passwordAgeCondition, raiseForCriticalArea, storageHealth, thresholdsFor } from "./evaluate.js";
+import { type CheckResult, evaluateConditions, passwordAgeCondition, raiseForCriticalArea, storageHealth, thresholdsFor } from "./evaluate.js";
 import { getCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
 import { analysePicture, judgePicture, type PictureBaseline, type PictureState } from "./picture.js";
 
@@ -123,7 +121,6 @@ export async function runCheck(
   let deviceInfo: DeviceInfo | undefined;
   let recording: RecordingReading | undefined;
   let channels: { list?: NvrChannel[]; error?: string } | undefined;
-  let access: AccessPointState[] | undefined;
   let config: CameraConfig | undefined;
   let integrationVersion: string | undefined;
   try {
@@ -150,10 +147,8 @@ export async function runCheck(
       integrationVersion = meta.configVersion ? `${meta.version ?? "1.0.0"} (config ${meta.configVersion})` : (meta.version ?? "1.0.0");
       config = await getCameraConfig(cameraId, settings.requestTimeoutMs);
       const cfg = config;
-      // A recording server (Milestone) keeps its own storage, and an access system has none: only
-      // their being reachable is checked.
-      const isAccess = meta.deviceKind === "access";
-      const local = row.local_storage !== false && !meta.recordsElsewhere && !isAccess;
+      // A recording server (Milestone) keeps its own storage: only its being reachable is checked.
+      const local = row.local_storage !== false && !meta.recordsElsewhere;
       const { value, attempts: n } = await withRetry(() => (local ? adapter.getStorageStatus(cfg) : reachability(adapter, cfg)), {
         maxRetries: settings.maxRetries,
         baseDelayMs: settings.retryBaseDelayMs,
@@ -163,14 +158,13 @@ export async function runCheck(
       result = { ok: true, reading: value };
       recording = local
         ? reconcileRecording(await readRecording(adapter, cfg), value)
-        : { state: "unknown", channels: [], detail: isAccess ? "An access control system: no recordings" : meta.recordsElsewhere ? `Records on its own servers (${meta.displayName}); each camera's recording is shown on its channel` : "No local storage: this camera records elsewhere (e.g. an NVR)" };
+        : { state: "unknown", channels: [], detail: meta.recordsElsewhere ? `Records on its own servers (${meta.displayName}); each camera's recording is shown on its channel` : "No local storage: this camera records elsewhere (e.g. an NVR)" };
       if (row.device_type === "nvr") channels = await readChannels(adapter, cfg);
-      if (isAccess) access = await refreshAccess(cameraId, adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
       if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);
       await refreshClock(cameraId, adapter, cfg, trigger);
       // The picture of a camera (an NVR's channels are cameras of their own elsewhere).
-      if (settings.pictureCheckMinutes > 0 && row.picture_checks && row.device_type === "camera" && !isAccess) {
+      if (settings.pictureCheckMinutes > 0 && row.picture_checks && row.device_type !== "nvr") {
         await refreshPicture(cameraId, adapter, cfg, trigger, settings.pictureCheckMinutes, deps.registry);
       }
     } catch (err) {
@@ -178,7 +172,7 @@ export async function runCheck(
       result = toFailure(err, [config?.password]);
     }
 
-    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, recording, settings, integrationVersion, channels, access);
+    const events = await persist(cameraId, trigger, result, attempts, Date.now() - started, deviceInfo, recording, settings, integrationVersion, channels);
     deps.notifier.dispatch(events).catch((err) => logger.error({ err: (err as Error).message }, "Notification dispatch failed"));
     return { cameraId, status: "completed", result, attempts, durationMs: Date.now() - started };
   } finally {
@@ -205,73 +199,6 @@ async function reachability(adapter: CameraBrandAdapter, cfg: CameraConfig): Pro
  * An NVR's channels. Best effort like recording: one attempt, and a failure is kept as the reason
  * (no channel alerts are raised or resolved without a reading).
  */
-/** Events read at the first check of an access system: the last day's. */
-const ACCESS_FIRST_LOOK_MS = 24 * 3600_000;
-/** At most this many events are kept from one check (a busy system between two checks). */
-const ACCESS_EVENTS_PER_CHECK = 1000;
-
-/**
- * An access system's readers, doors and controllers, and its new events. A door the system only
- * says was forced or held open in its events stays so while it reads open; a state not reported
- * this time stays as last read. A failure is kept as the reason (no access alerts change then).
- */
-async function refreshAccess(cameraId: string, adapter: CameraBrandAdapter, cfg: CameraConfig): Promise<AccessPointState[] | undefined> {
-  if (!adapter.getAccessStatus) return undefined;
-  const cursor = (await pool.query<{ after: Date | null }>("SELECT access_events_after AS after FROM camera_status WHERE camera_id = $1", [cameraId])).rows[0]?.after;
-  const after = cursor ? cursor.getTime() : Date.now() - ACCESS_FIRST_LOOK_MS;
-  let reading: AccessReading;
-  try {
-    reading = await adapter.getAccessStatus(cfg, after);
-  } catch (err) {
-    const msg = err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : "unexpected error";
-    await pool.query("UPDATE camera_status SET access_error = $2, access_at = now() WHERE camera_id = $1", [cameraId, `Readers and doors could not be read: ${msg}`.slice(0, 500)]);
-    return undefined;
-  }
-  return withTransaction(async (db) => {
-    const old = new Map((await db.query<{ kind: string; external_id: string; door_state: string | null; lock_state: string | null; tamper: boolean | null }>(
-      "SELECT kind, external_id, door_state, lock_state, tamper FROM access_points WHERE camera_id = $1 FOR UPDATE",
-      [cameraId],
-    )).rows.map((r) => [`${r.kind}:${r.external_id}`, r]));
-    const seen = new Map<string, AccessPoint>();
-    for (const p of reading.points) seen.set(`${p.kind}:${p.externalId}`, p);
-    const states: AccessPointState[] = [];
-    for (const [key, p] of seen) {
-      const prev = old.get(key);
-      let door = p.doorState ?? (prev?.door_state as AccessPoint["doorState"] | null) ?? null;
-      if (p.doorState === "open" && (prev?.door_state === "forced" || prev?.door_state === "held_open")) door = prev.door_state;
-      const lock = p.lockState ?? (prev?.lock_state as AccessPoint["lockState"] | null) ?? null;
-      const tamper = p.tamper ?? prev?.tamper ?? null;
-      await db.query(
-        `INSERT INTO access_points (camera_id, kind, external_id, name, model, online, door_state, lock_state, tamper, status_text, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
-         ON CONFLICT (camera_id, kind, external_id) DO UPDATE SET name = EXCLUDED.name, model = EXCLUDED.model, online = EXCLUDED.online,
-           door_state = EXCLUDED.door_state, lock_state = EXCLUDED.lock_state, tamper = EXCLUDED.tamper, status_text = EXCLUDED.status_text, updated_at = now()`,
-        [cameraId, p.kind, p.externalId.slice(0, 200), p.name.slice(0, 200), p.model?.slice(0, 200) ?? null, p.online ?? null, door, lock, tamper, p.statusText?.slice(0, 300) ?? null],
-      );
-      states.push({ kind: p.kind, name: p.name, online: p.online ?? null, doorState: door, tamper });
-    }
-    await db.query(
-      "DELETE FROM access_points WHERE camera_id = $1 AND NOT ((kind || ':' || external_id) = ANY($2::text[]))",
-      [cameraId, [...seen.keys()]],
-    );
-    const events = reading.events.slice(-ACCESS_EVENTS_PER_CHECK);
-    for (const e of events) {
-      await db.query(
-        `INSERT INTO access_events (camera_id, occurred_at, category, description, person, point, external_key)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (camera_id, external_key) DO NOTHING`,
-        [cameraId, new Date(e.at), e.category, e.description.slice(0, 300), e.person?.slice(0, 200) ?? null, e.point?.slice(0, 200) ?? null, e.key.slice(0, 300)],
-      );
-    }
-    // Next time, from the newest event read (never back in time; never ahead of now).
-    const newest = Math.min(Math.max(after, ...events.map((e) => e.at)), Date.now());
-    await db.query(
-      "UPDATE camera_status SET access_error = $2, access_at = now(), access_events_after = $3 WHERE camera_id = $1",
-      [cameraId, reading.eventsError ? `Events could not be read: ${redactSecrets(reading.eventsError, [cfg.password])}`.slice(0, 500) : null, new Date(newest)],
-    );
-    return states;
-  });
-}
-
 async function readChannels(adapter: CameraBrandAdapter, cfg: CameraConfig): Promise<{ list?: NvrChannel[]; error?: string }> {
   if (!adapter.getChannels) return { error: "Channels are not available for this brand" };
   try {
@@ -433,7 +360,6 @@ async function persist(
   settings: MonitoringSettings,
   integrationVersion?: string,
   channels?: { list?: NvrChannel[]; error?: string },
-  access?: AccessPointState[],
 ): Promise<NotificationEvent[]> {
   return withTransaction(async (db) => {
     const { rows } = await db.query(
@@ -575,13 +501,11 @@ async function persist(
       settings,
       localStorage,
       channels: result.ok ? channels?.list : undefined,
-      access: result.ok ? access : undefined,
-      accessSystem: cam.device_type === "access",
       recordingDays: result.ok && cam.recording_days !== null && !cam.recording_range_error
         ? { days: Number(cam.recording_days), atLeast: Boolean(cam.recording_days_at_least) }
         : undefined,
       clockOffsetSeconds: result.ok && cam.clock_offset_seconds !== null ? Number(cam.clock_offset_seconds) : undefined,
-      picture: settings.pictureCheckMinutes <= 0 || !cam.picture_checks || cam.device_type !== "camera"
+      picture: settings.pictureCheckMinutes <= 0 || !cam.picture_checks || cam.device_type === "nvr"
         ? "off"
         : result.ok && cam.picture_state ? { state: cam.picture_state, detail: cam.picture_detail ?? "" } : undefined,
       openTypes: await openAlertTypes(cameraId, db),

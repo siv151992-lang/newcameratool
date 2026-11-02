@@ -26,7 +26,7 @@ interface FormState {
   pictureChecks: boolean;
   cameraEvents: boolean;
   priority: "critical" | "normal";
-  deviceType: "camera" | "nvr" | "access";
+  deviceType: "camera" | "nvr";
   warningThreshold: string;
   criticalThreshold: string;
   caCertificate: string;
@@ -60,8 +60,7 @@ function toPayload(f: FormState, original?: FormState) {
   return Object.fromEntries(Object.entries(full).filter(([k, v]) => k === "password" || k === "caCertificate" || orig[k] !== v));
 }
 
-/** Adds or edits a camera or NVR, or (kind "access") an access control system. */
-export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access" }) {
+export function CameraFormPage() {
   const { id } = useParams();
   const editing = !!id;
   const navigate = useNavigate();
@@ -75,13 +74,9 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [formError, setFormError] = useState<unknown>(null);
 
-  const allBrands = useQuery({ queryKey: ["brands"], queryFn: () => api<Brand[]>("/brands") });
+  const brands = useQuery({ queryKey: ["brands"], queryFn: () => api<Brand[]>("/brands") });
   const settings = useQuery({ queryKey: ["settings", "monitoring"], queryFn: () => api<MonitoringSettings>("/settings/monitoring") });
   const camera = useQuery({ queryKey: ["camera", id], queryFn: () => api<CameraDetail>(`/cameras/${id}`), enabled: editing });
-  // An access system edited from anywhere is edited as one.
-  const access = kind === "access" || camera.data?.deviceType === "access";
-  const brands = { ...allBrands, data: allBrands.data?.filter((b) => (b.deviceKind === "access") === access) };
-  const thing = access ? "access system" : "camera";
 
   useEffect(() => {
     if (camera.data && !original) {
@@ -147,8 +142,8 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
         : api<CameraDetail>("/cameras", { method: "POST", body: toPayload(form) }),
     onSuccess: (c) => {
       invalidate();
-      toast("success", editing ? `Saved changes to ${c.name}` : `${c.name} added — first check scheduled`);
-      navigate(access ? `/access/${c.id}` : `/cameras/${c.id}`);
+      toast("success", editing ? `Saved changes to ${c.name}` : `${c.name} added — first storage check scheduled`);
+      navigate(`/cameras/${c.id}`);
     },
     onError: (e) => {
       setConfirmOpen(false);
@@ -164,27 +159,21 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
     else save.mutate();
   };
 
-  if (editing && camera.isLoading) return <Spinner label={`Loading ${thing}`} />;
+  if (editing && camera.isLoading) return <Spinner label="Loading camera" />;
   if (editing && camera.error) return <ErrorMessage error={camera.error} />;
 
   const s = settings.data;
   return (
     <>
       <PageHeader
-        title={editing ? `Edit ${camera.data?.name ?? thing}` : access ? "Add access system" : "Add camera"}
-        description={
-          editing
-            ? "Change settings or rotate credentials. Leave the password blank to keep the current one."
-            : access
-              ? "An access controller or terminal (Hikvision), or the server your readers report to (Suprema BioStar 2, Gallagher Command Centre): enter its address and login, test the connection, then save."
-              : "Enter the camera's address and credentials, test the connection, then save."
-        }
+        title={editing ? `Edit ${camera.data?.name ?? "camera"}` : "Add camera"}
+        description={editing ? "Change settings or rotate credentials. Leave the password blank to keep the current one." : "Enter the camera's address and credentials, test the connection, then save."}
       />
       <form onSubmit={onSubmit} className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]" noValidate>
         <div className="space-y-5">
-          <Card title={access ? "Access system" : "Camera"}>
+          <Card title="Camera">
             <div className="grid gap-4 p-4 sm:grid-cols-2">
-              <Field label={access ? "Name" : "Camera name"} required error={errors.name}>
+              <Field label="Camera name" required error={errors.name}>
                 {(fid, d) => <Input id={fid} aria-describedby={d} value={form.name} onChange={(e) => set("name", e.target.value)} invalid={!!errors.name} required maxLength={120} />}
               </Field>
               <Field
@@ -231,19 +220,14 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
                   {(fid, d) => <Input id={fid} aria-describedby={d} inputMode="numeric" placeholder={String(defaultPort)} value={form.port} onChange={(e) => set("port", e.target.value.replace(/\D/g, ""))} invalid={!!errors.port} />}
                 </Field>
               </div>
-              <Field label="Model" error={errors.model} hint={`Optional. Filled in automatically from the ${access ? "device" : "camera"} when available.`}>
+              <Field label="Model" error={errors.model} hint="Optional. Filled in automatically from the camera when available.">
                 {(fid, d) => <Input id={fid} aria-describedby={d} value={form.model} onChange={(e) => set("model", e.target.value)} />}
               </Field>
               <Field label="Location" error={errors.location} hint="Optional, e.g. Reception or Floor 2 – East">
                 {(fid, d) => <Input id={fid} aria-describedby={d} value={form.location} onChange={(e) => set("location", e.target.value)} />}
               </Field>
             </div>
-            {form.protocol === "http" && brand?.httpsOnly && (
-              <p className="border-t border-line px-4 py-3 text-xs text-warn">
-                This system&apos;s login is only sent over HTTPS: choose HTTPS (and its HTTPS port).
-              </p>
-            )}
-            {form.protocol === "http" && !access && (
+            {form.protocol === "http" && (
               <p className="border-t border-line px-4 py-3 text-xs text-ink-secondary">
                 HTTP is unencrypted. Credentials are protected by Digest authentication, but storage data is sent in clear text. Use HTTPS if the camera supports it.
               </p>
@@ -303,8 +287,6 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
                   checked={form.monitoringEnabled}
                   onChange={(e) => set("monitoringEnabled", e.target.checked)}
                 />
-                {!access && (
-                <>
                 <div className="mt-3">
                   <Checkbox
                     label="This is an NVR"
@@ -337,27 +319,21 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
                     onChange={(e) => set("cameraEvents", e.target.checked)}
                   />
                 </div>
-                </>
-                )}
                 <div className="mt-3">
                   <Checkbox
                     label="Critical area"
-                    description={access ? "Listed first, and every problem (a reader offline, a door forced or held open) is raised as critical." : "For cameras covering critical areas (entrances, server rooms, cash counters): listed first, and every problem is raised as critical."}
+                    description="For cameras covering critical areas (entrances, server rooms, cash counters): listed first, and every problem is raised as critical."
                     checked={form.priority === "critical"}
                     onChange={(e) => set("priority", e.target.checked ? "critical" : "normal")}
                   />
                 </div>
               </div>
-              {!access && (
-              <>
               <Field label="Warning threshold (%)" error={errors.warningThreshold} hint={`Blank uses the global default (${s?.warningThresholdPercent ?? 80}%)`}>
                 {(fid, d) => <Input id={fid} aria-describedby={d} inputMode="decimal" placeholder={String(s?.warningThresholdPercent ?? 80)} value={form.warningThreshold} onChange={(e) => set("warningThreshold", e.target.value)} invalid={!!errors.warningThreshold} />}
               </Field>
               <Field label="Critical threshold (%)" error={errors.criticalThreshold} hint={`Blank uses the global default (${s?.criticalThresholdPercent ?? 90}%)`}>
                 {(fid, d) => <Input id={fid} aria-describedby={d} inputMode="decimal" placeholder={String(s?.criticalThresholdPercent ?? 90)} value={form.criticalThreshold} onChange={(e) => set("criticalThreshold", e.target.value)} invalid={!!errors.criticalThreshold} />}
               </Field>
-              </>
-              )}
             </div>
           </Card>
         </div>
@@ -366,9 +342,7 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
           <Card title="Test connection">
             <div className="space-y-3 p-4">
               <p className="text-sm text-ink-secondary">
-                {access
-                  ? "Checks reachability and the login, then reads its readers and doors, using the values in this form. Nothing is saved."
-                  : "Checks reachability, authentication, API availability and storage, using the values in this form. Nothing is saved."}
+                Checks reachability, authentication, API availability and storage, using the values in this form. Nothing is saved.
               </p>
               <Button className="w-full" icon={<PlugZap className="h-4 w-4" />} loading={testMutation.isPending} onClick={() => testMutation.mutate()}>
                 Test connection
@@ -383,7 +357,7 @@ export function CameraFormPage({ kind = "camera" }: { kind?: "camera" | "access"
               Cancel
             </Button>
             <Button type="submit" variant="primary" className="flex-1" icon={<Save className="h-4 w-4" />} loading={save.isPending}>
-              {editing ? "Save changes" : access ? "Save access system" : "Save camera"}
+              {editing ? "Save changes" : "Save camera"}
             </Button>
           </div>
         </div>

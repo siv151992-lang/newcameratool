@@ -18,7 +18,6 @@ import { ScanPage } from "./pages/ScanPage";
 import { LiveWallPage } from "./pages/LiveWallPage";
 import { UptimePage } from "./pages/UptimePage";
 import { FirmwarePage } from "./pages/FirmwarePage";
-import { AccessDetailPage, AccessPage } from "./pages/AccessPage";
 import { NoOrganizationPage } from "./pages/NoOrganizationPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
@@ -51,10 +50,6 @@ export function App() {
           {can("cameras:live") && <Route path="live" element={<LiveWallPage />} />}
           <Route path="uptime" element={<UptimePage />} />
           <Route path="firmware" element={<FirmwarePage />} />
-          <Route path="access" element={<AccessPage />} />
-          {can("cameras:write") && <Route path="access/new" element={<CameraFormPage kind="access" />} />}
-          {can("cameras:write") && <Route path="access/:id/edit" element={<CameraFormPage kind="access" />} />}
-          <Route path="access/:id" element={<AccessDetailPage />} />
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="ai/*" element={<AiPage />} />
           <Route path="integrations" element={<BrandsPage />} />

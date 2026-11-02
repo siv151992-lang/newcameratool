@@ -21,7 +21,7 @@ const TONE_BG: Record<Tone, string> = {
   unknown: "bg-unknown/10 border-unknown/30",
 };
 
-export function Pill({ tone, icon: Icon, label, title }: { tone: Tone; icon: typeof CheckCircle2; label: string; title?: string }) {
+function Pill({ tone, icon: Icon, label, title }: { tone: Tone; icon: typeof CheckCircle2; label: string; title?: string }) {
   return (
     <span
       title={title}
