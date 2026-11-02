@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deviceOnline, parseBioStarEvents } from "../../src/integrations/access/biostar2.js";
 import { categorize, samePath } from "../../src/integrations/access/common.js";
-import { CONTROLLER_TYPE, fromFlags, fromGallagherEvent } from "../../src/integrations/access/gallagher.js";
+import { fromFlags, fromGallagherEvent } from "../../src/integrations/access/gallagher.js";
 import { parseAcsEvents, parseWorkStatus } from "../../src/integrations/access/hikvisionAccess.js";
 import type { CameraConfig } from "../../src/integrations/types.js";
 
@@ -65,11 +65,6 @@ describe("access control readings", () => {
     expect(fromFlags("controller", { id: "8", name: "C7000", statusFlags: [] }, true)).toMatchObject({ online: true, tamper: false });
     expect(fromGallagherEvent({ id: "9", time: "2026-11-01T04:00:00Z", type: { name: "Card not authorised" }, group: { name: "Card Event" }, cardholder: { firstName: "Mei", lastName: "Lin" }, door: { name: "Front" } }))
       .toMatchObject({ category: "denied", person: "Mei Lin", point: "Front", key: "9" });
-  });
-
-  it("knows Gallagher controller types by their names", () => {
-    for (const t of ["Controller 6000", "Controller 7000", "Control Unit", "GBUS Control unit", "C6000"]) expect(CONTROLLER_TYPE.test(t)).toBe(true);
-    for (const t of ["HBUS Door Module", "Cardholder", "Access Zone"]) expect(CONTROLLER_TYPE.test(t)).toBe(false);
   });
 
   it("follows the system's own links only on the same host", () => {

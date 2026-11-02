@@ -30,9 +30,6 @@ interface GallagherEvent {
  * these say the server has lost the hardware: the controller service, a controller, or the device.
  */
 const OFFLINE = new Set(["processoffline", "controlleroffline", "devicenotresponding", "remoteserveroffline"]);
-/** Item types that are controllers: "Controller 6000", "Controller 7000", "Control Unit", "C6000" … */
-export const CONTROLLER_TYPE = /controller|control\s*unit|\bc[67]000\b/i;
-
 /** These say the status is not known (yet, or at all): not monitored, shunted, being set up. */
 const NOT_KNOWN = new Set(["unknown", "controllerunknown", "notpolled", "unconfigured", "unsaved", "deleted"]);
 
@@ -167,7 +164,7 @@ export class GallagherAdapter implements CameraBrandAdapter {
     for (const t of types) {
       // Type names are display text (no canonical names are documented for readers): T-series readers are "terminals".
       const name = `${t.name ?? ""} ${(t as { canonicalTypeName?: string }).canonicalTypeName ?? ""}`;
-      const kind = /reader|terminal/i.test(name) ? "reader" : CONTROLLER_TYPE.test(name) ? "controller" : null;
+      const kind = /reader|terminal/i.test(name) ? "reader" : /controller/i.test(name) ? "controller" : null;
       if (!kind || !t.id) continue;
       const items = await this.all<Item>(camera, `${itemsPath}?type=${encodeURIComponent(t.id)}&${fields}&top=1000`, 5);
       for (const i of items) {
