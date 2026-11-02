@@ -10,10 +10,9 @@ interface Discovery {
   features?: {
     doors?: { doors?: { href?: string } };
     events?: { events?: { href?: string } };
-    items?: { items?: { href?: string }; itemTypes?: { href?: string }; updates?: { href?: string } };
+    items?: { items?: { href?: string }; itemTypes?: { href?: string } };
   };
 }
-interface StatusUpdate { id?: string; statusText?: string; status?: string; statusFlags?: string[] }
 interface GallagherEvent {
   id?: string;
   time?: string;
@@ -25,35 +24,21 @@ interface GallagherEvent {
   door?: { name?: string };
 }
 
-/**
- * Command Centre's status flags (REST API reference, "Item status" and "Door status flags"):
- * these say the server has lost the hardware: the controller service, a controller, or the device.
- */
-const OFFLINE = new Set(["processoffline", "controlleroffline", "devicenotresponding", "remoteserveroffline"]);
-/** These say the status is not known (yet, or at all): not monitored, shunted, being set up. */
-const NOT_KNOWN = new Set(["unknown", "controllerunknown", "notpolled", "unconfigured", "unsaved", "deleted"]);
+const OFFLINE = /^(controlleroffline|notpolled|devicenotresponding|offline|commsfailure|notresponding)$/i;
 
-/**
- * Gallagher statusFlags → online, door state, lock state and tamper. A door is online exactly when
- * it reports open or closed; `secure` / `free` say whether it enforces access, not whether it is locked.
- */
-export function fromFlags(kind: AccessPoint["kind"], item: Item, live = false): AccessPoint {
+/** Gallagher statusFlags → online, door state, lock state and tamper. */
+export function fromFlags(kind: AccessPoint["kind"], item: Item): AccessPoint {
   const flags = (item.statusFlags ?? []).map((f) => f.toLowerCase());
   const has = (f: string) => flags.includes(f.toLowerCase());
   const point: AccessPoint = { kind, externalId: item.id ?? "", name: item.name ?? `Item ${item.id}` };
-  if (flags.some((f) => OFFLINE.has(f))) point.online = false;
-  else if (flags.some((f) => NOT_KNOWN.has(f))) point.online = undefined;
-  else if (kind === "door") point.online = has("open") || has("closed") ? true : flags.length ? false : undefined;
-  // A status subscription reports faults; a reader or controller it answers for without one is fine.
-  else if (flags.length || live) point.online = true;
+  if (flags.length) point.online = !flags.some((f) => OFFLINE.test(f));
   if (has("tamper")) point.tamper = true;
-  else if (point.online === true) point.tamper = false;
-  if (kind === "door" && point.online === true) {
-    point.doorState = has("forced") ? "forced" : has("openTooLong") ? "held_open" : has("open") ? "open" : "closed";
-    point.lockState = has("unlocked") ? "unlocked" : has("locked") ? "locked" : undefined;
+  else if (flags.length) point.tamper = false;
+  if (kind === "door") {
+    point.doorState = has("forced") ? "forced" : has("openTooLong") ? "held_open" : has("open") ? "open" : has("closed") ? "closed" : undefined;
+    point.lockState = has("unlocked") ? "unlocked" : has("locked") || has("secure") ? "locked" : undefined;
   }
-  if (has("notPolled")) point.statusText = "Shunted: Command Centre is ignoring it";
-  if (item.statusText) point.statusText = item.statusText.replace(/\s*\n\s*/g, " ").trim();
+  if (item.statusText) point.statusText = item.statusText;
   return point;
 }
 
@@ -99,23 +84,9 @@ export class GallagherAdapter implements CameraBrandAdapter {
 
   constructor(private readonly http: CameraHttpClient) {}
 
-  private async get<T>(camera: CameraConfig, path: string, body?: unknown): Promise<T> {
+  private async get<T>(camera: CameraConfig, path: string): Promise<T> {
     requireHttps(camera, "The Command Centre API key");
-    const res = await this.http.request(camera, {
-      path,
-      ...(body === undefined ? {} : { method: "POST" as const, body: JSON.stringify(body), contentType: "application/json" }),
-      accept: "application/json",
-      auth: { authorization: `GGL-API-KEY ${camera.password}` },
-    }).catch((err: unknown) => {
-      if (err instanceof CameraApiError && err.code === "AUTH_FAILED") {
-        throw new CameraApiError("AUTH_FAILED",
-          "Command Centre refused the API key. Check the key on the REST client item, its IP filter, and that it does not need a client certificate: " +
-          "leave the REST client's thumbprint blank and turn on 'Enable REST Clients with no client certificate' (server properties → Web Services).",
-          { httpStatus: 401 });
-      }
-      throw err;
-    });
-    if (res.status === 403) throw new CameraApiError("PERMISSION_DENIED", `Command Centre refused ${path.split("?")[0]}: the REST licence (RESTStatus for status) or the operator's privileges are missing`, { httpStatus: 403 });
+    const res = await this.http.request(camera, { path, accept: "application/json", auth: { authorization: `GGL-API-KEY ${camera.password}` } });
     if (res.status === 404) throw new CameraApiError("API_UNAVAILABLE", `Command Centre has no ${path.split("?")[0]} (is the REST API licensed and enabled?)`, { httpStatus: 404 });
     if (res.status < 200 || res.status >= 300) throw new CameraApiError("API_ERROR", `Command Centre answered HTTP ${res.status} for ${path.split("?")[0]}`, { httpStatus: res.status, transient: res.status >= 500 });
     return json<T>(res.body, `Command Centre ${path.split("?")[0]}`);
@@ -162,34 +133,13 @@ export class GallagherAdapter implements CameraBrandAdapter {
     const typesPath = href(d.features?.items?.itemTypes?.href, "/api/items/types");
     const types = (await this.get<{ itemTypes?: { id?: string; name?: string }[] }>(camera, typesPath).catch(() => ({ itemTypes: [] }))).itemTypes ?? [];
     for (const t of types) {
-      // Type names are display text (no canonical names are documented for readers): T-series readers are "terminals".
-      const name = `${t.name ?? ""} ${(t as { canonicalTypeName?: string }).canonicalTypeName ?? ""}`;
-      const kind = /reader|terminal/i.test(name) ? "reader" : /controller/i.test(name) ? "controller" : null;
+      const kind = /reader/i.test(t.name ?? "") ? "reader" : /controller/i.test(t.name ?? "") ? "controller" : null;
       if (!kind || !t.id) continue;
       const items = await this.all<Item>(camera, `${itemsPath}?type=${encodeURIComponent(t.id)}&${fields}&top=1000`, 5);
       for (const i of items) {
         const p = fromFlags(kind, i);
         if (p.externalId) points.push({ ...p, model: t.name });
       }
-    }
-
-    // Live status: a status subscription answers with every item's current flags (the search pages
-    // only know the status of items the server already monitors). It is not followed up: Command
-    // Centre drops it after 30 seconds.
-    try {
-      const updatesPath = href(d.features?.items?.updates?.href, "/api/items/updates");
-      const byId = new Map<string, StatusUpdate>();
-      const ids = points.map((p) => p.externalId);
-      for (let i = 0; i < ids.length; i += 500) {
-        const reply = await this.get<{ updates?: StatusUpdate[] }>(camera, updatesPath, { itemIds: ids.slice(i, i + 500) });
-        for (const u of reply.updates ?? []) if (u.id) byId.set(u.id, u);
-      }
-      for (let i = 0; i < points.length; i++) {
-        const u = byId.get(points[i]!.externalId);
-        if (u?.statusFlags) points[i] = { ...fromFlags(points[i]!.kind, { id: points[i]!.externalId, name: points[i]!.name, statusFlags: u.statusFlags, statusText: u.statusText ?? u.status }, true), ...(points[i]!.model ? { model: points[i]!.model } : {}) };
-      }
-    } catch {
-      // Without the RESTStatus licence: the flags the search pages gave stay.
     }
 
     let events: AccessEventReading[] = [];

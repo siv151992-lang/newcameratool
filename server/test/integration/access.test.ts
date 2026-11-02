@@ -169,21 +169,6 @@ describe("access control", () => {
     ggl.controllers[0]!.online = true;
     ggl.readers[0]!.tamper = false;
     ggl.doors[1]!.state = "closed";
-
-    // Without the RESTStatus licence there is no live status: not reported, rather than guessed.
-    ggl.statusLicence = false;
-    await runCheck(id, "manual", deps);
-    const unlicensed = (await agent.get(`/api/access/${id}/points`).expect(200)).body;
-    expect(unlicensed.every((p: { online: boolean | null }) => p.online === null)).toBe(true);
-    ggl.statusLicence = true;
-
-    // A refused key says what Command Centre may want (a client certificate by default).
-    const realKey = ggl.apiKey;
-    ggl.apiKey = "0000-0000-0000-0000-0000-0000-0000-0000";
-    await runCheck(id, "manual", deps);
-    const refused = (await agent.get(`/api/cameras/${id}`).expect(200)).body;
-    expect(refused.status.lastErrorMessage).toMatch(/client certificate/);
-    ggl.apiKey = realKey;
   });
 
   it("keeps each organization's access systems to itself", async () => {
