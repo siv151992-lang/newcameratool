@@ -30,7 +30,20 @@ export function Brand({ compact, onDark, size = "md", className }: { compact?: b
     : size === "lg" ? "h-11 w-[6.5rem]" : size === "sm" ? "h-6 w-[3.6rem]" : "h-7 w-[4.1rem]";
   return (
     <span className={clsx("inline-flex min-w-0 items-center gap-2", className)} title={compact ? APP_NAME : undefined}>
-      <ZohoMark className={clsx("shrink-0", mark)} />
+      {/* The Zoho logo: the four squares with "ZOHO" under them. */}
+      <span className="flex shrink-0 flex-col items-center leading-none">
+        <ZohoMark className={mark} />
+        <span
+          className={clsx(
+            "font-bold uppercase",
+            compact ? "mt-0.5 text-[7px] tracking-[0.3em]" : size === "lg" ? "mt-1 text-[11px] tracking-[0.42em]" : "mt-0.5 text-[8px] tracking-[0.38em]",
+            onDark ? "text-white" : "text-ink",
+          )}
+          style={{ marginRight: "-0.38em" }}
+        >
+          Zoho
+        </span>
+      </span>
       {!compact && (
         <span className="flex min-w-0 flex-col leading-none">
           <span

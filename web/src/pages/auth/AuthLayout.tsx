@@ -54,7 +54,7 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
         <div aria-hidden className="pointer-events-none absolute -bottom-36 -left-20 h-96 w-96 rounded-full blur-3xl" style={{ background: ZOHO.green, opacity: 0.16 }} />
         <div aria-hidden className="pointer-events-none absolute -bottom-24 right-0 h-72 w-72 rounded-full blur-3xl" style={{ background: ZOHO.red, opacity: 0.12 }} />
 
-        <div className="relative">
+        <div className="relative mb-4">
           <Brand onDark size="lg" />
         </div>
 
