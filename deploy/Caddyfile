@@ -2,6 +2,13 @@
 # `tls internal` issues a certificate from Caddy's own local CA, suitable for an office LAN
 # (install Caddy's root certificate on admin PCs, or replace with `tls /path/cert.pem /path/key.pem`).
 # For a public DNS name, remove the `tls internal` line and Caddy obtains a Let's Encrypt certificate.
+{
+	# Browsers send no server name when the dashboard is opened by IP address (https://10.x.x.x):
+	# answer those with the site's certificate. Without this, Caddy in Docker sees its own container
+	# address and finds no certificate for it (ERR_SSL_PROTOCOL_ERROR).
+	default_sni {$SITE_ADDRESS}
+}
+
 {$SITE_ADDRESS} {
 	tls internal
 	encode gzip

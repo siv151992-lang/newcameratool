@@ -57,7 +57,7 @@ if ($firstInstall) {
   if (-not $site) { $site = $ip }
   $nets = Read-Host "Camera networks, comma-separated, e.g. 10.10.6.0/24 [10.0.0.0/8,172.16.0.0/12,192.168.0.0/16]"
   $httpPort = Read-Host "HTTP port [80]"
-  $httpsPort = Read-Host "HTTPS port (use 8443 if 443 is taken on this PC) [443]"
+  $httpsPort = Read-Host "HTTPS port (use 18443 if 443 is taken on this PC) [443]"
 
   $text = Get-Content ".env.example" -Raw
   $text = $text -replace "(?m)^SITE_ADDRESS=.*$", "SITE_ADDRESS=$site"
@@ -71,8 +71,8 @@ if ($firstInstall) {
   Write-Host "Keeping the existing .env and data: rebuilding and restarting (update)." -ForegroundColor Cyan
 }
 
-Confirm-Port "HTTP_PORT" "80" "8080"
-Confirm-Port "HTTPS_PORT" "443" "8443"
+Confirm-Port "HTTP_PORT" "80" "18080"
+Confirm-Port "HTTPS_PORT" "443" "18443"
 
 Write-Host "Building and starting (the first time takes a few minutes)..."
 docker compose up -d --build
@@ -110,3 +110,4 @@ $port = ([regex]::Match($envText, "(?m)^HTTPS_PORT=(\d+)")).Groups[1].Value
 $url = if ($port -and $port -ne "443") { "https://${site}:$port" } else { "https://$site" }
 Write-Host ""
 Write-Host "Ready: open $url" -ForegroundColor Green
+Write-Host "(Open it by this address exactly: the dashboard answers HTTPS for SITE_ADDRESS in .env.)"
