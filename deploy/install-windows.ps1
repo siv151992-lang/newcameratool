@@ -6,7 +6,9 @@
 # certificate on this PC, opens the firewall ports (when run as administrator) and opens the dashboard.
 # Later runs (the folder has .env): keep the settings and data, rebuild and restart: an update.
 
-$ErrorActionPreference = "Stop"
+# "Continue": Windows PowerShell 5 turns anything Docker writes to its error output (progress lines
+# such as "Container ... Recreate") into a script error under "Stop". Docker's exit codes are checked instead.
+$ErrorActionPreference = "Continue"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 function Fail($message) {
