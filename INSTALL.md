@@ -1,16 +1,11 @@
-# Installing CCTV Storage Monitor (Windows, from the package)
+# Installing CCTV Storage Monitor on Windows
 
-1. Install **Docker Desktop** (WSL 2) and start it; wait for *Engine running*.
-2. Extract this package to `C:\cctv-monitor`.
-3. In PowerShell:
-   ```powershell
-   cd C:\cctv-monitor
-   powershell -ExecutionPolicy Bypass -File .\deploy\install-windows.ps1
-   ```
-   Answer the questions (dashboard address, camera networks, ports, first administrator).
-4. Open the address it prints, e.g. `https://10.69.96.25`.
+1. Install **Docker Desktop** (docker.com, keep "Use WSL 2"), restart, open it and wait for *Engine running*.
+2. Extract the package to `C:\` so that you have the folder `C:\cctv-monitor`.
+3. Right-click `C:\cctv-monitor\INSTALL.bat` → **Run as administrator**. Answer two questions (this PC's
+   address and the camera networks) and create the administrator. The dashboard opens when it is ready.
 
-**Update:** extract the new package over the folder (your `.env` and data are kept) and run the same command.
+**Update:** extract the new package to `C:\` again (replace the files when asked) and run `INSTALL.bat` again.
+Settings and data are kept.
 
-The full guide, with moving from an existing server, backups and troubleshooting, is
-`CCTV-Monitor-Installation-Guide.pdf` in the package. Linux and other setups: [docs/operations.md](docs/operations.md).
+Guide: `Quick-Install-Guide.pdf` in the package. Other setups (Linux, without Docker): [docs/operations.md](docs/operations.md).
