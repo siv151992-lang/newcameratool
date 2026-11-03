@@ -189,3 +189,68 @@ export async function resolveAlert(orgId: string, id: string, actor: Actor, note
     await audit({ actor, ip, action: "alert.resolved", entityType: "alert", entityId: id, details: note ? { note } : {} }, db);
   });
 }
+
+// ------------------------------------------------------------------ bulk actions
+
+/** At most this many alerts in one bulk action. */
+export const BULK_ALERT_MAX = 5000;
+
+export const bulkAlertSchema = z.object({
+  action: z.enum(["acknowledge", "resolve"]),
+  note: z.string().trim().max(500).optional(),
+  /** The chosen alerts, or … */
+  ids: z.array(z.string().regex(/^\d{1,18}$/)).min(1).max(BULK_ALERT_MAX).optional(),
+  /** … every alert matching the list's filters (status, severity, type). */
+  filter: z.object({
+    status: z.enum(["open", "active", "acknowledged"]).default("open"),
+    severity: z.enum(["info", "warning", "critical"]).optional(),
+    type: z.string().max(40).optional(),
+  }).strict().optional(),
+}).strict().refine((v) => !!v.ids !== !!v.filter, { message: "Give either ids or filter" });
+
+/**
+ * Acknowledges (active alerts only) or resolves (any open alert) several alerts of the organization at
+ * once: chosen ones, or every one matching the list's filters. Alerts in another state are left as
+ * they are and counted as skipped. One audit entry for the whole action.
+ */
+export async function bulkAlerts(orgId: string, input: z.infer<typeof bulkAlertSchema>, actor: Actor, ip?: string | null) {
+  return withTransaction(async (db) => {
+    const params: unknown[] = [orgId];
+    const p = (v: unknown) => `$${params.push(v)}`;
+    const where = ["c.organization_id = $1"];
+    if (input.ids) where.push(`a.id = ANY(${p(input.ids)}::bigint[])`);
+    if (input.filter) {
+      const f = input.filter;
+      where.push(f.status === "open" ? "a.status <> 'resolved'" : `a.status = ${p(f.status)}`);
+      if (f.severity) where.push(`a.severity = ${p(f.severity)}`);
+      if (f.type) where.push(`a.type = ${p(f.type)}`);
+    }
+    const chosen = (await db.query<{ id: string; status: string }>(
+      `SELECT a.id::text, a.status FROM alerts a JOIN cameras c ON c.id = a.camera_id
+       WHERE ${where.join(" AND ")} ORDER BY a.id LIMIT ${BULK_ALERT_MAX + 1} FOR UPDATE OF a`,
+      params,
+    )).rows;
+    if (chosen.length > BULK_ALERT_MAX) throw new HttpError(400, "TOO_MANY", `At most ${BULK_ALERT_MAX} alerts at a time: narrow the filters`);
+    const eligible = chosen.filter((a) => (input.action === "acknowledge" ? a.status === "active" : a.status !== "resolved")).map((a) => a.id);
+    const note = input.note || null;
+    if (eligible.length) {
+      const message = input.action === "acknowledge" ? note : (note ?? "Resolved manually");
+      if (input.action === "acknowledge") {
+        await db.query("UPDATE alerts SET status = 'acknowledged', acknowledged_at = now(), acknowledged_by = $2 WHERE id = ANY($1::bigint[])", [eligible, actor.id]);
+      } else {
+        await db.query("UPDATE alerts SET status = 'resolved', resolved_at = now(), resolved_by = $2, resolution_note = $3 WHERE id = ANY($1::bigint[])", [eligible, actor.id, message]);
+      }
+      await db.query(
+        "INSERT INTO alert_events (alert_id, event_type, message, actor_user_id) SELECT unnest($1::bigint[]), $2, $3, $4",
+        [eligible, input.action === "acknowledge" ? "acknowledged" : "resolved", message, actor.id],
+      );
+      await audit({
+        actor, ip, organizationId: orgId,
+        action: input.action === "acknowledge" ? "alert.bulk_acknowledged" : "alert.bulk_resolved",
+        entityType: "alert",
+        details: { count: eligible.length, ...(input.filter ? { filter: input.filter } : {}), ...(note ? { note } : {}) },
+      }, db);
+    }
+    return { done: eligible.length, skipped: chosen.length - eligible.length };
+  });
+}

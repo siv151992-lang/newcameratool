@@ -544,6 +544,14 @@ paths:
         - { name: pageSize, in: query, schema: { type: integer } }
       responses:
         "200": { description: Page of alerts }
+  /alerts/bulk:
+    post:
+      tags: [Alerts]
+      summary: Acknowledge or resolve several alerts at once (alerts:manage)
+      description: "Body { action: acknowledge | resolve, note?, ids?: [..] } or { action, note?, filter: { status: open | active | acknowledged, severity?, type? } } (every matching alert, at most 5000). Acknowledge applies to active alerts only; others are counted as skipped."
+      responses:
+        "200": { description: "{ done, skipped }" }
+        "400": { description: Neither or both of ids and filter, or more than 5000 alerts }
   /alerts/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: integer } }

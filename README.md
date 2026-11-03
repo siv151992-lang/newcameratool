@@ -93,7 +93,7 @@ email verification and password reset, and sign-in with Google or Zoho. See [doc
 
 Also included: bulk import from CSV, Excel or Bosch Project Assistant lists (parsed in the browser; preview, per-row validation, duplicate detection,
 shared credentials, optional rate-limited connectivity tests), camera detail page with usage history chart,
-alert center (acknowledge / resolve, history), brand integrations page, monitoring settings, email
+alert center (acknowledge / resolve one alert or many at once, history), brand integrations page, monitoring settings, email
 notifications with cooldowns and recovery notices, users with roles (admin / operator / viewer), audit log,
 and OpenAPI documentation at `/api/docs`.
 

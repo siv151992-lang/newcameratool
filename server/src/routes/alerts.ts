@@ -2,13 +2,18 @@ import { Router } from "express";
 import { z } from "zod";
 import { actorOf, orgOf, requirePermission } from "../auth/middleware.js";
 import { param, parse } from "../lib/validate.js";
-import { acknowledgeAlert, alertListQuery, getAlert, listAlerts, resolveAlert } from "../services/alertService.js";
+import { acknowledgeAlert, alertListQuery, bulkAlertSchema, bulkAlerts, getAlert, listAlerts, resolveAlert } from "../services/alertService.js";
 
 export const alertsRouter = Router();
 const noteSchema = z.object({ note: z.string().trim().max(500).optional() }).strict();
 
 alertsRouter.get("/", requirePermission("alerts:read"), async (req, res) => {
   res.json(await listAlerts(orgOf(req), parse(alertListQuery, req.query)));
+});
+
+// Acknowledge or resolve several alerts: chosen ones, or every one matching the list's filters.
+alertsRouter.post("/bulk", requirePermission("alerts:manage"), async (req, res) => {
+  res.json(await bulkAlerts(orgOf(req), parse(bulkAlertSchema, req.body ?? {}), actorOf(req), req.ip));
 });
 
 alertsRouter.get("/:id", requirePermission("alerts:read"), async (req, res) => {
