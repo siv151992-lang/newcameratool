@@ -19,6 +19,33 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 docker info *> $null
 if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop is not running. Start it, wait until it says 'Engine running', then run this again." }
 
+function Get-EnvValue($name) {
+  $m = [regex]::Match((Get-Content ".env" -Raw), "(?m)^$name=(.*)$")
+  if ($m.Success) { return $m.Groups[1].Value.Trim() }
+  return ""
+}
+
+function Set-EnvValue($name, $value) {
+  $text = Get-Content ".env" -Raw
+  if ($text -match "(?m)^$name=") { $text = $text -replace "(?m)^$name=.*$", "$name=$value" }
+  else { $text = $text.TrimEnd() + "`n$name=$value`n" }
+  [System.IO.File]::WriteAllText((Join-Path (Get-Location) ".env"), $text)
+}
+
+# A port another program on this PC already listens on (IIS, VMware, Skype …): ask for another.
+function Confirm-Port($name, $default, $suggestion) {
+  $port = Get-EnvValue $name
+  if (-not $port) { $port = $default }
+  $listener = Get-NetTCPConnection -State Listen -LocalPort ([int]$port) -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $listener) { return }
+  $process = (Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+  if ($process -match "docker|wslrelay|vpnkit") { return }  # the app itself, from an earlier run
+  Write-Host "Port $port is already used on this PC by '$process'." -ForegroundColor Yellow
+  $choice = Read-Host "Port to use instead [$suggestion]"
+  if (-not $choice) { $choice = $suggestion }
+  Set-EnvValue $name $choice
+}
+
 $firstInstall = -not (Test-Path ".env")
 if ($firstInstall) {
   Write-Host "First installation: a few questions (press Enter to keep the value in brackets)." -ForegroundColor Cyan
@@ -44,6 +71,9 @@ if ($firstInstall) {
   Write-Host "Keeping the existing .env and data: rebuilding and restarting (update)." -ForegroundColor Cyan
 }
 
+Confirm-Port "HTTP_PORT" "80" "8080"
+Confirm-Port "HTTPS_PORT" "443" "8443"
+
 Write-Host "Building and starting (the first time takes a few minutes)..."
 docker compose up -d --build
 if ($LASTEXITCODE -ne 0) { Fail "Docker Compose could not start the app. See the messages above." }
@@ -57,7 +87,11 @@ for ($i = 0; $i -lt 60 -and -not $ready; $i++) {
 }
 if (-not $ready) { Fail "The app did not start. Look at: docker compose logs --tail 100 api" }
 
-if ($firstInstall) {
+# No users yet (a first installation, or one that stopped before this step): create the administrator.
+$dbUser = Get-EnvValue "POSTGRES_USER"; if (-not $dbUser) { $dbUser = "cctv" }
+$dbName = Get-EnvValue "POSTGRES_DB"; if (-not $dbName) { $dbName = "cctv" }
+$users = (docker compose exec -T db psql -U $dbUser -d $dbName -tAc "SELECT count(*) FROM users" 2>$null | Out-String).Trim()
+if ($users -eq "0") {
   $create = Read-Host "Create the first administrator now? (Y/n)"
   if ($create -notmatch "^[nN]") {
     $user = Read-Host "Administrator user name [admin]"
