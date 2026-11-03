@@ -4,7 +4,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json server/
 COPY web/package.json web/
-RUN npm ci
+# Downloads retried on slow or unsteady connections; npm itself sometimes stops mid-way ("Exit handler
+# never called"), so the install is tried up to three times.
+ENV npm_config_fetch_retries=5 npm_config_fetch_retry_mintimeout=20000 npm_config_fetch_retry_maxtimeout=120000 \
+    npm_config_maxsockets=6 npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false
+RUN npm ci || (sleep 10 && npm ci) || (sleep 30 && npm ci)
 COPY . .
 RUN npm run build && npm prune --omit=dev && mkdir -p server/node_modules
 
