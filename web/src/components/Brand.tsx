@@ -1,29 +1,36 @@
 import clsx from "clsx";
-import { Video } from "lucide-react";
 
 export const APP_NAME = "Zoho IBMS CCTV Monitoring";
 
+/** The Zoho mark: four overlapping rounded squares, red, green, blue and yellow, each tilted a little. */
+export function ZohoMark({ className }: { className?: string }) {
+  const squares = [
+    { x: 3, y: 10, color: "#E42527", turn: -9 },
+    { x: 25, y: 8, color: "#089949", turn: 9 },
+    { x: 47, y: 10, color: "#226DB4", turn: -7 },
+    { x: 69, y: 9, color: "#F9B21D", turn: 5 },
+  ];
+  return (
+    <svg viewBox="0 0 96 40" className={className} aria-hidden focusable="false">
+      {squares.map((q) => (
+        <rect key={q.color} x={q.x} y={q.y} width="22" height="22" rx="4.5" fill="none" stroke={q.color} strokeWidth="4.2"
+          transform={`rotate(${q.turn} ${q.x + 11} ${q.y + 11})`} />
+      ))}
+    </svg>
+  );
+}
+
 /**
- * The app's name as a brand: a logo tile (camera with a recording light) and a two-line wordmark,
- * "Zoho IBMS" over "CCTV MONITORING". `compact` shows the tile only; `onDark` is for dark panels.
+ * The app's name as a brand: the Zoho mark and a two-line wordmark, "Zoho IBMS" over
+ * "CCTV MONITORING". `compact` shows the mark only; `onDark` is for dark panels.
  */
 export function Brand({ compact, onDark, size = "md", className }: { compact?: boolean; onDark?: boolean; size?: "sm" | "md" | "lg"; className?: string }) {
-  const tile = size === "lg" ? "h-11 w-11 rounded-xl" : size === "sm" ? "h-8 w-8 rounded-lg" : "h-9 w-9 rounded-[10px]";
-  const icon = size === "lg" ? "h-6 w-6" : size === "sm" ? "h-4 w-4" : "h-5 w-5";
+  const mark = compact
+    ? "h-5 w-12"
+    : size === "lg" ? "h-11 w-[6.5rem]" : size === "sm" ? "h-6 w-[3.6rem]" : "h-7 w-[4.1rem]";
   return (
-    <span className={clsx("inline-flex min-w-0 items-center gap-2.5", className)} title={compact ? APP_NAME : undefined}>
-      <span
-        className={clsx(
-          "relative flex shrink-0 items-center justify-center text-white shadow-md",
-          tile,
-          onDark ? "bg-white/15 ring-1 ring-white/25 shadow-black/20" : "bg-gradient-to-br from-accent to-[#0b3d91] shadow-accent/30",
-        )}
-        aria-hidden
-      >
-        <Video className={icon} strokeWidth={2.2} />
-        {/* The recording light */}
-        <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-red-500 ring-2 ring-red-500/30 motion-safe:animate-pulse" />
-      </span>
+    <span className={clsx("inline-flex min-w-0 items-center gap-2", className)} title={compact ? APP_NAME : undefined}>
+      <ZohoMark className={clsx("shrink-0", mark)} />
       {!compact && (
         <span className="flex min-w-0 flex-col leading-none">
           <span
@@ -35,7 +42,7 @@ export function Brand({ compact, onDark, size = "md", className }: { compact?: b
           >
             Zoho IBMS
           </span>
-          <span className={clsx("mt-1 truncate font-semibold uppercase tracking-[0.22em]", size === "lg" ? "text-[11px]" : "text-[9.5px]", onDark ? "text-white/70" : "text-ink-secondary")}>
+          <span className={clsx("mt-1 truncate font-semibold uppercase", size === "lg" ? "text-[11px] tracking-[0.22em]" : "text-[9px] tracking-[0.14em]", onDark ? "text-white/70" : "text-ink-secondary")}>
             CCTV Monitoring
           </span>
         </span>
