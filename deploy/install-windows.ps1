@@ -140,7 +140,8 @@ if ($users -eq "0") {
 Step "Certificate and firewall"
 docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .\root.crt *> $null
 if (Test-Path ".\root.crt") {
-  $trusted = Get-ChildItem Cert:\CurrentUser\Root | Where-Object { $_.Subject -match "Caddy Local Authority" }
+  $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 ((Resolve-Path ".\root.crt").Path)
+  $trusted = Get-ChildItem Cert:\CurrentUser\Root | Where-Object { $_.Thumbprint -eq $cert.Thumbprint }
   if (-not $trusted) {
     Write-Host "Trusting the dashboard's certificate on this PC (Windows asks you to confirm: choose Yes)."
     try { Import-Certificate -FilePath ".\root.crt" -CertStoreLocation Cert:\CurrentUser\Root | Out-Null } catch { Write-Host "Not trusted: the browser will warn until it is." -ForegroundColor Yellow }

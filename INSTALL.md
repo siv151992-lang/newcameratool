@@ -8,4 +8,7 @@
 **Update:** extract the new package to `C:\` again (replace the files when asked) and run `INSTALL.bat` again.
 Settings and data are kept.
 
+**Start over:** `UNINSTALL.bat` (Run as administrator) removes every copy of the app on the PC, with its data, after
+you type DELETE; then run `INSTALL.bat`.
+
 Guide: `Quick-Install-Guide.pdf` in the package. Other setups (Linux, without Docker): [docs/operations.md](docs/operations.md).
