@@ -91,9 +91,24 @@ if ($firstInstall) {
 }
 
 # ------------------------------------------------------------------------------------ build/run
-Step "Building and starting (the first time takes 5 to 15 minutes; do not close this window)"
-docker compose up -d --build --remove-orphans
-if ($LASTEXITCODE -ne 0) { Fail "The app could not be started: see the messages above, or send them to support." }
+# A network that blocks the downloads the build needs: the app built on another PC (EXPORT-IMAGES.bat).
+$imageFile = Join-Path (Get-Location) "cctv-monitor-images.tar"
+if (Test-Path $imageFile) {
+  Step "Loading the app from cctv-monitor-images.tar (no downloads)"
+  docker load -i $imageFile
+  if ($LASTEXITCODE -ne 0) { Fail "cctv-monitor-images.tar could not be loaded: copy it again (it may be incomplete)." }
+  # Not loaded again by the next update, which brings its own (newer) file or builds.
+  Move-Item -Force $imageFile (Join-Path (Get-Location) "cctv-monitor-images.loaded.tar")
+  Step "Starting"
+  docker compose up -d --no-build --remove-orphans
+} else {
+  Step "Building and starting (the first time takes 5 to 15 minutes; do not close this window)"
+  docker compose up -d --build --remove-orphans
+}
+if ($LASTEXITCODE -ne 0) {
+  Fail ("The app could not be started: see the messages above. If it stopped while downloading (npm), this network blocks the downloads: " +
+    "run EXPORT-IMAGES.bat on a PC where installing works and copy cctv-monitor-images.tar into this folder, then run INSTALL.bat again.")
+}
 # The web server reads its configuration only when it starts: restart it so an update applies.
 docker compose up -d --force-recreate --no-deps caddy *> $null
 

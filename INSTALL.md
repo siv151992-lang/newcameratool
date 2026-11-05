@@ -8,6 +8,9 @@
 **Update:** extract the new package to `C:\` again (replace the files when asked) and run `INSTALL.bat` again.
 Settings and data are kept.
 
+**An office network blocks downloads** (INSTALL.bat hangs at the npm step): run `EXPORT-IMAGES.bat` on a PC where
+installing works, copy the `cctv-monitor-images.tar` it makes into `C:\cctv-monitor` on the blocked PC, and run `INSTALL.bat` there.
+
 **Start over:** `UNINSTALL.bat` (Run as administrator) removes every copy of the app on the PC, with its data, after
 you type DELETE; then run `INSTALL.bat`.
 

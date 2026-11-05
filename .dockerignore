@@ -5,3 +5,4 @@
 .env.*
 *.csv
 coverage
+cctv-monitor-images*.tar
