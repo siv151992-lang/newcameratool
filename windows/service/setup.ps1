@@ -88,7 +88,25 @@ for ($i = 0; $i -lt 90 -and -not $ready; $i++) {
   Start-Sleep -Seconds 2
   try { $ready = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 "http://127.0.0.1:4000/api/health").StatusCode -eq 200 } catch { $ready = $false }
 }
-if (-not $ready) { Fail "The app did not start. Look at the files in $Data\logs (supervisor.log, postgres.log, api.log) and send them to support." }
+if (-not $ready) {
+  # Show why, so a screenshot of this window is enough for support.
+  Write-Host ""
+  Write-Host "The app did not start. Details for support:" -ForegroundColor Red
+  $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+  if ($info) { Write-Host ("Task: {0}, last run {1}, result 0x{2:X}" -f (Get-ScheduledTask -TaskName $TaskName).State, $info.LastRunTime, $info.LastTaskResult) }
+  $logs = Join-Path $Data "logs"
+  $found = $false
+  foreach ($name in "supervisor.log", "postgres.log", "api.log", "worker.log") {
+    $file = Join-Path $logs $name
+    if (Test-Path $file) {
+      $found = $true
+      Write-Host ""; Write-Host "----- $name (last lines)" -ForegroundColor Yellow
+      Get-Content $file -Tail 15 | ForEach-Object { Write-Host $_ }
+    }
+  }
+  if (-not $found) { Write-Host "No log files in $logs`: the app could not run at all (the task did not start node.exe, or it may not write to data\)." -ForegroundColor Yellow }
+  Fail "Send a screenshot of this window (or the files in $logs) to support."
+}
 Write-Host "The app is running." -ForegroundColor Green
 
 # --------------------------------------------------------------------------------- administrator
