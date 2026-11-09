@@ -37,6 +37,26 @@ function Select-Ports {
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) { Fail "Right-click START.bat and choose 'Run as administrator'." }
 if (-not (Test-Path $Node)) { Fail "runtime\node\node.exe is missing: extract the whole package again." }
+
+# The app runs as NETWORK SERVICE, which cannot read inside a user's folders (Downloads, Desktop,
+# Documents...): there it would not start at all. Install a copy in C:\cctv-monitor instead.
+$usersDir = Join-Path $env:SystemDrive "Users"
+if ($Root.StartsWith("$usersDir\", [StringComparison]::OrdinalIgnoreCase)) {
+  $target = Join-Path $env:SystemDrive "cctv-monitor"
+  Step "Copying the app to $target"
+  Write-Host "It cannot run from $Root (a user's folder), so it is installed in $target."
+  & (Join-Path $PSScriptRoot "stop.ps1") -Quiet
+  $targetStop = Join-Path $target "service\stop.ps1"
+  if (Test-Path $targetStop) { & $targetStop -Quiet }  # Its files must not be in use while replaced.
+  $copyArgs = @($Root, $target, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/R:1", "/W:1")
+  # An existing installation keeps its own data; otherwise the data made here moves along.
+  if (Test-Path (Join-Path $target "data\.env")) { $copyArgs += @("/XD", $Data) }
+  robocopy @copyArgs | Out-Null
+  if ($LASTEXITCODE -ge 8) { Fail "Could not copy the app to $target (robocopy error $LASTEXITCODE)." }
+  Write-Host "Copied. From now on use the .bat files in $target; you can delete $Root." -ForegroundColor Green
+  & (Join-Path $target "service\setup.ps1")
+  exit $LASTEXITCODE
+}
 New-Item -ItemType Directory -Force $Data | Out-Null
 
 # ------------------------------------------------------------------------------------- settings
