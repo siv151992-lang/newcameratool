@@ -1,0 +1,10 @@
+# go2rtc for live video (Windows package). Only this PC reaches it (the API passes the video on to
+# signed-in users). Streams are added by the API when someone opens a live view; nothing is recorded.
+api:
+  listen: "127.0.0.1:1984"
+rtsp:
+  listen: ""
+webrtc:
+  listen: ""
+log:
+  level: warn

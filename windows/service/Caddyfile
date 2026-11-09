@@ -1,0 +1,25 @@
+# HTTPS for the dashboard (Windows package, without Docker). Caddy issues the certificate from its own
+# local authority; setup.ps1 trusts it on this PC and leaves root.crt for the other PCs.
+{
+	admin off
+	skip_install_trust
+	http_port {$HTTP_PORT}
+	https_port {$HTTPS_PORT}
+	# Browsers send no server name when the dashboard is opened by IP address.
+	default_sni {$SITE_ADDRESS}
+}
+
+{$SITE_ADDRESS} {
+	tls internal
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:{$API_PORT}
+}
+
+# http:// to https://, keeping the dashboard's port when it is not 443.
+http://{$SITE_ADDRESS} {
+	redir https://{host}:{$HTTPS_PORT}{uri} 308
+}

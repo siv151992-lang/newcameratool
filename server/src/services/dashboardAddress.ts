@@ -46,11 +46,13 @@ async function save(url: string, how: string) {
 }
 
 /** At startup: from SITE_ADDRESS, else the machine's network address. Inside a container the
- * machine's address is the container's own, which nobody can open, so that is left to sign-in. */
+ * machine's address is the container's own, which nobody can open, and an API listening on this
+ * machine only (behind Caddy in the Windows package) cannot be opened either: both are left to sign-in. */
 export async function detectDashboardAddress() {
   if (!(await needsDashboardAddress())) return;
   const inContainer = existsSync("/.dockerenv") || existsSync("/run/.containerenv");
-  const url = fromSiteAddress(config.SITE_ADDRESS, config.HTTPS_PORT) ?? (inContainer ? null : fromInterfaces(config.PORT));
+  const loopbackOnly = /^(127\.|localhost$|::1$)/.test(config.LISTEN_HOST ?? "");
+  const url = fromSiteAddress(config.SITE_ADDRESS, config.HTTPS_PORT) ?? (inContainer || loopbackOnly ? null : fromInterfaces(config.PORT));
   if (url) await save(url, "from this server's address");
 }
 

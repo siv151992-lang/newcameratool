@@ -14,6 +14,9 @@ const bool = (def: boolean) =>
 const schema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().int().default(4000),
+  // Address the API and the playback relay listen on: all (default; Docker), or e.g. 127.0.0.1 when a
+  // web server on the same machine (the Windows package's Caddy) is the only way in.
+  LISTEN_HOST: z.string().optional(),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   // File holding the database password (Docker Compose generates one); added to DATABASE_URL.
   DATABASE_PASSWORD_FILE: z.string().optional(),

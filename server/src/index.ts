@@ -26,10 +26,12 @@ async function main() {
   if (!config.COOKIE_SECURE) logger.warn("COOKIE_SECURE=false: session cookies will be sent over plain HTTP. Use HTTPS in production.");
   // Other API instances or the worker may change integrations: reload them periodically too.
   setInterval(() => void registry.refresh().catch((err) => logger.warn({ err: (err as Error).message }, "Could not reload brand integrations")), 30_000).unref();
-  const server = createApp().listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));
+  const server = config.LISTEN_HOST
+    ? createApp().listen(config.PORT, config.LISTEN_HOST, () => logger.info({ port: config.PORT, host: config.LISTEN_HOST }, "API listening"))
+    : createApp().listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));
   attachLiveVideo(server);
   if (config.LIVE_VIDEO_URL) {
-    await startReplayRelay(Number(new URL(config.PLAYBACK_RELAY_URL).port)).catch((err) =>
+    await startReplayRelay(Number(new URL(config.PLAYBACK_RELAY_URL).port), config.LISTEN_HOST ?? "0.0.0.0").catch((err) =>
       logger.warn({ err: (err as Error).message }, "Could not start the recording playback relay: ONVIF recordings will not play"),
     );
   }

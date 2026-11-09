@@ -12,3 +12,6 @@ coverage/
 server/data/
 # Exported app images (EXPORT-IMAGES.bat)
 cctv-monitor-images*.tar
+
+# Windows package build output
+dist-windows/
