@@ -88,7 +88,7 @@ const appEnv = {
 // ------------------------------------------------------------------------------------- database
 const pgCtl = path.join(PG_BIN, exe("pg_ctl"));
 function pgStatusRunning() {
-  return spawnSync(pgCtl, ["status", "-D", PG_DATA], { windowsHide: true }).status === 0;
+  return spawnSync(pgCtl, ["status", "-D", PG_DATA], { windowsHide: true, stdio: "ignore", timeout: 30_000 }).status === 0;
 }
 
 function initDatabase() {
@@ -103,13 +103,21 @@ function initDatabase() {
 
 function startDatabase() {
   if (pgStatusRunning()) return true;
-  const r = spawnSync(pgCtl, ["start", "-D", PG_DATA, "-l", path.join(LOGS, "postgres.log"), "-w", "-t", "120"], { windowsHide: true, encoding: "utf8" });
-  log(`PostgreSQL start: ${(r.stdout || "").trim()} ${(r.stderr || "").trim()}`.trim());
+  log("Starting PostgreSQL...");
+  // Its output goes straight into supervisor.log, not through a pipe: on Windows the database server
+  // inherits pg_ctl's output handles, so a pipe would stay open (and this wait would last) until the
+  // database stops.
+  const r = spawnSync(pgCtl, ["start", "-D", PG_DATA, "-l", path.join(LOGS, "postgres.log"), "-w", "-t", "120"], {
+    windowsHide: true,
+    stdio: ["ignore", mainLog, mainLog],
+    timeout: 150_000,
+  });
+  log(r.status === 0 ? "PostgreSQL started." : `PostgreSQL start failed (exit code ${r.status ?? r.error?.message}).`);
   return r.status === 0;
 }
 
 function stopDatabase() {
-  spawnSync(pgCtl, ["stop", "-D", PG_DATA, "-m", "fast", "-w", "-t", "60"], { windowsHide: true });
+  spawnSync(pgCtl, ["stop", "-D", PG_DATA, "-m", "fast", "-w", "-t", "60"], { windowsHide: true, stdio: ["ignore", mainLog, mainLog], timeout: 90_000 });
 }
 
 function portOpen(port) {
