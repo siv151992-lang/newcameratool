@@ -368,6 +368,7 @@ describe("OnvifAdapter service discovery and recording summary", () => {
   const at = (ms: number) => { const d = new Date(ms); return `<tt:Date><tt:Year>${d.getUTCFullYear()}</tt:Year><tt:Month>${d.getUTCMonth() + 1}</tt:Month><tt:Day>${d.getUTCDate()}</tt:Day></tt:Date><tt:Time><tt:Hour>${d.getUTCHours()}</tt:Hour><tt:Minute>${d.getUTCMinutes()}</tt:Minute><tt:Second>${d.getUTCSeconds()}</tt:Second></tt:Time>`; };
   const NOW = Date.UTC(2026, 9, 22, 8, 0, 0);
   let jobs = "Active";
+  let dataUntil = "2026-10-22T07:59:00Z";
   const cam = new MockBrandCamera();
   cam.auth = "ws-security";
   const soap = (body: string) => ({ contentType: "application/soap+xml", body: env(body) });
@@ -391,7 +392,7 @@ describe("OnvifAdapter service discovery and recording summary", () => {
   );
   cam.route("/onvif/Search", (req: MockRequest) =>
     cam.verifyToken(req.body, NOW)
-      ? soap(`<tse:GetRecordingSummaryResponse><tse:Summary><tt:DataFrom>2026-09-22T02:30:00Z</tt:DataFrom><tt:DataUntil>2026-10-22T07:59:00Z</tt:DataUntil><tt:NumberRecordings>1</tt:NumberRecordings></tse:Summary></tse:GetRecordingSummaryResponse>`)
+      ? soap(`<tse:GetRecordingSummaryResponse><tse:Summary><tt:DataFrom>2026-09-22T02:30:00Z</tt:DataFrom><tt:DataUntil>${dataUntil}</tt:DataUntil><tt:NumberRecordings>1</tt:NumberRecordings></tse:Summary></tse:GetRecordingSummaryResponse>`)
       : denied,
   );
   const ctx = useCamera(cam);
@@ -407,10 +408,20 @@ describe("OnvifAdapter service discovery and recording summary", () => {
   it("serves Uniview recording over ONVIF when LAPI does not report it", async () => {
     cam.route(UNIVIEW_RECORDING_PATH, { contentType: "application/json", body: ipc815sbNotSupported(UNIVIEW_RECORDING_PATH) });
     jobs = "Idle";
+    dataUntil = "2026-10-21T07:59:00Z"; // the latest recording ended a day ago
     const r = await new UniviewAdapter(http).getRecordingStatus(ctx.config);
     expect(r.state).toBe("idle");
     expect(r.detail).toContain("read over ONVIF");
     expect((await new UniviewAdapter(http).getRecordingRange(ctx.config))?.days).toBe(30.23);
+    jobs = "Active";
+    dataUntil = "2026-10-22T07:59:00Z";
+  });
+
+  it("counts a camera whose recordings end just now as recording, even with idle ONVIF jobs (IPC815SB recording to its SD card)", async () => {
+    jobs = "Idle";
+    const r = await new UniviewAdapter(http).getRecordingStatus(ctx.config);
+    expect(r.state).toBe("recording");
+    expect(r.detail).toContain("latest recording 1 min ago");
     jobs = "Active";
   });
 });

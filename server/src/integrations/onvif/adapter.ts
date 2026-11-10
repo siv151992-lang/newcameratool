@@ -52,6 +52,9 @@ interface SoapAction {
   auth: boolean;
 }
 
+/** Recordings ending at most this long ago mean the camera is recording now. */
+const RECENT_RECORDING_MINUTES = 10;
+
 const ACTIONS = {
   storage: { path: ONVIF_DEVICE_SERVICE_PATH, action: `${NS.tst}/GetStorageDevices`, body: "<tst:GetStorageDevices/>", auth: true },
   deviceInfo: { path: ONVIF_DEVICE_SERVICE_PATH, action: `${NS.tds}/GetDeviceInformation`, body: "<tds:GetDeviceInformation/>", auth: true },
@@ -248,7 +251,25 @@ export class OnvifAdapter implements CameraBrandAdapter {
   }
 
   async getRecordingStatus(camera: CameraConfig): Promise<RecordingReading> {
-    return parseOnvifRecording(await this.authenticated(camera, await this.atService(camera, ACTIONS.recording, NS.trc)));
+    const jobs = parseOnvifRecording(await this.authenticated(camera, await this.atService(camera, ACTIONS.recording, NS.trc)));
+    if (jobs.state !== "idle") return jobs;
+    // Recording jobs are ONVIF's own: a camera recording to its SD card on its own schedule
+    // (Uniview IPC815SB, for one) reports them idle or has none. Its recordings ending just now
+    // show it is recording all the same.
+    try {
+      const summary = parseOnvifRecordingSummary(await this.authenticated(camera, await this.atService(camera, ACTIONS.summary, NS.tse)));
+      if (summary.until === undefined || summary.recordings === 0) return jobs;
+      const { now } = await this.cameraClock(camera);
+      const ageMin = (now - summary.until) / 60_000;
+      if (ageMin > RECENT_RECORDING_MINUTES) return jobs;
+      return {
+        state: "recording",
+        channels: jobs.channels.map((c) => ({ ...c, state: "recording" as const })),
+        detail: `latest recording ${ageMin < 1 ? "less than a minute" : `${Math.round(ageMin)} min`} ago`,
+      };
+    } catch {
+      return jobs;
+    }
   }
 
   /**
