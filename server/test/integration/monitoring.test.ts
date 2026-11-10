@@ -147,11 +147,11 @@ describe("storage checks", () => {
     cam.setDisks([{ id: 1, name: "hdde", status: "smartFailed", capacityMb: 1000, freeMb: 900, property: "RW" }]);
     const id = await addCamera();
     await runCheck(id, "manual", deps);
-    expect((await status(id)).storage_health).toBe("critical");
+    expect((await status(id)).storage_health).toBe("warning");
     // The camera says it records, but its only card failed: a recording error, explained by the one disk alert.
     expect((await status(id)).recording_state).toBe("error");
     expect((await status(id)).recording_detail).toMatch(/^recording is on, but its storage reports an error/);
-    expect(await alerts(id)).toEqual([{ type: "disk_unhealthy", severity: "critical", status: "active", occurrence_count: 1 }]);
+    expect(await alerts(id)).toEqual([{ type: "disk_unhealthy", severity: "warning", status: "active", occurrence_count: 1 }]);
   });
 
   it("records whether the camera is recording, alerts when it stops, and resolves when it resumes", async () => {

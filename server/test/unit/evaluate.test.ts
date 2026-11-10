@@ -34,9 +34,9 @@ describe("storageHealth", () => {
     expect(storageHealth(reading(pct), T)).toBe(expected);
   });
 
-  it("is critical for unhealthy disks or no disks, warning for read-only", () => {
-    expect(storageHealth(reading(10, { healthStatus: "unhealthy" }), T)).toBe("critical");
-    expect(storageHealth({ devices: [] }, T)).toBe("critical");
+  it("is a warning (not critical) for unhealthy disks, no disks and read-only", () => {
+    expect(storageHealth(reading(10, { healthStatus: "unhealthy" }), T)).toBe("warning");
+    expect(storageHealth({ devices: [] }, T)).toBe("warning");
     expect(storageHealth(reading(10, { writable: false }), T)).toBe("warning");
   });
 
@@ -63,13 +63,13 @@ describe("evaluateConditions", () => {
 
   it("reports disk failures from the vendor status", () => {
     const e = evalWith({ ok: true, reading: reading(20, { healthStatus: "unhealthy", rawStatus: "smartFailed" }) });
-    expect(types(e)).toEqual(["disk_unhealthy:critical"]);
+    expect(types(e)).toEqual(["disk_unhealthy:warning"]);
     expect(e.active[0]!.description).toContain("smartFailed");
   });
 
   it("reports read-only and missing storage", () => {
     expect(types(evalWith({ ok: true, reading: reading(20, { writable: false }) }))).toEqual(["disk_readonly:warning"]);
-    expect(types(evalWith({ ok: true, reading: { devices: [] } }))).toEqual(["no_storage_device:critical"]);
+    expect(types(evalWith({ ok: true, reading: { devices: [] } }))).toEqual(["no_storage_device:warning"]);
   });
 
   it("never infers disk problems from a network failure and does not resolve storage alerts", () => {

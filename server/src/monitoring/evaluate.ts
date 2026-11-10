@@ -71,11 +71,11 @@ const isFull = (r: StorageReading, t: Thresholds) =>
 
 /** Overall storage health for a successful reading. */
 export function storageHealth(r: StorageReading, t: Thresholds): StorageHealth {
-  if (r.devices.length === 0) return "critical";
-  if (r.devices.some((d) => d.healthStatus === "unhealthy")) return "critical";
   const usage = t.usageAlertsEnabled ? r.usedPercentage : undefined;
   if (usage !== undefined && (usage >= t.critical || isFull(r, t))) return "critical";
-  if (r.devices.some((d) => d.healthStatus === "degraded" || d.writable === false)) return "warning";
+  // A missing or offline SD card is a warning, like its alert.
+  if (r.devices.length === 0) return "warning";
+  if (r.devices.some((d) => d.healthStatus === "unhealthy" || d.healthStatus === "degraded" || d.writable === false)) return "warning";
   if (usage !== undefined && usage >= t.warning) return "warning";
   if (r.usedPercentage === undefined && r.devices.every((d) => d.healthStatus === "unknown")) return "unknown";
   return "healthy";
@@ -202,10 +202,11 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   const r = result.reading;
   evaluated.push("storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device");
 
+  // An SD card that is missing or offline is a notification (warning), not a critical alarm.
   if (r.devices.length === 0) {
     active.push({
       type: "no_storage_device",
-      severity: "critical",
+      severity: "warning",
       title: "No storage device",
       description: "The device reports no SD card, hard disk or other storage device. Recording to local storage is not possible.",
       context: {},
@@ -216,7 +217,7 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   if (unhealthy.length) {
     active.push({
       type: "disk_unhealthy",
-      severity: "critical",
+      severity: "warning",
       title: "Storage device unhealthy",
       description: unhealthy.map((d) => `${d.name ?? d.id}: camera reports status "${d.rawStatus ?? "unknown"}"`).join("; "),
       context: { devices: unhealthy.map((d) => ({ id: d.id, rawStatus: d.rawStatus })) },
