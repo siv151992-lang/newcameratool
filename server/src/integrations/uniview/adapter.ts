@@ -61,11 +61,33 @@ export class UniviewAdapter implements CameraBrandAdapter {
     } catch (err) {
       if (!(err instanceof CameraApiError) || err.code !== "API_UNAVAILABLE") throw err;
     }
-    return parseUniviewStorage(await this.getJson(camera, UNIVIEW_LEGACY_STORAGE_PATH));
+    try {
+      return parseUniviewStorage(await this.getJson(camera, UNIVIEW_LEGACY_STORAGE_PATH));
+    } catch (err) {
+      return this.viaOnvif(err, () => this.onvif.getStorageStatus(camera));
+    }
   }
 
   async getDeviceInfo(camera: CameraConfig): Promise<DeviceInfo> {
-    return parseUniviewDeviceInfo(await this.getJson(camera, UNIVIEW_DEVICE_INFO_PATH));
+    try {
+      return parseUniviewDeviceInfo(await this.getJson(camera, UNIVIEW_DEVICE_INFO_PATH));
+    } catch (err) {
+      return this.viaOnvif(err, () => this.onvif.getDeviceInfo(camera));
+    }
+  }
+
+  /**
+   * Some Uniview models and firmware (and cameras sold under other names) have no LAPI at all:
+   * every LAPI address answers 404. They usually speak ONVIF, so read it there. When ONVIF fails
+   * too, the LAPI error is reported (it names what the camera does not provide).
+   */
+  private async viaOnvif<T>(lapiError: unknown, read: () => Promise<T>): Promise<T> {
+    if (!(lapiError instanceof CameraApiError) || lapiError.code !== "API_UNAVAILABLE") throw lapiError;
+    try {
+      return await read();
+    } catch {
+      throw lapiError;
+    }
   }
 
   /** NVR channels (LAPI Channels/System/BasicInfos): names and whether each camera is online. */

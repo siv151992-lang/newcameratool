@@ -289,6 +289,14 @@ describe("OnvifAdapter", () => {
     const bad = await new OnvifAdapter(http).testConnection({ ...ctx.config, password: "wrong" });
     expect(bad.steps.find((s) => s.key === "authentication")?.status).toBe("failed");
   });
+  it("reads a Uniview camera without LAPI (every LAPI address 404) over ONVIF", async () => {
+    const uniview = new UniviewAdapter(http);
+    const r = await uniview.getStorageStatus(ctx.config);
+    expect(r.devices).toHaveLength(1);
+    expect(r.totalBytes).toBe(64023257088);
+    expect((await uniview.getDeviceInfo(ctx.config)).model).toBe("Cam-1");
+    expect(cam.requests.some((q) => q.path === UNIVIEW_STORAGE_PATH)).toBe(true);
+  });
 });
 
 describe("getRecordingStatus over HTTP", () => {
