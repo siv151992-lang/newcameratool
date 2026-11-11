@@ -543,9 +543,10 @@ function NotificationsTab() {
         system administrator) or to a Microsoft Teams, Slack or Google Chat channel, or any system that takes a webhook.
         A cooldown per camera and alert type prevents repeated messages; escalations to critical are always sent.
       </p>
+      {editable && <QuickEmailAlerts onAdded={() => void refresh()} />}
       <Card
         title="Notification channels"
-        actions={editable && <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing({ kind: "email", enabled: true, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true, recipientsText: "", urlText: "" })}>Add channel</Button>}
+        actions={editable && <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing({ kind: "teams", enabled: true, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true, recipientsText: "", urlText: "" })}>Add Teams, Slack or other</Button>}
       >
         {channels.isLoading ? (
           <Spinner />
@@ -609,6 +610,9 @@ function NotificationsTab() {
                 )}
               </Field>
             )}
+            <details className="rounded-md border border-line px-3 py-2">
+              <summary className="cursor-pointer text-sm text-ink-secondary">More options</summary>
+              <div className="mt-3 space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Minimum severity">
                 {(id) => (
@@ -622,6 +626,8 @@ function NotificationsTab() {
             </div>
             <Checkbox label="Send recovery notifications" checked={editing.notifyOnRecovery ?? true} onChange={(e) => setEditing({ ...editing, notifyOnRecovery: e.target.checked })} />
             <Checkbox label="Enabled" checked={editing.enabled ?? true} onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })} />
+              </div>
+            </details>
           </div>
         )}
       </Dialog>
@@ -629,6 +635,49 @@ function NotificationsTab() {
         <p>{deleting?.name} will stop receiving notifications.</p>
       </ConfirmDialog>
     </div>
+  );
+}
+
+/**
+ * Type an address and press Send: alerts (warning and critical, with recovery notices) are emailed
+ * there from now on, and a test email goes out at once so the person can see it arrives.
+ */
+function QuickEmailAlerts({ onAdded }: { onAdded: () => void }) {
+  const toast = useToast();
+  const [email, setEmail] = useState("");
+  const add = useMutation({
+    mutationFn: async () => {
+      const address = email.trim();
+      const channel = await api<NotificationChannel>("/settings/notifications", {
+        method: "POST",
+        body: { type: "email", name: address, config: { recipients: [address] } },
+      });
+      return api<{ ok: boolean; message: string }>(`/settings/notifications/${channel.id}/test`, { method: "POST" });
+    },
+    onSuccess: (r) => {
+      toast(r.ok ? "success" : "error", r.ok ? `Added ${email.trim()}: a test email is on its way` : `Added ${email.trim()}, but the test email failed: ${r.message}`);
+      setEmail("");
+      onAdded();
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+  return (
+    <Card title="Email alerts">
+      <form
+        className="flex flex-wrap items-end gap-2 p-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (email.trim()) add.mutate();
+        }}
+      >
+        <div className="min-w-[16rem] flex-1">
+          <Field label="Email address" hint="Gets every warning and critical alert, and a notice when it is resolved.">
+            {(id, d) => <Input id={id} aria-describedby={d} type="email" autoComplete="off" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />}
+          </Field>
+        </div>
+        <Button type="submit" variant="primary" icon={<Send className="h-4 w-4" />} loading={add.isPending} disabled={!email.trim()}>Send</Button>
+      </form>
+    </Card>
   );
 }
 

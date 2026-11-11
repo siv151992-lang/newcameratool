@@ -229,12 +229,12 @@ export function QuickInvite() {
   const toast = useToast();
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Role>("viewer");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<{ email: string; sent: InvitationSent } | null>(null);
   const [creating, setCreating] = useState(false);
+  // Just the address: everyone joins as a Viewer; the role is changed in the user list afterwards.
   const send = useMutation({
-    mutationFn: () => api<InvitationSent>("/invitations", { method: "POST", body: { email: email.trim(), role } }),
+    mutationFn: () => api<InvitationSent>("/invitations", { method: "POST", body: { email: email.trim(), role: "viewer" } }),
     onSuccess: (r) => {
       setError(null);
       setSent({ email: email.trim(), sent: r });
@@ -263,20 +263,9 @@ export function QuickInvite() {
               {(id, d) => <Input id={id} aria-describedby={d} type="email" autoComplete="off" placeholder="name@company.com" value={email} invalid={!!error} onChange={(e) => setEmail(e.target.value)} />}
             </Field>
           </div>
-          <div>
-            <Field label="Role">
-              {(id) => (
-                <Select id={id} className="w-auto" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                  <option value="viewer">{ROLE_LABELS.viewer}</option>
-                  <option value="operator">{ROLE_LABELS.operator}</option>
-                  <option value="admin">{ROLE_LABELS.admin}</option>
-                </Select>
-              )}
-            </Field>
-          </div>
-          <Button type="submit" variant="primary" icon={<UserPlus className="h-4 w-4" />} loading={send.isPending} disabled={!email.trim()}>Add user</Button>
+          <Button type="submit" variant="primary" icon={<UserPlus className="h-4 w-4" />} loading={send.isPending} disabled={!email.trim()}>Send invitation</Button>
         </div>
-        <p className="text-xs text-ink-secondary">They get an email with a link to create their account and join. No email? Use Create with password.</p>
+        <p className="text-xs text-ink-secondary">They get an email with a link to join, as a Viewer; change their role in the list below once they have joined. No email? Use Create with password.</p>
         {sent && (
           <div className="rounded-md border border-line bg-raised p-3 text-sm">
             <InvitationLink email={sent.email} sent={sent.sent} />
