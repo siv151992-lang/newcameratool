@@ -4,7 +4,7 @@ import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, Chev
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
-import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NetworkSettings, NotificationChannel, Page, WebhookFormat } from "../api/types";
+import type { AiStatus, AuditEntry, ManagedUser, MonitoringSettings, NetworkSettings, NotificationChannel, Page, WebhookFormat, WeeklyReportSettings } from "../api/types";
 import { Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorMessage, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea } from "../components/ui";
 import { useToast } from "../components/toast";
 import { useAiStatus } from "../hooks/ai";
@@ -543,7 +543,8 @@ function NotificationsTab() {
         system administrator) or to a Microsoft Teams, Slack or Google Chat channel, or any system that takes a webhook.
         A cooldown per camera and alert type prevents repeated messages; escalations to critical are always sent.
       </p>
-      {editable && <QuickEmailAlerts onAdded={() => void refresh()} />}
+      {editable && <QuickEmailAlerts onAdded={() => { void refresh(); void qc.invalidateQueries({ queryKey: ["settings", "weekly-report"] }); }} />}
+      <WeeklyReportCard editable={editable} />
       <Card
         title="Notification channels"
         actions={editable && <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing({ kind: "teams", enabled: true, minSeverity: "warning", cooldownMinutes: 60, notifyOnRecovery: true, recipientsText: "", urlText: "" })}>Add Teams, Slack or other</Button>}
@@ -677,6 +678,71 @@ function QuickEmailAlerts({ onAdded }: { onAdded: () => void }) {
         </div>
         <Button type="submit" variant="primary" icon={<Send className="h-4 w-4" />} loading={add.isPending} disabled={!email.trim()}>Send</Button>
       </form>
+    </Card>
+  );
+}
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * The weekly email report (days of recordings per camera, open problems, the week's outages):
+ * on or off, which day and hour (in this browser's time zone), a preview and Send now.
+ */
+function WeeklyReportCard({ editable }: { editable: boolean }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const report = useQuery({ queryKey: ["settings", "weekly-report"], queryFn: () => api<WeeklyReportSettings>("/settings/weekly-report") });
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const save = useMutation({
+    mutationFn: (patch: Partial<WeeklyReportSettings>) =>
+      api<WeeklyReportSettings>("/settings/weekly-report", { method: "PATCH", body: { ...patch, timeZone: browserZone } }),
+    onSuccess: (r) => {
+      qc.setQueryData(["settings", "weekly-report"], r);
+      toast("success", r.enabled ? `Weekly report: every ${WEEKDAYS[r.day]} at ${String(r.hour).padStart(2, "0")}:00` : "Weekly report turned off");
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+  const send = useMutation({
+    mutationFn: () => api<{ sentTo: string[]; failed: { to: string; error: string }[] }>("/settings/weekly-report/send", { method: "POST" }),
+    onSuccess: (r) =>
+      r.failed.length
+        ? toast("error", `Could not send to ${r.failed.map((f) => f.to).join(", ")}: ${r.failed[0]!.error}`)
+        : toast("success", `Weekly report sent to ${r.sentTo.join(", ")}`),
+    onError: (e: Error) => toast("error", e.message),
+  });
+  if (!report.data) return report.error ? <ErrorMessage error={report.error} /> : null;
+  const r = report.data;
+  return (
+    <Card
+      title="Weekly report"
+      actions={
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={() => window.open("/api/settings/weekly-report/preview", "_blank", "noopener")}>Preview</Button>
+          {editable && <Button size="sm" icon={<Send className="h-4 w-4" />} loading={send.isPending} disabled={!r.recipients.length} onClick={() => send.mutate()}>Send now</Button>}
+        </div>
+      }
+    >
+      <div className="space-y-3 p-4 text-sm">
+        <p className="text-ink-secondary">
+          Every camera's days of recordings (fewest first), every open problem (offline, not recording, SD card, storage…) and the week's outages,
+          with the full camera list attached as a spreadsheet.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Checkbox label="Send it every" checked={r.enabled} disabled={!editable || save.isPending} onChange={(e) => save.mutate({ enabled: e.target.checked })} />
+          <Select aria-label="Day" className="w-auto" value={r.day} disabled={!editable || !r.enabled} onChange={(e) => save.mutate({ day: Number(e.target.value) })}>
+            {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+          </Select>
+          <span>at</span>
+          <Select aria-label="Hour" className="w-auto" value={r.hour} disabled={!editable || !r.enabled} onChange={(e) => save.mutate({ hour: Number(e.target.value) })}>
+            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+          </Select>
+          <span className="text-ink-muted">({r.timeZone})</span>
+        </div>
+        <p className={r.recipients.length ? "text-ink-secondary" : "text-warn"}>
+          {r.recipients.length ? `Goes to: ${r.recipients.join(", ")} (the email alert addresses above).` : "Add an email address under Email alerts above: the report goes to those addresses."}
+          {r.lastSent && ` Last sent ${r.lastSent}.`}
+        </p>
+      </div>
     </Card>
   );
 }

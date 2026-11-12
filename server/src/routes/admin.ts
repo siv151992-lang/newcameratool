@@ -22,6 +22,7 @@ import { camerasOutside, getNetworkSettings, networkSettingsSchema, updateNetwor
 import { emailSettingsSchema, emailSettingsView, getEmailSettings, updateEmailSettings } from "../services/emailSettings.js";
 import { sendMail } from "../notifications/mailer.js";
 import { detectMailServer } from "../services/mailDetect.js";
+import { buildWeeklyReport, getWeeklyReportSettings, sendWeeklyReport, updateWeeklyReportSettings, weeklyReportSettingsSchema } from "../services/weeklyReportService.js";
 import { redirectUri } from "../auth/oauth.js";
 import { providerSettingsSchema, providerSettingsView, updateProviderSettings } from "../services/providerSettings.js";
 import { deviceLimiter } from "./limits.js";
@@ -165,6 +166,24 @@ settingsRouter.patch("/notifications/:id", requirePermission("settings:write"), 
 settingsRouter.delete("/notifications/:id", requirePermission("settings:write"), async (req, res) => {
   await deleteChannel(orgOf(req), param(req), actorOf(req), req.ip);
   res.status(204).end();
+});
+/** The weekly email report: when it goes out, to whom (the email alert addresses), a preview and Send now. */
+settingsRouter.get("/weekly-report", requirePermission("settings:read"), async (req, res) => {
+  res.json(await getWeeklyReportSettings(orgOf(req)));
+});
+settingsRouter.patch("/weekly-report", requirePermission("settings:write"), async (req, res) => {
+  const patch = parse(patchOf(weeklyReportSettingsSchema).strict(), req.body);
+  const saved = await updateWeeklyReportSettings(orgOf(req), patch, req.auth!.user.id);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.weekly_report_updated", entityType: "settings", entityId: "weekly_report", details: patch });
+  res.json(saved);
+});
+settingsRouter.get("/weekly-report/preview", requirePermission("settings:read"), async (req, res) => {
+  const s = await getWeeklyReportSettings(orgOf(req));
+  const report = await buildWeeklyReport(orgOf(req), s.timeZone);
+  res.type("html").set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'").send(report.html);
+});
+settingsRouter.post("/weekly-report/send", requirePermission("settings:write"), async (req, res) => {
+  res.json(await sendWeeklyReport(orgOf(req)));
 });
 settingsRouter.post("/notifications/:id/test", requirePermission("settings:write"), async (req, res) => {
   res.json(await testChannel(orgOf(req), notifier, param(req)));

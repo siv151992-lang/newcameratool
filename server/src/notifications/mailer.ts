@@ -12,6 +12,9 @@ export interface MailMessage {
   to: string;
   subject: string;
   text: string;
+  /** Optional HTML version (the text one is always sent too). */
+  html?: string;
+  attachments?: { filename: string; content: string; contentType: string }[];
 }
 
 type Sender = (m: MailMessage) => Promise<void>;
@@ -60,7 +63,7 @@ export async function sendMail(message: MailMessage, settings?: EmailSettings): 
   if (!s.smtpHost) throw new Error("Email is not set up. A system administrator can add the mail server in Settings → Email & sign-in.");
   const t = settings ? nodemailer.createTransport(smtpOptions(s)) : transportFor(s);
   try {
-    await t.sendMail({ from: s.smtpFrom, to: message.to, subject: message.subject, text: message.text });
+    await t.sendMail({ from: s.smtpFrom, to: message.to, subject: message.subject, text: message.text, html: message.html, attachments: message.attachments });
   } catch (err) {
     throw new Error(explainMailError(err as Error & { code?: string; responseCode?: number }, s));
   }

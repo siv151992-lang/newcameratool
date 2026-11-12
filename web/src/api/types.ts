@@ -766,3 +766,14 @@ export interface FirmwareCamera {
   connectionStatus: string | null;
   outdated: boolean;
 }
+
+export interface WeeklyReportSettings {
+  enabled: boolean;
+  /** 0 = Sunday … 6 = Saturday. */
+  day: number;
+  hour: number;
+  timeZone: string;
+  /** The email alert addresses it goes to. */
+  recipients: string[];
+  lastSent: string | null;
+}

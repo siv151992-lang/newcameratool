@@ -10,6 +10,7 @@ import { config } from "./config.js";
 import { notifier } from "./notifications/notifier.js";
 import { getCipher } from "./security/cipher.js";
 import { syncBrands } from "./services/brandService.js";
+import { sendDueWeeklyReports } from "./services/weeklyReportService.js";
 
 async function main() {
   getCipher(); // fail fast if the encryption key is missing
@@ -19,10 +20,13 @@ async function main() {
   scheduler.start();
   const streams = new EventStreams({ registry, notifier }, { max: config.CAMERA_EVENT_STREAMS_MAX });
   streams.start();
+  // Weekly email reports: each organization's goes out once on its chosen day and hour.
+  const reports = setInterval(() => void sendDueWeeklyReports(), 5 * 60_000);
   logger.info({ instance: INSTANCE_ID }, "Monitoring worker started");
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Stopping worker, waiting for in-flight checks");
+    clearInterval(reports);
     await Promise.all([scheduler.stop(), streams.stop()]);
     await pool.end();
     process.exit(0);
