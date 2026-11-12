@@ -22,6 +22,7 @@ import { redactSecrets } from "../security/redact.js";
 import { applyConditions, openAlertTypes } from "../services/alertService.js";
 import { credentialsFor, getCameraConfig } from "../services/cameraService.js";
 import { getMonitoringSettings, type MonitoringSettings } from "../services/settingsService.js";
+import { formatBytes } from "../lib/format.js";
 import { type CheckResult, evaluateConditions, passwordAgeCondition, raiseForCriticalArea, storageHealth, thresholdsFor } from "./evaluate.js";
 import { getCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
 import { analysePicture, judgePicture, type PictureBaseline, type PictureState } from "./picture.js";
@@ -322,6 +323,25 @@ async function refreshPicture(
 /** Days of recordings are read at most this often per camera (and on every manual check). */
 const RECORDING_RANGE_REFRESH_MS = 6 * 3600_000;
 
+const days1 = (d: number) => `${Math.round(d * 10) / 10} day${Math.round(d * 10) === 10 ? "" : "s"}`;
+
+/**
+ * Recordings that suddenly shrank: the card was formatted or replaced and the older footage is
+ * gone. Only a full reading counts (not one where the search stopped early), from at least 2 days
+ * to under a quarter of that, at least 2 days less.
+ */
+export function recordingsDropped(before: number | null, after: { days: number; atLeast?: boolean } | null): string | null {
+  if (before === null || !after || after.atLeast || before < 2) return null;
+  if (after.days >= before * 0.25 || before - after.days < 2) return null;
+  return `Recordings dropped from ${days1(before)} to ${days1(after.days)}: the SD card was formatted or replaced, and the older footage is gone.`;
+}
+
+/** A card of another size: replaced (more than 5% bigger or smaller than the last reading). */
+export function capacityChanged(before: number | null, after: number | undefined): string | null {
+  if (!before || !after || Math.abs(after - before) / before <= 0.05) return null;
+  return `SD card size changed from ${formatBytes(before)} to ${formatBytes(after)}: the card was replaced. Check that it records, and that it holds enough days.`;
+}
+
 /**
  * Updates how many days of recordings the camera holds. Optional, like device information: a
  * failure leaves the last value and is retried after an hour.
@@ -332,7 +352,7 @@ async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapt
     await pool.query("UPDATE camera_status SET recording_range_at = now() WHERE camera_id = $1 AND recording_range_at IS NULL", [cameraId]);
     return;
   }
-  const { rows } = await pool.query("SELECT recording_range_at, recording_range_error FROM camera_status WHERE camera_id = $1", [cameraId]);
+  const { rows } = await pool.query("SELECT recording_range_at, recording_range_error, recording_days FROM camera_status WHERE camera_id = $1", [cameraId]);
   const last = rows[0]?.recording_range_at as Date | null;
   const wait = rows[0]?.recording_range_error ? 3600_000 : RECORDING_RANGE_REFRESH_MS; // a failure is retried after an hour
   if (trigger === "scheduled" && last && Date.now() - last.getTime() < wait) return;
@@ -343,6 +363,9 @@ async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapt
               recording_range_error = NULL, recording_range_at = now() WHERE camera_id = $1`,
       [cameraId, range?.days ?? null, range?.oldest ?? null, range?.atLeast ?? false],
     );
+    const before = rows[0]?.recording_days === null || rows[0]?.recording_days === undefined ? null : Number(rows[0].recording_days);
+    const drop = recordingsDropped(before, range);
+    if (drop) await pool.query("UPDATE camera_status SET storage_changed_at = now(), storage_change = $2 WHERE camera_id = $1", [cameraId, drop]);
   } catch (err) {
     const msg = err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : "unexpected error";
     await pool.query("UPDATE camera_status SET recording_range_error = $2, recording_range_at = now() WHERE camera_id = $1", [cameraId, msg.slice(0, 500)]);
@@ -368,7 +391,8 @@ async function persist(
               s.connection_status, s.consecutive_failures, s.consecutive_auth_failures,
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success,
               s.recording_days, s.recording_days_at_least, s.recording_range_error, s.clock_offset_seconds,
-              c.picture_checks, c.device_type, s.picture_state, s.picture_detail
+              c.picture_checks, c.device_type, s.picture_state, s.picture_detail,
+              s.total_bytes AS previous_total_bytes, s.storage_changed_at, s.storage_change, s.storage_degraded_since
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id
        LEFT JOIN camera_credentials cr ON cr.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
@@ -474,6 +498,25 @@ async function persist(
       );
     }
 
+    // SD card replaced (another size), and a card busy formatting or repairing (since when).
+    let storageChangedAt: Date | null = cam.storage_changed_at;
+    let storageChange: string | null = cam.storage_change;
+    let degradedSince: Date | null = null;
+    if (result.ok && localStorage) {
+      const resized = capacityChanged(cam.previous_total_bytes === null ? null : Number(cam.previous_total_bytes), reading!.totalBytes);
+      if (resized) {
+        storageChangedAt = new Date();
+        storageChange = resized;
+        // Read the new card's recordings at the next check rather than hours later.
+        await db.query("UPDATE camera_status SET storage_changed_at = now(), storage_change = $2, recording_range_at = NULL WHERE camera_id = $1", [cameraId, resized]);
+      }
+      const busy = reading!.devices.some((d) => d.healthStatus === "degraded");
+      degradedSince = busy ? (cam.storage_degraded_since ?? new Date()) : null;
+      if ((degradedSince === null) !== (cam.storage_degraded_since === null)) {
+        await db.query("UPDATE camera_status SET storage_degraded_since = $2 WHERE camera_id = $1", [cameraId, degradedSince]);
+      }
+    }
+
     if (deviceInfo) {
       await db.query(
         `UPDATE camera_status SET device_model = coalesce($2, device_model), device_serial = coalesce($3, device_serial),
@@ -505,6 +548,10 @@ async function persist(
         ? { days: Number(cam.recording_days), atLeast: Boolean(cam.recording_days_at_least) }
         : undefined,
       clockOffsetSeconds: result.ok && cam.clock_offset_seconds !== null ? Number(cam.clock_offset_seconds) : undefined,
+      storageChange: storageChangedAt && storageChange
+        ? { minutesAgo: (Date.now() - new Date(storageChangedAt).getTime()) / 60_000, detail: storageChange }
+        : undefined,
+      storageDegradedMinutes: degradedSince ? (Date.now() - new Date(degradedSince).getTime()) / 60_000 : undefined,
       picture: settings.pictureCheckMinutes <= 0 || !cam.picture_checks || cam.device_type === "nvr"
         ? "off"
         : result.ok && cam.picture_state ? { state: cam.picture_state, detail: cam.picture_detail ?? "" } : undefined,

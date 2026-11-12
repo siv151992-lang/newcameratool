@@ -154,6 +154,38 @@ describe("storage checks", () => {
     expect(await alerts(id)).toEqual([{ type: "disk_unhealthy", severity: "warning", status: "active", occurrence_count: 1 }]);
   });
 
+  it("alerts when the SD card is replaced by one of another size, for a day", async () => {
+    cam.setDisks([{ id: 1, name: "hdd1", status: "ok", capacityMb: 128_000, freeMb: 60_000, property: "RW" }]);
+    const id = await addCamera();
+    await runCheck(id, "manual", deps);
+    expect(await alerts(id)).toEqual([]);
+    cam.setDisks([{ id: 1, name: "hdd1", status: "ok", capacityMb: 64_000, freeMb: 63_000, property: "RW" }]);
+    await runCheck(id, "manual", deps);
+    expect(await alerts(id)).toEqual([{ type: "storage_changed", severity: "warning", status: "active", occurrence_count: 1 }]);
+    const s = await status(id);
+    expect(s.storage_change).toMatch(/size changed from .* to .*: the card was replaced/);
+    expect(s.recording_range_at).toBeNull(); // the new card's recordings are read at the next check
+    // A day later it closes by itself.
+    await pool.query("UPDATE camera_status SET storage_changed_at = now() - interval '25 hours' WHERE camera_id = $1", [id]);
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id))[0]).toMatchObject({ type: "storage_changed", status: "resolved" });
+  });
+
+  it("alerts when the SD card has been formatting for over an hour, and clears when it is done", async () => {
+    cam.setDisks([{ id: 1, name: "hdd1", status: "formating", capacityMb: 1000, freeMb: 900, property: "RW" }]);
+    const id = await addCamera();
+    await runCheck(id, "manual", deps);
+    expect((await status(id)).storage_degraded_since).not.toBeNull();
+    expect((await alerts(id)).filter((a) => a.type === "storage_stuck")).toEqual([]);
+    await pool.query("UPDATE camera_status SET storage_degraded_since = now() - interval '2 hours' WHERE camera_id = $1", [id]);
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).filter((a) => a.type === "storage_stuck")).toEqual([{ type: "storage_stuck", severity: "warning", status: "active", occurrence_count: 1 }]);
+    cam.setDisks([{ id: 1, name: "hdd1", status: "ok", capacityMb: 1000, freeMb: 900, property: "RW" }]);
+    await runCheck(id, "manual", deps);
+    expect((await status(id)).storage_degraded_since).toBeNull();
+    expect((await alerts(id)).find((a) => a.type === "storage_stuck")).toMatchObject({ status: "resolved" });
+  });
+
   it("records whether the camera is recording, alerts when it stops, and resolves when it resumes", async () => {
     const id = await addCamera();
     await runCheck(id, "manual", deps);

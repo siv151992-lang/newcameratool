@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StorageReading } from "../../src/integrations/types.js";
 import { type CheckResult, type EvaluationInput, describeOffset, evaluateConditions, storageHealth, type Thresholds } from "../../src/monitoring/evaluate.js";
 import { DEFAULT_MONITORING_SETTINGS } from "../../src/services/settingsService.js";
+import { capacityChanged, recordingsDropped } from "../../src/monitoring/checkService.js";
 
 const T: Thresholds = { warning: 80, critical: 90, full: 100, hysteresis: 2, usageAlertsEnabled: true };
 const GB = 1e9;
@@ -165,5 +166,50 @@ describe("describeOffset", () => {
     expect(describeOffset(5)).toBe("5 s ahead");
     expect(describeOffset(-90_000)).toBe("1 day 1 h behind");
     expect(describeOffset(3600)).toBe("1 h ahead");
+  });
+});
+
+describe("SD card replaced, formatted or stuck", () => {
+  it("sees a card of another size, not small differences in what the camera reports", () => {
+    expect(capacityChanged(128 * GB, 64 * GB)).toMatch(/size changed from .* to .*: the card was replaced/);
+    expect(capacityChanged(128 * GB, 125 * GB)).toBeNull();
+    expect(capacityChanged(null, 64 * GB)).toBeNull();
+    expect(capacityChanged(128 * GB, undefined)).toBeNull();
+  });
+
+  it("sees recordings that suddenly shrank, not the normal day-to-day changes", () => {
+    expect(recordingsDropped(30, { days: 0.4 })).toBe("Recordings dropped from 30 days to 0.4 days: the SD card was formatted or replaced, and the older footage is gone.");
+    expect(recordingsDropped(30, { days: 29.5 })).toBeNull();
+    expect(recordingsDropped(30, { days: 10 })).toBeNull(); // a third: not "sudden" enough
+    expect(recordingsDropped(1.5, { days: 0.1 })).toBeNull(); // too little to tell
+    expect(recordingsDropped(30, { days: 0.4, atLeast: true })).toBeNull(); // the search stopped early
+    expect(recordingsDropped(30, null)).toBeNull();
+    expect(recordingsDropped(null, { days: 0.4 })).toBeNull();
+  });
+
+  it("shows a replaced or formatted card for a day", () => {
+    const detail = "Recordings dropped from 30 days to 0.4 days";
+    expect(types(evalWith({ ok: true, reading: reading(5) }, { storageChange: { minutesAgo: 10, detail } }))).toEqual(["storage_changed:warning"]);
+    expect(evalWith({ ok: true, reading: reading(5) }, { storageChange: { minutesAgo: 10, detail } }).active[0]!.description).toBe(detail);
+    const later = evalWith({ ok: true, reading: reading(5) }, { storageChange: { minutesAgo: 25 * 60, detail } });
+    expect(later.active).toEqual([]);
+    expect(later.evaluated).toContain("storage_changed"); // resolves the open alert
+  });
+
+  it("warns when a card has been formatting or repairing for an hour", () => {
+    const busy = reading(5, { healthStatus: "degraded", rawStatus: "formatting", name: "SD card 1" });
+    expect(types(evalWith({ ok: true, reading: busy }, { storageDegradedMinutes: 20 }))).toEqual([]);
+    const e = evalWith({ ok: true, reading: busy }, { storageDegradedMinutes: 90 });
+    expect(types(e)).toEqual(["storage_stuck:warning"]);
+    expect(e.active[0]!.description).toContain('SD card 1: "formatting" for 1.5 hours');
+    expect(evalWith({ ok: true, reading: reading(5) }, { storageDegradedMinutes: 90 }).active).toEqual([]);
+  });
+
+  it("does not apply to cameras without local storage, nor guess when the camera cannot be read", () => {
+    const off = evalWith({ ok: true, reading: reading(5) }, { localStorage: false, storageChange: { minutesAgo: 1, detail: "x" } });
+    expect(off.active).toEqual([]);
+    expect(off.evaluated).toEqual(expect.arrayContaining(["storage_changed", "storage_stuck"]));
+    const down = evalWith({ ok: false, errorCode: "TIMEOUT", errorMessage: "timeout" }, { storageChange: { minutesAgo: 1, detail: "x" } });
+    expect(down.evaluated).not.toContain("storage_changed");
   });
 });

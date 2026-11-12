@@ -18,6 +18,8 @@ export const ALERT_TYPES = [
   "disk_unhealthy",
   "disk_readonly",
   "no_storage_device",
+  "storage_changed",
+  "storage_stuck",
   "not_recording",
   "password_change_due",
   "nvr_channel",
@@ -31,6 +33,11 @@ export const ALERT_TYPES = [
   "illegal_login",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
+
+/** How long "SD card replaced or formatted" stays open after it was seen. */
+export const STORAGE_CHANGE_SHOWN_MINUTES = 24 * 60;
+/** How long a card may be formatting or repairing before it counts as stuck. */
+export const STORAGE_STUCK_MINUTES = 60;
 export type Severity = "info" | "warning" | "critical";
 
 const PICTURE_TITLES: Record<string, string> = {
@@ -113,6 +120,10 @@ export interface EvaluationInput {
   clockOffsetSeconds?: number;
   /** How many days of recordings the camera holds (atLeast: the search stopped, there are more); absent when unknown. */
   recordingDays?: { days: number; atLeast: boolean };
+  /** The SD card was replaced or formatted: when (minutes ago) and what was seen. */
+  storageChange?: { minutesAgo: number; detail: string };
+  /** Minutes the SD card has been formatting, repairing or initialising without a break. */
+  storageDegradedMinutes?: number;
   /** The camera's picture as last checked; "off" when picture checks do not apply (resolves the alert); absent when unknown. */
   picture?: { state: string; detail: string } | "off";
 }
@@ -178,7 +189,7 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   }
 
   if (input.localStorage === false) {
-    evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "not_recording");
+    evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck", "not_recording");
     return { active, evaluated };
   }
 
@@ -200,7 +211,28 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   if (!result.ok) return { active, evaluated };
 
   const r = result.reading;
-  evaluated.push("storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device");
+  evaluated.push("storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck");
+
+  // Shown for a day after it happened, so it is seen (and notified) even when nothing else is wrong.
+  if (input.storageChange && input.storageChange.minutesAgo < STORAGE_CHANGE_SHOWN_MINUTES) {
+    active.push({
+      type: "storage_changed",
+      severity: "warning",
+      title: "SD card replaced or formatted",
+      description: input.storageChange.detail,
+      context: {},
+    });
+  }
+  const stuck = r.devices.filter((d) => d.healthStatus === "degraded");
+  if (stuck.length && (input.storageDegradedMinutes ?? 0) >= STORAGE_STUCK_MINUTES) {
+    active.push({
+      type: "storage_stuck",
+      severity: "warning",
+      title: "SD card stuck formatting or repairing",
+      description: `${stuck.map((d) => `${d.name ?? d.id}: "${d.rawStatus ?? "busy"}"`).join("; ")} for ${Math.round(input.storageDegradedMinutes! / 60 * 10) / 10} hours; nothing is recorded meanwhile. Format the card again from the camera's web page, or replace it.`,
+      context: { devices: stuck.map((d) => d.id) },
+    });
+  }
 
   // An SD card that is missing or offline is a notification (warning), not a critical alarm.
   if (r.devices.length === 0) {
