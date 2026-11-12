@@ -40,6 +40,8 @@ interface ReportRow {
   unhealthy: number;
   degraded: number;
   device_statuses: string | null;
+  max_wear: number | null;
+  card_installed_at: Date | null;
 }
 
 const CONNECTION: Record<string, string> = { online: "Online", offline: "Offline", unknown: "Not checked yet" };
@@ -63,7 +65,7 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
     `SELECT c.name, c.host, c.port, b.display_name AS brand_name, c.model, c.location, c.priority, c.monitoring_enabled, c.local_storage,
             s.connection_status, s.storage_health, s.last_attempt_at, s.last_success_at, s.last_error_message,
             s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage, s.recording_state,
-            s.recording_days, s.recording_oldest, s.recording_days_at_least,
+            s.recording_days, s.recording_oldest, s.recording_days_at_least, s.card_installed_at,
             coalesce(d.devices, 0)::int AS devices, coalesce(d.unhealthy, 0)::int AS unhealthy, coalesce(d.degraded, 0)::int AS degraded,
             d.device_statuses, ${PASSWORD_STATUS_SQL} AS password_status, cr.password_issues
      FROM cameras c
@@ -74,7 +76,8 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
        SELECT count(*) AS devices,
               count(*) FILTER (WHERE health_status = 'unhealthy') AS unhealthy,
               count(*) FILTER (WHERE health_status = 'degraded') AS degraded,
-              string_agg(coalesce(name, vendor_id) || ': ' || coalesce(raw_status, health_status), '; ' ORDER BY vendor_id) AS device_statuses
+              string_agg(coalesce(name, vendor_id) || ': ' || coalesce(raw_status, health_status), '; ' ORDER BY vendor_id) AS device_statuses,
+              max(wear_percent)::float AS max_wear
        FROM storage_devices WHERE camera_id = c.id) d ON true
      WHERE ${clause} ORDER BY ${order}`,
     params,
@@ -83,7 +86,7 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
   const lines: unknown[][] = [[
     "Camera", "IP address", "Port", "Brand", "Model", "Location", "Priority", "Monitoring", "Connection", "SD card status",
     "SD card details (from camera)", "Storage health", "Capacity (GB)", "Used (GB)", "Free (GB)", "Used %", "Recording",
-    "Recordings available (days)", "Oldest recording (camera time)",
+    "Recordings available (days)", "Oldest recording (camera time)", "SD card wear % (camera-reported)", "SD card in use since",
     `Last successful check (${timeZone})`, `Last check attempt (${timeZone})`, "Last error", "Camera password",
   ]];
   for (const r of rows) {
@@ -100,6 +103,8 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
       r.local_storage ? RECORDING[r.recording_state ?? "unknown"] ?? r.recording_state : "",
       r.local_storage && r.recording_days !== null ? `${r.recording_days_at_least ? "at least " : ""}${Number(r.recording_days).toFixed(1)}` : "",
       r.local_storage && r.recording_oldest ? r.recording_oldest.replace("T", " ") : "",
+      r.local_storage && r.max_wear !== null ? r.max_wear : "",
+      r.local_storage && r.card_installed_at ? time(r.card_installed_at).slice(0, 10) : "",
       time(r.last_success_at), time(r.last_attempt_at),
       r.last_error_message, // cleared by the next successful check
       PASSWORD[r.password_status] ?? "",

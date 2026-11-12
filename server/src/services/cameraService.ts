@@ -156,7 +156,7 @@ const SELECT_CAMERA = `
          s.last_attempt_at, s.last_success_at, s.consecutive_failures, s.consecutive_auth_failures,
          s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
          s.recording_state, s.recording_detail, s.recording_checked_at,
-         s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least,
+         s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least, s.card_installed_at,
          s.clock_offset_seconds, s.clock_checked_at, s.clock_error,
          s.picture_state, s.picture_detail, s.picture_error, s.picture_checked_at,
          s.events_state, s.events_error, s.events_since, s.events_last_at,
@@ -258,6 +258,8 @@ export function toCameraView(r: CameraRow) {
         rangeError: r.recording_range_error ?? null,
         daysAtLeast: r.recording_days_at_least ?? false,
       },
+      /** Since when the SD card is in use (first seen by the monitor, or since it was replaced). */
+      cardInstalledAt: r.card_installed_at ?? null,
       /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
       clock: { offsetSeconds: r.clock_offset_seconds ?? null, checkedAt: r.clock_checked_at ?? null, error: r.clock_error ?? null },
       /** The picture as last checked: ok, black, blank, blurred, frozen or moved; null when not checked (error says why). */
@@ -414,7 +416,8 @@ export async function getCamera(id: string, orgId: string | null) {
   const devices = await pool.query(
     `SELECT vendor_id AS id, name, type, health_status AS "healthStatus", raw_status AS "rawStatus",
             total_bytes AS "totalBytes", free_bytes AS "freeBytes", used_bytes AS "usedBytes",
-            used_percentage AS "usedPercentage", writable, property, format_type AS "formatType", updated_at AS "updatedAt"
+            used_percentage AS "usedPercentage", writable, property, format_type AS "formatType",
+            wear_percent::float AS "wearPercent", updated_at AS "updatedAt"
      FROM storage_devices WHERE camera_id = $1 ORDER BY vendor_id`,
     [id],
   );
@@ -865,4 +868,11 @@ export async function setPriority(orgId: string, ids: string[], priority: "criti
     for (const r of rows) await audit({ actor, ip, action: "camera.priority_changed", entityType: "camera", entityId: r.id, details: { priority } }, db);
     return { updated: rows.length };
   });
+}
+
+/** A new SD card was fitted (by hand): its age counts from now. */
+export async function markCardReplaced(orgId: string, id: string, actor: Actor, ip: string | undefined) {
+  await getCameraRow(id, orgId);
+  await pool.query("UPDATE camera_status SET card_installed_at = now(), storage_changed_at = NULL, storage_change = NULL WHERE camera_id = $1", [id]);
+  await audit({ actor, ip, action: "camera.sd_card_replaced", entityType: "camera", entityId: id });
 }

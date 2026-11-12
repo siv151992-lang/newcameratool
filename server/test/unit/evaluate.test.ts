@@ -213,3 +213,26 @@ describe("SD card replaced, formatted or stuck", () => {
     expect(down.evaluated).not.toContain("storage_changed");
   });
 });
+
+describe("SD card wear and age", () => {
+  it("warns from 80% wear, and says replace now from 100%", () => {
+    expect(evalWith({ ok: true, reading: reading(5, { wearPercent: 79 }) }).active).toEqual([]);
+    const soon = evalWith({ ok: true, reading: reading(5, { wearPercent: 85, name: "SD_DISK" }) });
+    expect(types(soon)).toEqual(["storage_worn:warning"]);
+    expect(soon.active[0]).toMatchObject({ title: "SD card wearing out" });
+    expect(soon.active[0]!.description).toContain("SD_DISK: 85% of its expected life used");
+    const past = evalWith({ ok: true, reading: reading(5, { wearPercent: 140 }) });
+    expect(past.active[0]).toMatchObject({ title: "SD card past its expected life" });
+    expect(past.active[0]!.description).toContain("Replace it now");
+  });
+
+  it("is due for replacement after the months set, and off at 0", () => {
+    const settings = { ...DEFAULT_MONITORING_SETTINGS, sdCardReplaceMonths: 6 };
+    expect(evalWith({ ok: true, reading: reading(5) }, { settings, cardAgeDays: 150 }).active).toEqual([]);
+    const due = evalWith({ ok: true, reading: reading(5) }, { settings, cardAgeDays: 200 });
+    expect(types(due)).toEqual(["storage_card_age:warning"]);
+    expect(due.active[0]!.description).toContain("in use for 6 months; your policy is to replace SD cards every 6 months");
+    expect(evalWith({ ok: true, reading: reading(5) }, { cardAgeDays: 2000 }).active).toEqual([]); // 0 = off (the default)
+    expect(evalWith({ ok: true, reading: { devices: [] } }, { settings, cardAgeDays: 200 }).active.map((a) => a.type)).toEqual(["no_storage_device"]);
+  });
+});

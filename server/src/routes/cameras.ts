@@ -25,6 +25,7 @@ import {
   listQuerySchema,
   removeCameras,
   listCameraIds,
+  markCardReplaced,
   setLocalStorage,
   setPriority,
   setMonitoring,
@@ -166,6 +167,12 @@ camerasRouter.post("/bulk-maintenance", requirePermission("alerts:manage"), asyn
     req.body,
   );
   res.json(await setMaintenance(orgOf(req), ids, minutes === null ? null : new Date(Date.now() + minutes * 60_000), note || null, actorOf(req), req.ip));
+});
+
+/** "New card fitted": the SD card's age counts from today. */
+camerasRouter.post("/:id/sd-card-replaced", write, async (req, res) => {
+  await markCardReplaced(orgOf(req), param(req), actorOf(req), req.ip);
+  res.status(204).end();
 });
 
 camerasRouter.post("/bulk-priority", write, async (req, res) => {

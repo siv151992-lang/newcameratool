@@ -159,6 +159,8 @@ export interface Camera {
       /** The camera only answered a shorter search: at least daysAvailable. */
       daysAtLeast: boolean;
     };
+    /** Since when the SD card is in use (first seen by the monitor, or since it was replaced). */
+    cardInstalledAt: string | null;
     /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
     clock: { offsetSeconds: number | null; checkedAt: string | null; error: string | null };
     /** The picture as last checked; state null when not checked (error says why). */
@@ -182,6 +184,8 @@ export interface StorageDevice {
   writable: boolean | null;
   property: string | null;
   formatType: string | null;
+  /** % of the card's expected life used, as the camera reports it (Axis); null when not reported. */
+  wearPercent: number | null;
   updatedAt: string;
 }
 
@@ -353,6 +357,7 @@ export interface MonitoringSettings {
   minRecordingDays: number;
   clockDriftAlertMinutes: number;
   pictureCheckMinutes: number;
+  sdCardReplaceMonths: number;
   deviceInfoRefreshHours: number;
   historyRetentionDays: number;
   historyIntervalMinutes: number;

@@ -4,7 +4,7 @@ import { createRegistry } from "../../src/integrations/registry.js";
 import { runCheck } from "../../src/monitoring/checkService.js";
 import { Scheduler } from "../../src/monitoring/scheduler.js";
 import type { NotificationEvent } from "../../src/notifications/types.js";
-import { createCamera, getSummary, listCameras, listQuerySchema, removeCameras, updateCamera } from "../../src/services/cameraService.js";
+import { createCamera, getSummary, listCameras, listQuerySchema, markCardReplaced, removeCameras, updateCamera } from "../../src/services/cameraService.js";
 import { updateMonitoringSettings } from "../../src/services/settingsService.js";
 import { MockHikvisionCamera } from "../../src/testing/mockHikvision.js";
 import { createTestUser, prepareDb, resetData, testOrgId } from "../helpers.js";
@@ -169,6 +169,28 @@ describe("storage checks", () => {
     await pool.query("UPDATE camera_status SET storage_changed_at = now() - interval '25 hours' WHERE camera_id = $1", [id]);
     await runCheck(id, "manual", deps);
     expect((await alerts(id))[0]).toMatchObject({ type: "storage_changed", status: "resolved" });
+  });
+
+  it("counts the SD card's age from when it was first seen, a new size, or New card fitted", async () => {
+    cam.setDisks([{ id: 1, name: "hdd1", status: "ok", capacityMb: 128_000, freeMb: 60_000, property: "RW" }]);
+    const id = await addCamera();
+    await updateMonitoringSettings(testOrgId, { sdCardReplaceMonths: 6 }, null);
+    await runCheck(id, "manual", deps);
+    const first = (await status(id)).card_installed_at;
+    expect(first).not.toBeNull();
+    // Seven months later: due.
+    await pool.query("UPDATE camera_status SET card_installed_at = now() - interval '7 months' WHERE camera_id = $1", [id]);
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).find((a) => a.type === "storage_card_age")).toMatchObject({ status: "active", severity: "warning" });
+    // New card fitted: counts from now and the alert closes at the next check.
+    await markCardReplaced(testOrgId, id, { id: actor.id, username: actor.username, organizationId: testOrgId }, undefined);
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).find((a) => a.type === "storage_card_age")).toMatchObject({ status: "resolved" });
+    // A card of another size is a new card too.
+    await pool.query("UPDATE camera_status SET card_installed_at = now() - interval '7 months' WHERE camera_id = $1", [id]);
+    cam.setDisks([{ id: 1, name: "hdd1", status: "ok", capacityMb: 256_000, freeMb: 250_000, property: "RW" }]);
+    await runCheck(id, "manual", deps);
+    expect(Date.now() - new Date((await status(id)).card_installed_at).getTime()).toBeLessThan(60_000);
   });
 
   it("alerts when the SD card has been formatting for over an hour, and clears when it is done", async () => {

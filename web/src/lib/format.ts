@@ -92,6 +92,8 @@ export const ALERT_TYPE_LABELS: Record<string, string> = {
   no_storage_device: "No storage device",
   storage_changed: "SD card replaced or formatted",
   storage_stuck: "SD card stuck formatting or repairing",
+  storage_worn: "SD card wearing out",
+  storage_card_age: "SD card due for replacement",
   not_recording: "Not recording",
   password_change_due: "Camera password change due",
   nvr_channel: "NVR channel problem",

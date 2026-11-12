@@ -85,6 +85,8 @@ export interface StorageDeviceStatus {
   writable?: boolean;
   property?: string;
   formatType?: string;
+  /** How much of the card's expected life is used, in % (0 = new, 100 = end of its expected life), as the camera reports it. */
+  wearPercent?: number;
 }
 
 /** What an adapter returns: raw device readings. Threshold evaluation happens in the monitor. */

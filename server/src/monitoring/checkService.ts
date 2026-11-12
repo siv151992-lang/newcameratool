@@ -392,7 +392,7 @@ async function persist(
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success,
               s.recording_days, s.recording_days_at_least, s.recording_range_error, s.clock_offset_seconds,
               c.picture_checks, c.device_type, s.picture_state, s.picture_detail,
-              s.total_bytes AS previous_total_bytes, s.storage_changed_at, s.storage_change, s.storage_degraded_since
+              s.total_bytes AS previous_total_bytes, s.storage_changed_at, s.storage_change, s.storage_degraded_since, s.card_installed_at
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id
        LEFT JOIN camera_credentials cr ON cr.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
@@ -472,15 +472,17 @@ async function persist(
       for (const d of reading!.devices) {
         await db.query(
           `INSERT INTO storage_devices (camera_id, vendor_id, name, type, health_status, raw_status, total_bytes, free_bytes,
-                                        used_bytes, used_percentage, writable, property, format_type, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
+                                        used_bytes, used_percentage, writable, property, format_type, wear_percent, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())
            ON CONFLICT (camera_id, vendor_id) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type,
              health_status = EXCLUDED.health_status, raw_status = EXCLUDED.raw_status, total_bytes = EXCLUDED.total_bytes,
              free_bytes = EXCLUDED.free_bytes, used_bytes = EXCLUDED.used_bytes, used_percentage = EXCLUDED.used_percentage,
-             writable = EXCLUDED.writable, property = EXCLUDED.property, format_type = EXCLUDED.format_type, updated_at = now()`,
+             writable = EXCLUDED.writable, property = EXCLUDED.property, format_type = EXCLUDED.format_type,
+             wear_percent = EXCLUDED.wear_percent, updated_at = now()`,
           [
             cameraId, d.id, d.name ?? null, d.type ?? null, d.healthStatus, d.rawStatus ?? null, d.totalBytes ?? null,
             d.freeBytes ?? null, d.usedBytes ?? null, d.usedPercentage ?? null, d.writable ?? null, d.property ?? null, d.formatType ?? null,
+            d.wearPercent ?? null,
           ],
         );
       }
@@ -502,6 +504,8 @@ async function persist(
     let storageChangedAt: Date | null = cam.storage_changed_at;
     let storageChange: string | null = cam.storage_change;
     let degradedSince: Date | null = null;
+    let cardInstalledAt: Date | null = cam.card_installed_at;
+    const openBefore = await openAlertTypes(cameraId, db);
     if (result.ok && localStorage) {
       const resized = capacityChanged(cam.previous_total_bytes === null ? null : Number(cam.previous_total_bytes), reading!.totalBytes);
       if (resized) {
@@ -509,6 +513,11 @@ async function persist(
         storageChange = resized;
         // Read the new card's recordings at the next check rather than hours later.
         await db.query("UPDATE camera_status SET storage_changed_at = now(), storage_change = $2, recording_range_at = NULL WHERE camera_id = $1", [cameraId, resized]);
+      }
+      // Since when this card is in use: first seen, a card of another size, or a card back after none.
+      if (reading!.devices.length && (!cardInstalledAt || resized || openBefore.has("no_storage_device"))) {
+        cardInstalledAt = new Date();
+        await db.query("UPDATE camera_status SET card_installed_at = now() WHERE camera_id = $1", [cameraId]);
       }
       const busy = reading!.devices.some((d) => d.healthStatus === "degraded");
       degradedSince = busy ? (cam.storage_degraded_since ?? new Date()) : null;
@@ -551,11 +560,12 @@ async function persist(
       storageChange: storageChangedAt && storageChange
         ? { minutesAgo: (Date.now() - new Date(storageChangedAt).getTime()) / 60_000, detail: storageChange }
         : undefined,
+      cardAgeDays: cardInstalledAt ? (Date.now() - new Date(cardInstalledAt).getTime()) / 86_400_000 : undefined,
       storageDegradedMinutes: degradedSince ? (Date.now() - new Date(degradedSince).getTime()) / 60_000 : undefined,
       picture: settings.pictureCheckMinutes <= 0 || !cam.picture_checks || cam.device_type === "nvr"
         ? "off"
         : result.ok && cam.picture_state ? { state: cam.picture_state, detail: cam.picture_detail ?? "" } : undefined,
-      openTypes: await openAlertTypes(cameraId, db),
+      openTypes: openBefore,
     });
     if (channels) {
       if (channels.list) {

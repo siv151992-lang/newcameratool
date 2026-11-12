@@ -46,6 +46,14 @@ describe("parseAxisStorage", () => {
     expect(r.devices[0]!.freeBytes).toBeUndefined();
     expect(r.devices[0]!.usedBytes).toBeUndefined();
     expect(r.usedPercentage).toBeUndefined();
+    expect(r.devices[0]!.wearPercent).toBe(12);
+  });
+
+  it("reads the card's wear level, and leaves it out when not reported or not a number", () => {
+    expect(parseAxisStorage("Storage.S0.DriveStatus=Normal\nStorage.S0.WearLevel=185\n").devices[0]!.wearPercent).toBe(185);
+    expect(parseAxisStorage("Storage.S0.DriveStatus=Normal\nStorage.S0.WearLevel=\n").devices[0]!.wearPercent).toBeUndefined();
+    expect(parseAxisStorage("Storage.S0.DriveStatus=Normal\nStorage.S0.WearLevel=n/a\n").devices[0]!.wearPercent).toBeUndefined();
+    expect(parseAxisStorage("Storage.S0.DriveStatus=Normal\n").devices[0]!.wearPercent).toBeUndefined();
   });
 
   it("computes usage when free or used size is also reported, across several disks", () => {

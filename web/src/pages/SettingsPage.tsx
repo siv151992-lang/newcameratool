@@ -140,7 +140,7 @@ function SectionLayout({ sections, current }: { sections: Section[]; current: Se
 const ORGANIZATION_KEYS = new Set<keyof MonitoringSettings>([
   "pollIntervalSeconds", "offlineFailureThreshold", "authFailureThreshold", "storageUnavailableMinutes",
   "warningThresholdPercent", "criticalThresholdPercent", "fullThresholdPercent", "recoveryHysteresisPercent",
-  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays", "clockDriftAlertMinutes", "pictureCheckMinutes",
+  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays", "clockDriftAlertMinutes", "pictureCheckMinutes", "sdCardReplaceMonths",
 ]);
 
 type NumKey = { [K in keyof MonitoringSettings]: MonitoringSettings[K] extends number ? K : never }[keyof MonitoringSettings];
@@ -179,6 +179,12 @@ const GROUPS: { key: string; title: string; fields: { key: NumKey; label: string
         label: "Required days of recordings",
         unit: "days",
         hint: "Alert when a camera's SD card or disk holds fewer days of recordings (your retention policy, e.g. 30). 0 turns it off.",
+      },
+      {
+        key: "sdCardReplaceMonths",
+        label: "Replace SD cards after",
+        unit: "months",
+        hint: "Alert when a camera's SD card has been in use this long (counted from when the monitor first saw it, or from \"New card fitted\" on the camera's page). Card makers advise 6 to 12 months for cards that record all the time. 0 turns it off.",
       },
       {
         key: "clockDriftAlertMinutes",

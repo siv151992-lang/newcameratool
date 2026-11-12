@@ -73,7 +73,14 @@ function toDevice({ index, fields }: AxisGroup): StorageDeviceStatus {
     totalBytes,
     freeBytes,
     formatType: fields.get("filesystem") || undefined,
+    // Axis: 0 % new, 100 % close to the card's expected lifetime, up to 200 % (high risk of failure).
+    wearPercent: wear(fields.get("wearlevel")),
   };
+}
+
+function wear(raw: string | undefined): number | undefined {
+  const n = raw === undefined || raw.trim() === "" ? NaN : Number(raw.trim().replace(/%$/, ""));
+  return Number.isFinite(n) && n >= 0 && n <= 1000 ? n : undefined;
 }
 
 /** VAPIX reports failures as a plain-text "# Error: ..." or "Error: ..." body. */

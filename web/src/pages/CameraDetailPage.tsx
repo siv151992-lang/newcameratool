@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, Radar, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -276,6 +276,7 @@ export function CameraDetailPage() {
                     <th scope="col" className="px-4 py-2 font-medium">Usage</th>
                     <th scope="col" className="px-4 py-2 text-right font-medium">Free / Total</th>
                     <th scope="col" className="px-4 py-2 font-medium">Access</th>
+                    {c.devices.some((d) => d.wearPercent !== null) && <th scope="col" className="px-4 py-2 font-medium" title="How much of the card's expected life is used, as the camera reports it">Wear</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -289,6 +290,11 @@ export function CameraDetailPage() {
                       <td className="px-4 py-2"><UsageMeter percent={d.usedPercentage} warning={warning} critical={critical} compact /></td>
                       <td className="tabular whitespace-nowrap px-4 py-2 text-right">{formatBytes(d.freeBytes)} / {formatBytes(d.totalBytes)}</td>
                       <td className="px-4 py-2 text-ink-secondary">{d.writable === false ? "Read-only" : d.writable ? "Read/write" : (d.property ?? "—")}</td>
+                      {c.devices.some((x) => x.wearPercent !== null) && (
+                        <td className={clsx("tabular px-4 py-2", d.wearPercent !== null && d.wearPercent >= 80 ? "font-medium text-bad" : "text-ink-secondary")}>
+                          {d.wearPercent === null ? "—" : `${d.wearPercent}%`}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -337,6 +343,13 @@ export function CameraDetailPage() {
                   {s.recording.rangeCheckedAt && (
                     <span className="block text-xs text-ink-muted" title={absoluteTime(s.recording.rangeCheckedAt)}>Checked {relativeTime(s.recording.rangeCheckedAt)}</span>
                   )}
+                </Info>
+              </div>
+            )}
+            {c.localStorage !== false && c.deviceType !== "nvr" && (
+              <div className="col-span-2">
+                <Info label="SD card in use since">
+                  <CardAge since={s.cardInstalledAt} cameraId={c.id} canEdit={can("cameras:write")} />
                 </Info>
               </div>
             )}
@@ -728,5 +741,39 @@ function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
       <LiveViewDialog camera={live} onClose={() => setLive(null)} />
       <RecordingsDialog camera={recordings} onClose={() => setRecordings(null)} />
     </Card>
+  );
+}
+
+/** How long the SD card has been in use, and "New card fitted" to count from today. */
+function CardAge({ since, cameraId, canEdit }: { since: string | null; cameraId: string; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const replaced = useMutation({
+    mutationFn: () => api(`/cameras/${cameraId}/sd-card-replaced`, { method: "POST" }),
+    onSuccess: () => {
+      setConfirming(false);
+      void qc.invalidateQueries({ queryKey: ["camera", cameraId] });
+    },
+  });
+  const months = since ? Math.floor((Date.now() - new Date(since).getTime()) / (30.44 * 86_400_000)) : null;
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {since ? (
+        <span>
+          <span className="font-medium">{new Date(since).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</span>
+          <span className="text-ink-secondary"> · {months === 0 ? "less than a month" : `${months} month${months === 1 ? "" : "s"}`}</span>
+        </span>
+      ) : (
+        <span className="text-ink-secondary">Not seen yet</span>
+      )}
+      {canEdit && (confirming ? (
+        <>
+          <Button size="sm" variant="primary" loading={replaced.isPending} onClick={() => replaced.mutate()}>Yes, a new card was fitted today</Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>New card fitted</Button>
+      ))}
+    </span>
   );
 }

@@ -20,6 +20,8 @@ export const ALERT_TYPES = [
   "no_storage_device",
   "storage_changed",
   "storage_stuck",
+  "storage_worn",
+  "storage_card_age",
   "not_recording",
   "password_change_due",
   "nvr_channel",
@@ -38,6 +40,9 @@ export type AlertType = (typeof ALERT_TYPES)[number];
 export const STORAGE_CHANGE_SHOWN_MINUTES = 24 * 60;
 /** How long a card may be formatting or repairing before it counts as stuck. */
 export const STORAGE_STUCK_MINUTES = 60;
+/** Card wear (as the camera reports it) from which replacing it is advised; Axis suggests 80–90 %. */
+export const SD_WEAR_WARNING_PERCENT = 80;
+const MONTH_DAYS = 30.44;
 export type Severity = "info" | "warning" | "critical";
 
 const PICTURE_TITLES: Record<string, string> = {
@@ -122,6 +127,8 @@ export interface EvaluationInput {
   recordingDays?: { days: number; atLeast: boolean };
   /** The SD card was replaced or formatted: when (minutes ago) and what was seen. */
   storageChange?: { minutesAgo: number; detail: string };
+  /** Days the card in the camera has been in use (since first seen, or since it was replaced). */
+  cardAgeDays?: number;
   /** Minutes the SD card has been formatting, repairing or initialising without a break. */
   storageDegradedMinutes?: number;
   /** The camera's picture as last checked; "off" when picture checks do not apply (resolves the alert); absent when unknown. */
@@ -189,7 +196,7 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   }
 
   if (input.localStorage === false) {
-    evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck", "not_recording");
+    evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck", "storage_worn", "storage_card_age", "not_recording");
     return { active, evaluated };
   }
 
@@ -211,7 +218,30 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   if (!result.ok) return { active, evaluated };
 
   const r = result.reading;
-  evaluated.push("storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck");
+  evaluated.push("storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck", "storage_worn", "storage_card_age");
+
+  const worn = r.devices.filter((d) => d.wearPercent !== undefined && d.wearPercent >= SD_WEAR_WARNING_PERCENT);
+  if (worn.length) {
+    const past = worn.some((d) => d.wearPercent! >= 100);
+    active.push({
+      type: "storage_worn",
+      severity: "warning",
+      title: past ? "SD card past its expected life" : "SD card wearing out",
+      description: `${worn.map((d) => `${d.name ?? d.id}: ${d.wearPercent}% of its expected life used`).join("; ")} (as the camera reports it; 100% is the end of its expected life). ${past ? "Replace it now: it may fail and stop recording at any time." : "Plan to replace it soon."}`,
+      context: { wear: Object.fromEntries(worn.map((d) => [d.id, d.wearPercent])) },
+    });
+  }
+  const replaceMonths = input.settings.sdCardReplaceMonths;
+  if (replaceMonths > 0 && r.devices.length && input.cardAgeDays !== undefined && input.cardAgeDays >= replaceMonths * MONTH_DAYS) {
+    const months = Math.floor(input.cardAgeDays / MONTH_DAYS);
+    active.push({
+      type: "storage_card_age",
+      severity: "warning",
+      title: "SD card due for replacement",
+      description: `The SD card has been in use for ${months} month${months === 1 ? "" : "s"}; your policy is to replace SD cards every ${replaceMonths} month${replaceMonths === 1 ? "" : "s"}. After fitting a new one, press "New card fitted" on the camera's page.`,
+      context: { months },
+    });
+  }
 
   // Shown for a day after it happened, so it is seen (and notified) even when nothing else is wrong.
   if (input.storageChange && input.storageChange.minutesAgo < STORAGE_CHANGE_SHOWN_MINUTES) {
