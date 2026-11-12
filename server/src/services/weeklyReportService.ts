@@ -79,6 +79,7 @@ interface CameraRow {
   used_percentage: string | null;
   devices: number;
   unhealthy: number;
+  degraded: number;
   last_success_at: Date | null;
 }
 
@@ -104,10 +105,11 @@ export async function buildWeeklyReport(orgId: string, timeZone: string, now = n
     pool.query<CameraRow>(
       `SELECT c.id, c.name, c.host, c.location, c.local_storage,
               s.connection_status, s.recording_state, s.recording_days, s.recording_days_at_least, s.used_percentage, s.last_success_at,
-              coalesce(d.devices, 0)::int AS devices, coalesce(d.unhealthy, 0)::int AS unhealthy
+              coalesce(d.devices, 0)::int AS devices, coalesce(d.unhealthy, 0)::int AS unhealthy, coalesce(d.degraded, 0)::int AS degraded
        FROM cameras c
        LEFT JOIN camera_status s ON s.camera_id = c.id
-       LEFT JOIN LATERAL (SELECT count(*) AS devices, count(*) FILTER (WHERE health_status = 'unhealthy') AS unhealthy
+       LEFT JOIN LATERAL (SELECT count(*) AS devices, count(*) FILTER (WHERE health_status = 'unhealthy') AS unhealthy,
+                                 count(*) FILTER (WHERE health_status = 'degraded') AS degraded
                           FROM storage_devices WHERE camera_id = c.id) d ON true
        WHERE c.organization_id = $1 AND c.deleted_at IS NULL AND c.monitoring_enabled
        ORDER BY lower(c.name)`,
@@ -132,8 +134,10 @@ export async function buildWeeklyReport(orgId: string, timeZone: string, now = n
   const read = withStorage.filter((c) => c.last_success_at);
   const known = read.filter((c) => days(c) !== null);
   const offline = cameras.filter((c) => c.connection_status === "offline");
-  const notRecording = read.filter((c) => c.recording_state === "idle" || c.recording_state === "error");
-  const sdProblem = read.filter((c) => c.devices === 0 || c.unhealthy > 0);
+  // Counted as the dashboard counts them: reachable cameras only (an offline one counts as offline).
+  const reachable = read.filter((c) => c.connection_status !== "offline");
+  const notRecording = reachable.filter((c) => c.recording_state === "idle" || c.recording_state === "error");
+  const sdProblem = reachable.filter((c) => c.devices === 0 || c.unhealthy > 0 || c.degraded > 0);
   const below = minDays > 0 ? known.filter((c) => days(c)! < minDays) : [];
   const sortedDays = [...known].sort((a, b) => days(a)! - days(b)!);
   const fewest = sortedDays[0];
@@ -144,7 +148,7 @@ export async function buildWeeklyReport(orgId: string, timeZone: string, now = n
     ["Online", cameras.length - offline.length, false],
     ["Offline", offline.length, offline.length > 0],
     ["Not recording", notRecording.length, notRecording.length > 0],
-    ["SD card missing or in error", sdProblem.length, sdProblem.length > 0],
+    ["SD card missing or with a problem", sdProblem.length, sdProblem.length > 0],
     ...(minDays > 0 ? [[`Fewer than ${minDays} days of recordings`, below.length, below.length > 0] as [string, number, boolean]] : []),
     ["Average days of recordings", average === null ? "—" : average.toFixed(1), false],
     ["Fewest days of recordings", fewest ? `${daysText(fewest)} (${fewest.name})` : "—", false],
@@ -168,6 +172,7 @@ export async function buildWeeklyReport(orgId: string, timeZone: string, now = n
     : c.connection_status === "offline" ? "Offline"
     : c.devices === 0 ? "No SD card"
     : c.unhealthy > 0 ? "SD card error"
+    : c.degraded > 0 ? "SD card needs attention"
     : c.recording_state === "idle" ? "Not recording"
     : c.recording_state === "error" ? "Recording error"
     : minDays > 0 && days(c) !== null && days(c)! < minDays ? `Below ${minDays} days`

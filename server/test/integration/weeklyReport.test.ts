@@ -68,7 +68,7 @@ describe("weekly report", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(r.text).toContain("Fewer than 30 days of recordings: 1");
     expect(r.text).toContain("Not recording: 1");
-    expect(r.text).toContain("SD card missing or in error: 1");
+    expect(r.text).toContain("SD card missing or with a problem: 1");
     expect(r.text).toContain("- Camera not recording (warning, 1): Lobby (10.0.0.3)");
     expect(r.html).toContain("Not recording");
     expect(r.html).toContain("No SD card");
