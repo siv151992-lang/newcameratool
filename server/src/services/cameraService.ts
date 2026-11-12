@@ -157,6 +157,7 @@ const SELECT_CAMERA = `
          s.total_bytes, s.used_bytes, s.free_bytes, s.used_percentage,
          s.recording_state, s.recording_detail, s.recording_checked_at,
          s.recording_days, s.recording_oldest, s.recording_range_at, s.recording_range_error, s.recording_days_at_least, s.card_installed_at,
+         s.recording_overwrite, s.recording_continuous, s.recording_gaps, s.recording_gaps_at, s.recording_gaps_error,
          s.clock_offset_seconds, s.clock_checked_at, s.clock_error,
          s.picture_state, s.picture_detail, s.picture_error, s.picture_checked_at,
          s.events_state, s.events_error, s.events_since, s.events_last_at,
@@ -260,6 +261,14 @@ export function toCameraView(r: CameraRow) {
       },
       /** Since when the SD card is in use (first seen by the monitor, or since it was replaced). */
       cardInstalledAt: r.card_installed_at ?? null,
+      /** As set on the camera (null: not reported), and the gaps in its last 24 hours of recordings (null: not looked at). */
+      recordingSetup: {
+        overwrite: r.recording_overwrite ?? null,
+        continuous: r.recording_continuous ?? null,
+        gaps: r.recording_gaps ?? null,
+        checkedAt: r.recording_gaps_at ?? null,
+        error: r.recording_gaps_error ?? null,
+      },
       /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
       clock: { offsetSeconds: r.clock_offset_seconds ?? null, checkedAt: r.clock_checked_at ?? null, error: r.clock_error ?? null },
       /** The picture as last checked: ok, black, blank, blurred, frozen or moved; null when not checked (error says why). */

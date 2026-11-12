@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type CameraEvent, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
-import { dahuaTime, dahuaTimeMs, parseDahuaChannels, parseDahuaDeviceInfo, parseDahuaError, parseDahuaFiles, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
+import { CameraApiError, mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type CameraEvent, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type RecordingSettings, type StorageReading } from "../types.js";
+import { dahuaTime, dahuaTimeMs, parseDahuaChannels, parseDahuaDeviceInfo, parseDahuaError, parseDahuaFiles, parseDahuaOverwrite, parseDahuaRecording, parseDahuaStorage } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 import { DahuaEventReader } from "../events.js";
 import { readEventStream } from "../eventStream.js";
@@ -163,6 +163,13 @@ export class DahuaAdapter implements CameraBrandAdapter {
    * Recordings of channel 1 between two local times: mediaFileFind (create, findFile, then
    * findNextFile until the files run out; closed and destroyed afterwards). Dahua uses local time throughout.
    */
+  /** Overwrite when full: the storage group's OverWrite (configManager StorageGroup). */
+  async getRecordingSettings(camera: CameraConfig): Promise<RecordingSettings> {
+    if (this.apiOf(camera) && this.apiOf(camera) !== "cgi") return {};
+    const body = await this.getText(camera, "/cgi-bin/configManager.cgi?action=getConfig&name=StorageGroup");
+    return { overwrite: parseDahuaOverwrite(body) };
+  }
+
   async listRecordings(camera: CameraConfig, fromMs: number, toMs: number, channel = 1): Promise<RecordingList> {
     if (this.apiOf(camera) && this.apiOf(camera) !== "cgi") return { ...(await this.onvif.listRecordings(camera)), viaOnvif: true };
     return this.listRecordingsCgi(camera, fromMs, toMs, channel);
@@ -191,7 +198,7 @@ export class DahuaAdapter implements CameraBrandAdapter {
       await this.getText(camera, `${finder}?action=close&object=${id}`).catch(() => undefined);
       await this.getText(camera, `${finder}?action=destroy&object=${id}`).catch(() => undefined);
     }
-    return { segments: mergeSegments(found), nowMs: now ?? Date.now(), shiftMs: 0 };
+    return { segments: mergeSegments(found), nowMs: now ?? Date.now(), shiftMs: 0, clips: true };
   }
 
   /** Channel 1 main stream from a local time (to 12 hours later; it stops at the end of the recordings). */

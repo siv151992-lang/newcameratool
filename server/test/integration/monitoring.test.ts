@@ -193,6 +193,27 @@ describe("storage checks", () => {
     expect(Date.now() - new Date((await status(id)).card_installed_at).getTime()).toBeLessThan(60_000);
   });
 
+  it("alerts when overwrite is off and when the last 24 hours of recordings have gaps", async () => {
+    const id = await addCamera();
+    await runCheck(id, "manual", deps);
+    expect((await status(id))).toMatchObject({ recording_overwrite: true, recording_continuous: true, recording_gaps: [] });
+    expect(await alerts(id)).toEqual([]);
+
+    cam.overwrite = false;
+    cam.continuousClips = false; // recordings with a long break
+    try {
+      await runCheck(id, "manual", deps);
+      const types = (await alerts(id)).map((a) => `${a.type}:${a.severity}:${a.status}`).sort();
+      expect(types).toEqual(["overwrite_off:warning:active", "recording_gaps:warning:active"]);
+      expect((await status(id)).recording_gaps.length).toBeGreaterThan(0);
+    } finally {
+      cam.overwrite = true;
+      cam.continuousClips = true;
+    }
+    await runCheck(id, "manual", deps);
+    expect((await alerts(id)).every((a) => a.status === "resolved")).toBe(true);
+  });
+
   it("alerts when the SD card has been formatting for over an hour, and clears when it is done", async () => {
     cam.setDisks([{ id: 1, name: "hdd1", status: "formating", capacityMb: 1000, freeMb: 900, property: "RW" }]);
     const id = await addCamera();

@@ -11,6 +11,7 @@ import {
   type DeviceInfo,
   type NvrChannel,
   type RecordingReading,
+  type RecordingSettings,
   type StorageReading,
 } from "../integrations/types.js";
 import { reconcileRecording } from "../integrations/recording.js";
@@ -23,6 +24,7 @@ import { applyConditions, openAlertTypes } from "../services/alertService.js";
 import { credentialsFor, getCameraConfig } from "../services/cameraService.js";
 import { getMonitoringSettings, type MonitoringSettings } from "../services/settingsService.js";
 import { formatBytes } from "../lib/format.js";
+import { findRecordingGaps, type RecordingGap } from "./recordingGaps.js";
 import { type CheckResult, evaluateConditions, passwordAgeCondition, raiseForCriticalArea, storageHealth, thresholdsFor } from "./evaluate.js";
 import { getCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
 import { analysePicture, judgePicture, type PictureBaseline, type PictureState } from "./picture.js";
@@ -163,6 +165,7 @@ export async function runCheck(
       if (row.device_type === "nvr") channels = await readChannels(adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
       if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);
+      if (local && row.device_type !== "nvr") await refreshRecordingSetup(cameraId, adapter, cfg, trigger, settings.recordingGapMinutes);
       await refreshClock(cameraId, adapter, cfg, trigger);
       // The picture of a camera (an NVR's channels are cameras of their own elsewhere).
       if (settings.pictureCheckMinutes > 0 && row.picture_checks && row.device_type !== "nvr") {
@@ -323,6 +326,37 @@ async function refreshPicture(
 /** Days of recordings are read at most this often per camera (and on every manual check). */
 const RECORDING_RANGE_REFRESH_MS = 6 * 3600_000;
 
+const RECORDING_SETUP_REFRESH_MS = 3 * 3600_000;
+
+/**
+ * Every 3 hours (and on a manual check): overwrite and recording mode as set on the camera, and the
+ * gaps in its last 24 hours of recordings, for brands whose search lists the camera's own clips.
+ * Gaps are not looked for on cameras set to record on motion or events only, where they are normal.
+ */
+async function refreshRecordingSetup(cameraId: string, adapter: CameraBrandAdapter, cfg: CameraConfig, trigger: "scheduled" | "manual", gapMinutes: number) {
+  if (!adapter.getRecordingSettings && !adapter.listRecordings) return;
+  const { rows } = await pool.query("SELECT recording_gaps_at FROM camera_status WHERE camera_id = $1", [cameraId]);
+  const last = rows[0]?.recording_gaps_at as Date | null;
+  if (trigger === "scheduled" && last && Date.now() - last.getTime() < RECORDING_SETUP_REFRESH_MS) return;
+  const setup: RecordingSettings = adapter.getRecordingSettings ? await adapter.getRecordingSettings(cfg).catch(() => ({})) : {};
+  let gaps: RecordingGap[] | null = null;
+  let error: string | null = null;
+  if (gapMinutes > 0 && adapter.listRecordings && setup.continuous !== false) {
+    try {
+      // A period wide enough for the camera's clock in any time zone; the gaps are found against its own "now".
+      const list = await adapter.listRecordings(cfg, Date.now() - 48 * 3_600_000, Date.now() + 24 * 3_600_000);
+      gaps = list.clips && !list.viaOnvif ? findRecordingGaps(list, gapMinutes) : null;
+    } catch (err) {
+      error = (err instanceof CameraApiError ? redactSecrets(err.message, [cfg.password]) : "unexpected error").slice(0, 300);
+    }
+  }
+  await pool.query(
+    `UPDATE camera_status SET recording_overwrite = $2, recording_continuous = $3, recording_gaps = $4,
+            recording_gaps_error = $5, recording_gaps_at = now() WHERE camera_id = $1`,
+    [cameraId, setup.overwrite ?? null, setup.continuous ?? null, gaps === null ? null : JSON.stringify(gaps), error],
+  );
+}
+
 const days1 = (d: number) => `${Math.round(d * 10) / 10} day${Math.round(d * 10) === 10 ? "" : "s"}`;
 
 /**
@@ -392,7 +426,8 @@ async function persist(
               s.storage_health, s.recording_state, s.last_history_at, s.last_success_at AS last_storage_success,
               s.recording_days, s.recording_days_at_least, s.recording_range_error, s.clock_offset_seconds,
               c.picture_checks, c.device_type, s.picture_state, s.picture_detail,
-              s.total_bytes AS previous_total_bytes, s.storage_changed_at, s.storage_change, s.storage_degraded_since, s.card_installed_at
+              s.total_bytes AS previous_total_bytes, s.storage_changed_at, s.storage_change, s.storage_degraded_since, s.card_installed_at,
+              s.recording_overwrite, s.recording_gaps
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id
        LEFT JOIN camera_credentials cr ON cr.camera_id = c.id WHERE c.id = $1 FOR UPDATE OF s`,
       [cameraId],
@@ -560,6 +595,8 @@ async function persist(
       storageChange: storageChangedAt && storageChange
         ? { minutesAgo: (Date.now() - new Date(storageChangedAt).getTime()) / 60_000, detail: storageChange }
         : undefined,
+      recordingOverwrite: result.ok && cam.recording_overwrite !== null ? Boolean(cam.recording_overwrite) : undefined,
+      recordingGaps: result.ok && cam.recording_gaps ? (cam.recording_gaps as RecordingGap[]) : undefined,
       cardAgeDays: cardInstalledAt ? (Date.now() - new Date(cardInstalledAt).getTime()) / 86_400_000 : undefined,
       storageDegradedMinutes: degradedSince ? (Date.now() - new Date(degradedSince).getTime()) / 60_000 : undefined,
       picture: settings.pictureCheckMinutes <= 0 || !cam.picture_checks || cam.device_type === "nvr"

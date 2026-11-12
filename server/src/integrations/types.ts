@@ -149,6 +149,16 @@ export interface RecordingList {
   playsFromRecordingStart?: boolean;
   /** Listed over ONVIF (Profile G) by a brand that also has its own playback: play with replayRtspUrl. */
   viaOnvif?: boolean;
+  /** The segments are the camera's own clips, so time between them is time without recordings (gaps can be told). */
+  clips?: boolean;
+}
+
+/** How recording is set up on the camera; a field is left out when the camera does not report it. */
+export interface RecordingSettings {
+  /** Replaces the oldest recordings when the card is full (false: recording stops when full). */
+  overwrite?: boolean;
+  /** Records all the time for at least part of its schedule (false: on motion or events only). */
+  continuous?: boolean;
 }
 
 /** Merges touching or overlapping segments (2 s tolerance) and sorts them. */
@@ -231,6 +241,8 @@ export interface CameraBrandAdapter {
    * brands that play a recording by its id rather than from a time.
    */
   listRecordings?(camera: CameraConfig, fromMs: number, toMs: number, channel?: number): Promise<RecordingList>;
+  /** Overwrite when full, and continuous or event recording, as set on the camera. */
+  getRecordingSettings?(camera: CameraConfig): Promise<RecordingSettings>;
   /**
    * Optional: the RTSP path that plays the recordings from `startMs` (local time minus shiftMs).
    * Brands that play by recording id get the segment containing it, and play from its start.

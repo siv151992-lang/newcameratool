@@ -1,8 +1,8 @@
 import type { CameraHttpClient } from "../http/cameraHttpClient.js";
 import { requireOk } from "../http/responses.js";
 import { runDiagnostics } from "../diagnostics.js";
-import { mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type StorageReading } from "../types.js";
-import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiChannels, parseSunapiError, parseSunapiTimeline, parseSunapiUtcOffset } from "./parser.js";
+import { mergeSegments, type BrandMeta, type CameraBrandAdapter, type CameraConfig, type ConnectionResult, type DeviceInfo, type NvrChannel, type RecordedSegment, type RecordingList, type RecordingReading, type RecordingSettings, type StorageReading } from "../types.js";
+import { parseHanwhaDeviceInfo, parseHanwhaRecording, parseHanwhaStorage, parseSunapiBody, parseSunapiChannels, parseSunapiError, parseSunapiTimeline, parseSunapiUtcOffset } from "./parser.js";
 import { fetchSnapshot } from "../snapshot.js";
 
 export const HANWHA_STORAGE_PATH = "/stw-cgi/system.cgi?msubmenu=storageinfo&action=view";
@@ -60,7 +60,13 @@ export class HanwhaAdapter implements CameraBrandAdapter {
       `/stw-cgi/recording.cgi?msubmenu=timeline&action=view&ChannelIDList=${channel - 1}&Type=All&FromDate=${encodeURIComponent(iso(fromMs))}&ToDate=${encodeURIComponent(iso(toMs))}`,
     );
     const segments = parseSunapiTimeline(body).map((p) => ({ start: p.start + shiftMs, end: p.end + shiftMs }));
-    return { segments: mergeSegments(segments), nowMs: Date.now() + shiftMs, shiftMs };
+    return { segments: mergeSegments(segments), nowMs: Date.now() + shiftMs, shiftMs, clips: true };
+  }
+
+  /** Overwrite when full (recording.cgi storage settings: OverWrite). */
+  async getRecordingSettings(camera: CameraConfig): Promise<RecordingSettings> {
+    const v = parseSunapiBody(await this.getText(camera, HANWHA_RECORDING_SETTINGS_PATH)).get("OverWrite")?.toLowerCase();
+    return { overwrite: v === "true" ? true : v === "false" ? false : undefined };
   }
 
   /** Playback from a UTC time (YYYYMMDDhhmmss, to 12 hours later), main profile. */

@@ -76,6 +76,8 @@ async function sessionCookie(role: "admin" | "viewer") {
 }
 
 const cam = new MockHikvisionCamera("admin", "Cam P@ss:1");
+// Recordings with a gap (00:30 until the last hour): playing a time in it starts at the next recording.
+cam.continuousClips = false;
 const wisenet = new MockVendorCamera("admin", "Cam P@ss:1", "hanwha");
 let camPort: number;
 let wisenetPort: number;

@@ -161,6 +161,14 @@ export interface Camera {
     };
     /** Since when the SD card is in use (first seen by the monitor, or since it was replaced). */
     cardInstalledAt: string | null;
+    /** As set on the camera (null: not reported), and gaps in its last 24 hours of recordings (null: not looked at). */
+    recordingSetup: {
+      overwrite: boolean | null;
+      continuous: boolean | null;
+      gaps: { from: string; to: string; minutes: number; ongoing?: boolean }[] | null;
+      checkedAt: string | null;
+      error: string | null;
+    };
     /** The camera's clock: seconds ahead (+) or behind (-) the server; null when not read (error says why). */
     clock: { offsetSeconds: number | null; checkedAt: string | null; error: string | null };
     /** The picture as last checked; state null when not checked (error says why). */
@@ -358,6 +366,7 @@ export interface MonitoringSettings {
   clockDriftAlertMinutes: number;
   pictureCheckMinutes: number;
   sdCardReplaceMonths: number;
+  recordingGapMinutes: number;
   deviceInfoRefreshHours: number;
   historyRetentionDays: number;
   historyIntervalMinutes: number;

@@ -265,3 +265,13 @@ export function parseDahuaChannels(titles: string, states?: string, recording?: 
   if (channels.size === 0) throw new CameraApiError("INVALID_RESPONSE", "The device reported no channels");
   return [...channels.values()].sort((a, b) => a.channel - b.channel);
 }
+
+/**
+ * Overwrite when full, from configManager.cgi?action=getConfig&name=StorageGroup
+ * (table.StorageGroup[0].OverWrite=true). Off only when every group says false; not reported: undefined.
+ */
+export function parseDahuaOverwrite(body: string): boolean | undefined {
+  const values = [...body.matchAll(/^table\.StorageGroup\[\d+\]\.OverWrite=(\w+)\s*$/gim)].map((m) => m[1]!.toLowerCase());
+  if (!values.length) return undefined;
+  return values.some((v) => v === "true");
+}

@@ -13,6 +13,7 @@ import {
   type NvrChannel,
   type RecordingRange,
   type RecordingReading,
+  type RecordingSettings,
   type StorageReading,
   mergeSegments,
   type RecordedSegment,
@@ -28,6 +29,7 @@ import {
   parseSearchOldestStart,
   parseStorageXml,
   parseTrackSchedule,
+  parseTrackSettings,
   RECORDING_RECENT_MINUTES,
   recordingFromSegments,
   parseSearchSegments,
@@ -286,7 +288,12 @@ export class HikvisionAdapter implements CameraBrandAdapter {
         found = shifted;
       }
     }
-    return { segments: mergeSegments(found.map((s) => ({ start: s.start + shiftMs, end: s.end + shiftMs }))), nowMs, shiftMs };
+    return { segments: mergeSegments(found.map((s) => ({ start: s.start + shiftMs, end: s.end + shiftMs }))), nowMs, shiftMs, clips: true };
+  }
+
+  /** Overwrite when full (LoopEnable) and continuous or event recording, from the recording track. */
+  async getRecordingSettings(camera: CameraConfig): Promise<RecordingSettings> {
+    return parseTrackSettings(await this.getXml(camera, HIKVISION_TRACK_PATH));
   }
 
   /** Recordings of track N01 (channel N) from a camera time (YYYYMMDDTHHMMSSZ, the camera's own clock). */

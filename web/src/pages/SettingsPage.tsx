@@ -140,7 +140,7 @@ function SectionLayout({ sections, current }: { sections: Section[]; current: Se
 const ORGANIZATION_KEYS = new Set<keyof MonitoringSettings>([
   "pollIntervalSeconds", "offlineFailureThreshold", "authFailureThreshold", "storageUnavailableMinutes",
   "warningThresholdPercent", "criticalThresholdPercent", "fullThresholdPercent", "recoveryHysteresisPercent",
-  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays", "clockDriftAlertMinutes", "pictureCheckMinutes", "sdCardReplaceMonths",
+  "storageUsageAlertsEnabled", "recordingAlertsEnabled", "minRecordingDays", "clockDriftAlertMinutes", "pictureCheckMinutes", "sdCardReplaceMonths", "recordingGapMinutes",
 ]);
 
 type NumKey = { [K in keyof MonitoringSettings]: MonitoringSettings[K] extends number ? K : never }[keyof MonitoringSettings];
@@ -179,6 +179,12 @@ const GROUPS: { key: string; title: string; fields: { key: NumKey; label: string
         label: "Required days of recordings",
         unit: "days",
         hint: "Alert when a camera's SD card or disk holds fewer days of recordings (your retention policy, e.g. 30). 0 turns it off.",
+      },
+      {
+        key: "recordingGapMinutes",
+        label: "Alert on recording gaps longer than",
+        unit: "minutes",
+        hint: "Looks at each camera's last 24 hours of recordings every 3 hours (Hikvision, Prama, Dahua, Axis, Hanwha) and alerts on breaks this long. Cameras set to record on motion only are skipped. 0 turns it off.",
       },
       {
         key: "sdCardReplaceMonths",

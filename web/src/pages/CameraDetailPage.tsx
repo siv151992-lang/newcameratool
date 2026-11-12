@@ -353,6 +353,29 @@ export function CameraDetailPage() {
                 </Info>
               </div>
             )}
+            {c.localStorage !== false && c.deviceType !== "nvr" && s.recordingSetup.checkedAt && (
+              <div className="col-span-2">
+                <Info label="Recording set-up">
+                  <span className="block">
+                    Overwrite when full:{" "}
+                    {s.recordingSetup.overwrite === null ? <span className="text-ink-secondary">not reported</span>
+                      : s.recordingSetup.overwrite ? <span className="font-medium text-good">On</span>
+                      : <span className="font-medium text-bad">Off: recording stops when the card is full</span>}
+                  </span>
+                  {s.recordingSetup.continuous !== null && (
+                    <span className="block">Records: {s.recordingSetup.continuous ? "all the time" : "on motion or events only"}</span>
+                  )}
+                  <span className="block">
+                    Gaps in the last 24 hours:{" "}
+                    {s.recordingSetup.error ? <span className="text-ink-secondary">could not be read: {s.recordingSetup.error}</span>
+                      : s.recordingSetup.gaps === null ? <span className="text-ink-secondary">{s.recordingSetup.continuous === false ? "not looked for (motion recording)" : "not available for this brand"}</span>
+                      : s.recordingSetup.gaps.length === 0 ? <span className="font-medium text-good">none</span>
+                      : <span className="font-medium text-bad">{s.recordingSetup.gaps.map((g) => `${g.from.slice(11)}–${g.to.slice(11)}`).join(", ")}</span>}
+                  </span>
+                  <span className="block text-xs text-ink-muted" title={absoluteTime(s.recordingSetup.checkedAt)}>Checked {relativeTime(s.recordingSetup.checkedAt)}</span>
+                </Info>
+              </div>
+            )}
             {(s.clock.checkedAt || s.clock.error) && (
               <div className="col-span-2">
                 <Info label="Camera clock">

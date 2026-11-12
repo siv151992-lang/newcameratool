@@ -77,6 +77,13 @@ export class MockHikvisionCamera {
    * visible through the recording search (System/time, ContentMgmt/search, record/tracks/101).
    */
   recordingStatusApi = true;
+  /**
+   * true: hourly clips without a break, like a camera recording all the time. false: only the
+   * clip covering the start of the period asked and the newest one (a gap in between, for playback tests).
+   */
+  continuousClips = true;
+  /** Overwrite when full (<LoopEnable> in the recording track). */
+  overwrite = true;
   /** Where the API is served: "/ISAPI" (Hikvision), or "/pramaAPI" (newer Prama firmware; /ISAPI is then 404). */
   apiRoot = "/ISAPI";
   /** Set to simulate an NVR: its channels (cameras), with video or not, recording or not. */
@@ -266,10 +273,19 @@ export class MockHikvisionCamera {
         const items: [number, number][] = [];
         // Recording is continuous: a period starting inside the recordings begins with the segment
         // that covers its start.
-        const stopped = this.recording === "error" ? lastEnd! : now; // error: recording stopped at lastEnd
-        if (this.recording !== "idle" && from <= oldestStart) items.push([oldestStart, oldestStart + 3600_000]);
-        else if (this.recording !== "idle" && from < stopped) items.push([from - 1800_000, Math.min(from + 1800_000, stopped)]);
-        if (lastEnd !== undefined && this.recording === "recording") items.push([lastEnd - 3600_000, lastEnd]);
+        const stopped = this.recording === "error" ? lastEnd! : now - 20_000; // error: recording stopped at lastEnd
+        // Hourly clips, as cameras write them, from the oldest recording (or the period's start) to
+        // when recording stopped; a long period lists its first and last 50.
+        if (this.recording !== "idle" && this.continuousClips) {
+          const hour = 3600_000;
+          const clips: [number, number][] = [];
+          for (let t = Math.max(oldestStart, Math.floor(from / hour) * hour); t < Math.min(to, stopped); t += hour) clips.push([t, Math.min(t + hour, stopped)]);
+          items.push(...(clips.length > 100 ? [...clips.slice(0, 50), ...clips.slice(-50)] : clips));
+        } else if (this.recording !== "idle") {
+          if (from <= oldestStart) items.push([oldestStart, oldestStart + 3600_000]);
+          else if (from < stopped) items.push([from - 1800_000, Math.min(from + 1800_000, stopped)]);
+          if (lastEnd !== undefined && this.recording === "recording") items.push([lastEnd - 3600_000, lastEnd]);
+        }
         // Only what overlaps the period asked.
         items.splice(0, items.length, ...items.filter(([a, b]) => b > from && a < to));
         if (items.length === 0) {
@@ -279,7 +295,7 @@ export class MockHikvisionCamera {
         return `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>true</responseStatus><responseStatusStrg>OK</responseStatusStrg><numOfMatches>${items.length}</numOfMatches><matchList>${matches}</matchList></CMSearchResult>`;
       },
       "/ISAPI/ContentMgmt/record/tracks/101": () =>
-        `<?xml version="1.0" encoding="UTF-8"?><Track version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><id>101</id><Enable>${this.recording === "idle" ? "false" : "true"}</Enable><TrackSchedule><ScheduleBlockList><ScheduleBlock>${days
+        `<?xml version="1.0" encoding="UTF-8"?><Track version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><id>101</id><Enable>${this.recording === "idle" ? "false" : "true"}</Enable><LoopEnable>${this.overwrite}</LoopEnable><TrackSchedule><ScheduleBlockList><ScheduleBlock>${days
           .map((d) => `<ScheduleAction><id>1</id><ScheduleActionStartTime><DayOfWeek>${d}</DayOfWeek><TimeOfDay>00:00:00</TimeOfDay></ScheduleActionStartTime><ScheduleActionEndTime><DayOfWeek>${d}</DayOfWeek><TimeOfDay>24:00:00</TimeOfDay></ScheduleActionEndTime><Actions><Record>true</Record><ActionRecordingMode>CMR</ActionRecordingMode></Actions></ScheduleAction>`)
           .join("")}</ScheduleBlock></ScheduleBlockList></TrackSchedule></Track>`,
     };

@@ -279,6 +279,8 @@ export function parseSearchOldestStart(xml: string): number | undefined {
 
 export interface TrackSchedule {
   enabled?: boolean;
+  /** Continuous recording (CMR) somewhere in the week's schedule. */
+  anyContinuous: boolean;
   /** Whether continuous recording (CMR) is scheduled at the given moment. */
   continuousAt(wallMs: number): boolean;
 }
@@ -310,11 +312,29 @@ export function parseTrackSchedule(xml: string): TrackSchedule {
     });
   return {
     enabled: enable === "true" ? true : enable === "false" ? false : undefined,
+    anyContinuous: actions.some((a) => a.continuous),
     continuousAt(wallMs) {
       const d = new Date(wallMs);
       const sec = d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds();
       return actions.some((a) => a.continuous && a.day === d.getUTCDay() && a.from !== undefined && a.to !== undefined && a.from <= sec && sec < a.to);
     },
+  };
+}
+
+/**
+ * Recording settings from the track (GET /ISAPI/ContentMgmt/record/tracks/101): LoopEnable is
+ * "overwrite when full"; continuous when the schedule has continuous (CMR) recording, or none is
+ * listed and the default mode is CMR.
+ */
+export function parseTrackSettings(xml: string): { overwrite?: boolean; continuous?: boolean } {
+  const root = findRoot(parseXml(xml), "Track");
+  const loop = text(root, "LoopEnable")?.toLowerCase();
+  const schedule = parseTrackSchedule(xml);
+  const mode = text(root, "DefaultRecordingMode")?.toUpperCase();
+  const hasSchedule = Boolean((root.TrackSchedule as XmlNode | undefined)?.ScheduleBlockList);
+  return {
+    overwrite: loop === "true" ? true : loop === "false" ? false : undefined,
+    continuous: schedule.anyContinuous ? true : hasSchedule ? false : mode === "CMR" ? true : undefined,
   };
 }
 

@@ -61,7 +61,7 @@ export class AxisAdapter implements CameraBrandAdapter {
     const nowUtc = Date.now();
     const xml = await this.getText(camera, `/axis-cgi/record/list.cgi?recordingid=all&starttime=${iso(fromMs - 14 * 3_600_000)}&stoptime=${iso(toMs + 14 * 3_600_000)}`);
     const { segments, offsetMs } = parseAxisRecordings(xml, nowUtc);
-    return { segments: segments.filter((s) => s.end > fromMs && s.start < toMs).sort((a, b) => a.start - b.start), nowMs: nowUtc + offsetMs, shiftMs: offsetMs, playsFromRecordingStart: true };
+    return { segments: segments.filter((s) => s.end > fromMs && s.start < toMs).sort((a, b) => a.start - b.start), nowMs: nowUtc + offsetMs, shiftMs: offsetMs, playsFromRecordingStart: true, clips: true };
   }
 
   /** The chosen recording, from its start. */

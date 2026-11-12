@@ -1,4 +1,5 @@
 import { formatBytes } from "../lib/format.js";
+import { describeMinutes } from "./recordingGaps.js";
 import {
   AUTH_ERROR_CODES,
   NETWORK_ERROR_CODES,
@@ -22,6 +23,8 @@ export const ALERT_TYPES = [
   "storage_stuck",
   "storage_worn",
   "storage_card_age",
+  "overwrite_off",
+  "recording_gaps",
   "not_recording",
   "password_change_due",
   "nvr_channel",
@@ -127,6 +130,10 @@ export interface EvaluationInput {
   recordingDays?: { days: number; atLeast: boolean };
   /** The SD card was replaced or formatted: when (minutes ago) and what was seen. */
   storageChange?: { minutesAgo: number; detail: string };
+  /** Overwrite when full, as set on the camera; absent when not reported. */
+  recordingOverwrite?: boolean;
+  /** Gaps in the last 24 hours of recordings (already at least the minimum set); absent when not looked at. */
+  recordingGaps?: { from: string; to: string; minutes: number; ongoing?: boolean }[];
   /** Days the card in the camera has been in use (since first seen, or since it was replaced). */
   cardAgeDays?: number;
   /** Minutes the SD card has been formatting, repairing or initialising without a break. */
@@ -196,7 +203,7 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
   }
 
   if (input.localStorage === false) {
-    evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck", "storage_worn", "storage_card_age", "not_recording");
+    evaluated.push("storage_unavailable", "storage_usage", "disk_unhealthy", "disk_readonly", "no_storage_device", "storage_changed", "storage_stuck", "storage_worn", "storage_card_age", "overwrite_off", "recording_gaps", "not_recording");
     return { active, evaluated };
   }
 
@@ -230,6 +237,35 @@ export function evaluateConditions(input: EvaluationInput): Evaluation {
       description: `${worn.map((d) => `${d.name ?? d.id}: ${d.wearPercent}% of its expected life used`).join("; ")} (as the camera reports it; 100% is the end of its expected life). ${past ? "Replace it now: it may fail and stop recording at any time." : "Plan to replace it soon."}`,
       context: { wear: Object.fromEntries(worn.map((d) => [d.id, d.wearPercent])) },
     });
+  }
+  if (input.recordingOverwrite !== undefined) {
+    evaluated.push("overwrite_off");
+    if (!input.recordingOverwrite) {
+      active.push({
+        type: "overwrite_off",
+        severity: "warning",
+        title: "Overwrite is off",
+        description: "When the SD card is full the camera will stop recording instead of replacing the oldest footage. Turn on overwrite in the camera's storage settings (Hikvision: Storage → Schedule Settings → Advanced → Overwrite; Dahua: Storage → Disk full: Overwrite; Hanwha: Storage → Overwrite).",
+        context: {},
+      });
+    }
+  }
+  if (input.recordingGaps !== undefined) {
+    evaluated.push("recording_gaps");
+    // A gap still running while the camera is not recording is that problem, alerted on its own.
+    const stopped = input.recording?.state === "idle" || input.recording?.state === "error";
+    const gaps = input.recordingGaps.filter((g) => !(g.ongoing && stopped));
+    if (gaps.length && input.settings.recordingGapMinutes > 0) {
+      const total = gaps.reduce((t, g) => t + g.minutes, 0);
+      const shown = gaps.slice(0, 5).map((g) => `${g.from.slice(11)}${g.from.slice(0, 10) === g.to.slice(0, 10) ? "" : ` (${g.from.slice(5, 10)})`}–${g.to.slice(11)} (${describeMinutes(g.minutes)})`);
+      active.push({
+        type: "recording_gaps",
+        severity: "warning",
+        title: "Recording gaps",
+        description: `No recordings for ${describeMinutes(total)} in the last 24 hours (camera time): ${shown.join(", ")}${gaps.length > 5 ? ` and ${gaps.length - 5} more` : ""}. The camera may have restarted, lost power or its SD card, or stopped recording.`,
+        context: { gaps: gaps.slice(0, 20), totalMinutes: total },
+      });
+    }
   }
   const replaceMonths = input.settings.sdCardReplaceMonths;
   if (replaceMonths > 0 && r.devices.length && input.cardAgeDays !== undefined && input.cardAgeDays >= replaceMonths * MONTH_DAYS) {
