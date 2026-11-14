@@ -1,4 +1,5 @@
 import { pool, withTransaction } from "../db/pool.js";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import type { CameraEvent, CameraEventKind } from "../integrations/events.js";
 import { notFound } from "../lib/errors.js";
 import { type AlertCondition, type AlertType, raiseForCriticalArea, type Severity } from "../monitoring/evaluate.js";
@@ -180,7 +181,7 @@ async function channelNames(db: { query: typeof pool.query }, cameraId: string, 
 
 /** The camera's latest events, newest first. */
 export async function listCameraEvents(orgId: string, cameraId: string, limit = 50) {
-  const cam = await pool.query("SELECT 1 FROM cameras WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL", [cameraId, orgId]);
+  const cam = await pool.query(`SELECT 1 FROM cameras c WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL${cameraScopeSql("c")}`, [cameraId, orgId]);
   if (!cam.rowCount) throw notFound("Camera");
   const { rows } = await pool.query(
     `SELECT id::text, occurred_at AS "occurredAt", kind, event_type AS "eventType", state, channel, detail

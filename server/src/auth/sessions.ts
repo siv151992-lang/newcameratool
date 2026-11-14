@@ -21,6 +21,8 @@ export interface AuthUser {
   /** The organization this session works in; every organization-owned query is limited to it. */
   organizationId: string | null;
   organizationName: string | null;
+  /** "limited": only the locations and cameras an Org Admin chose (see cameraScope); Org Admins always "all". */
+  cameraAccess: "all" | "limited";
 }
 
 export interface AuthContext {
@@ -126,7 +128,8 @@ export async function getSession(token: string): Promise<AuthContext | null> {
   // A removed membership or deactivated organization leaves the session without an organization.
   const { rows } = await pool.query(
     `SELECT s.id, s.csrf_token, s.last_seen_at, u.id AS user_id, u.username, u.display_name, u.email, u.is_system_admin,
-            o.id AS organization_id, o.name AS organization_name, m.role, coalesce(r.permissions, '{}') AS permissions
+            o.id AS organization_id, o.name AS organization_name, m.role, coalesce(r.permissions, '{}') AS permissions,
+            m.camera_access
      FROM sessions s JOIN users u ON u.id = s.user_id
      LEFT JOIN organization_members m ON m.user_id = u.id AND m.organization_id = s.organization_id
      LEFT JOIN organizations o ON o.id = m.organization_id AND o.is_active
@@ -150,6 +153,7 @@ export async function getSession(token: string): Promise<AuthContext | null> {
       isSystemAdmin: r.is_system_admin,
       organizationId: inOrg ? r.organization_id : null,
       organizationName: inOrg ? r.organization_name : null,
+      cameraAccess: inOrg && r.camera_access === "limited" && r.role !== "admin" ? "limited" : "all",
     },
   };
 }

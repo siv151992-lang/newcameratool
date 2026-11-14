@@ -1,4 +1,5 @@
 import { pool } from "../db/pool.js";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { notFound } from "../lib/errors.js";
 import { thresholdsFor } from "../monitoring/evaluate.js";
 import { getMonitoringSettings } from "../services/settingsService.js";
@@ -71,7 +72,7 @@ async function loadSnapshots(orgId: string, cameraId?: string) {
             coalesce((SELECT json_agg(json_build_object('id', a.id, 'type', a.type, 'severity', a.severity, 'title', a.title) ORDER BY a.id)
                FROM alerts a WHERE a.camera_id = c.id AND a.status <> 'resolved'), '[]') AS open_alerts
      FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.organization_id = $1 AND c.deleted_at IS NULL ${filter}
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")} ${filter}
      ORDER BY lower(c.name)`,
     params,
   );
@@ -154,15 +155,17 @@ const HISTORY_BATCH = 500;
  * concurrent callers share one computation.
  */
 export async function getFleetInsights(orgId: string, opts: { fresh?: boolean } = {}): Promise<FleetInsights> {
+  // A member limited to some cameras has an analysis of their own (never shared with others).
+  const key = `${orgId}${cameraScopeSql("c")}`;
   const start = () => {
-    let p = computing.get(orgId);
+    let p = computing.get(key);
     if (!p) {
-      p = computeFleetInsights(orgId).finally(() => computing.delete(orgId));
-      computing.set(orgId, p);
+      p = computeFleetInsights(orgId, key).finally(() => computing.delete(key));
+      computing.set(key, p);
     }
     return p;
   };
-  const cached = cache.get(orgId);
+  const cached = cache.get(key);
   if (!opts.fresh && cached) {
     // Large fleets take a while to analyse: serve the last result and refresh it in the background.
     const maxAge = cached.value.cameras.length > LARGE_FLEET ? LARGE_FLEET_CACHE_MS : CACHE_MS;
@@ -175,7 +178,7 @@ export async function getFleetInsights(orgId: string, opts: { fresh?: boolean } 
   return start();
 }
 
-async function computeFleetInsights(orgId: string): Promise<FleetInsights> {
+async function computeFleetInsights(orgId: string, key = orgId): Promise<FleetInsights> {
   const now = Date.now();
   const cams = await loadSnapshots(orgId);
   const cameras: CameraInsight[] = [];
@@ -203,7 +206,7 @@ async function computeFleetInsights(orgId: string): Promise<FleetInsights> {
       averageHealth: scored.length ? Math.round(scored.reduce((s, c) => s + c.health.score, 0) / scored.length) : null,
     },
   };
-  cache.set(orgId, { at: now, value });
+  cache.set(key, { at: now, value });
   return value;
 }
 

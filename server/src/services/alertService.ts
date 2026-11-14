@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { pool, withTransaction, type Queryable } from "../db/pool.js";
 import { HttpError, notFound } from "../lib/errors.js";
 import { type AlertCondition, type AlertType, SEVERITY_RANK, type Severity } from "../monitoring/evaluate.js";
@@ -125,7 +126,7 @@ const SELECT_ALERT = `
 
 export async function listAlerts(orgId: string, q: z.infer<typeof alertListQuery>) {
   const params: unknown[] = [orgId];
-  const where: string[] = ["c.organization_id = $1"];
+  const where: string[] = [`c.organization_id = $1${cameraScopeSql("c")}`];
   const p = (v: unknown) => `$${params.push(v)}`;
   if (q.status === "open") where.push("a.status <> 'resolved'");
   else if (q.status !== "all") where.push(`a.status = ${p(q.status)}`);
@@ -146,7 +147,7 @@ export async function listAlerts(orgId: string, q: z.infer<typeof alertListQuery
 
 export async function getAlert(orgId: string, id: string) {
   if (!/^\d{1,18}$/.test(id)) throw notFound("Alert");
-  const { rows } = await pool.query(`${SELECT_ALERT} WHERE a.id = $1 AND c.organization_id = $2`, [id, orgId]);
+  const { rows } = await pool.query(`${SELECT_ALERT} WHERE a.id = $1 AND c.organization_id = $2${cameraScopeSql("c")}`, [id, orgId]);
   if (!rows[0]) throw notFound("Alert");
   const events = await pool.query(
     `SELECT e.event_type AS "eventType", e.severity, e.message, u.username AS actor, e.created_at AS "createdAt"
@@ -217,7 +218,7 @@ export async function bulkAlerts(orgId: string, input: z.infer<typeof bulkAlertS
   return withTransaction(async (db) => {
     const params: unknown[] = [orgId];
     const p = (v: unknown) => `$${params.push(v)}`;
-    const where = ["c.organization_id = $1"];
+    const where = [`c.organization_id = $1${cameraScopeSql("c")}`];
     if (input.ids) where.push(`a.id = ANY(${p(input.ids)}::bigint[])`);
     if (input.filter) {
       const f = input.filter;

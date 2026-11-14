@@ -15,6 +15,7 @@ import { SettingsLock } from "../components/SettingsLock";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { BrandsSection } from "./brands/BrandsSection";
 import { EmailSettingsTab } from "./EmailSettingsTab";
+import { CameraAccessDialog, cameraAccessLabel } from "./CameraAccessDialog";
 import { useIdentities } from "./ConnectedAccounts";
 import { CameraPasswordsTab } from "./CameraPasswordsTab";
 import { InvitationsCard, QuickInvite, useInvitations } from "./InvitationsPanel";
@@ -779,6 +780,7 @@ function UsersTab() {
   const invitations = useInvitations();
   const [resetting, setResetting] = useState<ManagedUser | null>(null);
   const [removing, setRemoving] = useState<ManagedUser | null>(null);
+  const [cameraAccessOf, setCameraAccessOf] = useState<ManagedUser | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: ["users"] });
   // Accounts that also belong to another organization are changed by the system administrator only.
@@ -821,6 +823,7 @@ function UsersTab() {
                 <tr>
                   <th scope="col" className="px-4 py-2 font-medium">User</th>
                   <th scope="col" className="px-4 py-2 font-medium">Role</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Cameras</th>
                   <th scope="col" className="px-4 py-2 font-medium">Status</th>
                   <th scope="col" className="px-4 py-2 font-medium">Last sign-in</th>
                   <th scope="col" className="px-4 py-2 text-right font-medium">Actions</th>
@@ -841,6 +844,12 @@ function UsersTab() {
                         <option value="viewer">{ROLE_LABELS.viewer}</option>
                       </Select>
                     </td>
+                    <td className="px-4 py-2">
+                      <div className={u.role !== "admin" && u.cameraAccess === "limited" ? "font-medium" : "text-ink-secondary"}>{cameraAccessLabel(u)}</div>
+                      {u.role !== "admin" && (
+                        <Button size="sm" variant="ghost" className="-ml-2" aria-label={`Change cameras for ${u.username}`} onClick={() => setCameraAccessOf(u)}>Change</Button>
+                      )}
+                    </td>
                     <td className="px-4 py-2">{u.isActive ? (u.locked ? "Locked (too many attempts)" : "Active") : "Disabled"}</td>
                     <td className="px-4 py-2 text-ink-secondary" title={absoluteTime(u.lastLoginAt)}>{relativeTime(u.lastLoginAt)}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-right">
@@ -858,6 +867,7 @@ function UsersTab() {
             </table>
           </div>
         )}
+        <CameraAccessDialog user={cameraAccessOf} onClose={() => setCameraAccessOf(null)} />
         <Dialog open={!!resetting} onClose={() => setResetting(null)} title={`Reset password for ${resetting?.username}`} footer={<><Button onClick={() => setResetting(null)}>Cancel</Button><Button variant="primary" loading={update.isPending} onClick={() => update.mutate({ id: resetting!.id, body: { password: newPassword } })}>Reset password</Button></>}>
           <p className="mb-3 text-ink-secondary">They are signed out of all sessions.</p>
           <Field label="New password" hint="At least 10 characters">{(id, d) => <Input id={id} aria-describedby={d} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />}</Field>

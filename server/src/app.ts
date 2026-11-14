@@ -8,6 +8,7 @@ import swaggerUi from "swagger-ui-express";
 import YAML from "yaml";
 import { ZodError } from "zod";
 import { authenticate, requireAuth, requireCsrf } from "./auth/middleware.js";
+import { cameraScopeMiddleware } from "./auth/cameraScope.js";
 import { config } from "./config.js";
 import { pool } from "./db/pool.js";
 import { CameraApiError } from "./integrations/types.js";
@@ -66,7 +67,8 @@ export function createApp() {
   app.use(helmet({ crossOriginEmbedderPolicy: false, contentSecurityPolicy: { directives: { "img-src": ["'self'", "data:", "blob:"], "media-src": ["'self'", "blob:"] } } }));
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
-  app.use("/api", apiLimiter, authenticate);
+  // A member limited to some cameras sees only those, in every request from here on.
+  app.use("/api", apiLimiter, authenticate, cameraScopeMiddleware);
 
   app.use("/api/auth", authRouter);
   const protectedApi = express.Router();

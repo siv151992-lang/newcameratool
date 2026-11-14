@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { patchOf } from "../lib/validate.js";
 import { pool, withTransaction, type Queryable } from "../db/pool.js";
 import { registry } from "../integrations/registry.js";
@@ -331,7 +332,8 @@ export const SORT_COLUMNS: Record<ListQuery["sort"], string> = {
 /** WHERE clause (over cameras c LEFT JOIN camera_status s) for the camera list filters, within one organization. */
 export function listFilter(orgId: string, q: Omit<ListQuery, "page" | "pageSize" | "sort" | "order">) {
   const params: unknown[] = [orgId];
-  const where = ["c.organization_id = $1", "c.deleted_at IS NULL"];
+  // Only the cameras the user may see (a member limited to some locations or cameras).
+  const where = [`c.organization_id = $1${cameraScopeSql("c")}`, "c.deleted_at IS NULL"];
   const p = (v: unknown) => `$${params.push(v)}`;
   if (q.search) {
     const like = p(`%${q.search.replace(/[%_\\]/g, (m) => `\\${m}`)}%`);
@@ -400,7 +402,7 @@ export async function listCameraIds(orgId: string, q: ListQuery): Promise<{ ids:
 
 export async function listLocations(orgId: string): Promise<string[]> {
   const { rows } = await pool.query<{ location: string }>(
-    "SELECT DISTINCT location FROM cameras WHERE organization_id = $1 AND deleted_at IS NULL AND location IS NOT NULL ORDER BY location",
+    `SELECT DISTINCT location FROM cameras c WHERE organization_id = $1${cameraScopeSql("c")} AND deleted_at IS NULL AND location IS NOT NULL ORDER BY location`,
     [orgId],
   );
   return rows.map((r) => r.location);
@@ -413,7 +415,7 @@ export async function listLocations(orgId: string): Promise<string[]> {
 export async function getCameraRow(id: string, orgId: string | null, db: Queryable = pool): Promise<CameraRow> {
   if (!z.string().uuid().safeParse(id).success) throw notFound("Camera");
   const { rows } = await db.query<CameraRow>(
-    `${SELECT_CAMERA} WHERE c.id = $1 AND c.deleted_at IS NULL AND ($2::uuid IS NULL OR c.organization_id = $2)`,
+    `${SELECT_CAMERA} WHERE c.id = $1 AND c.deleted_at IS NULL AND ($2::uuid IS NULL OR c.organization_id = $2)${cameraScopeSql("c")}`,
     [id, orgId],
   );
   if (!rows[0]) throw notFound("Camera");
@@ -481,7 +483,7 @@ export async function getSummary(orgId: string) {
        SELECT count(*) AS total, count(*) FILTER (WHERE online = false) AS no_video,
               count(*) FILTER (WHERE online IS DISTINCT FROM false AND recording IN ('idle', 'error')) AS not_recording
        FROM nvr_channels WHERE camera_id = c.id) ch ON true
-     WHERE c.organization_id = $1 AND c.deleted_at IS NULL`,
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")}`,
     [orgId],
   );
   const r = rows[0];
@@ -489,7 +491,7 @@ export async function getSummary(orgId: string) {
     `SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
             count(*) FILTER (WHERE status = 'acknowledged')::int AS acknowledged,
             count(*) FILTER (WHERE status <> 'resolved' AND severity = 'critical')::int AS critical
-     FROM alerts a JOIN cameras c ON c.id = a.camera_id WHERE c.organization_id = $1 AND c.deleted_at IS NULL`,
+     FROM alerts a JOIN cameras c ON c.id = a.camera_id WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")}`,
     [orgId],
   );
   return {
@@ -850,7 +852,7 @@ export async function setMaintenance(orgId: string, ids: string[], until: Date |
   return withTransaction(async (db) => {
     const { rows } = await db.query<{ id: string }>(
       `UPDATE cameras SET maintenance_until = $2, maintenance_note = $3, updated_at = now()
-       WHERE id = ANY($1::uuid[]) AND organization_id = $4 AND deleted_at IS NULL RETURNING id`,
+       WHERE id = ANY($1::uuid[]) AND organization_id = $4 AND deleted_at IS NULL${cameraScopeSql("cameras")} RETURNING id`,
       [ids, until, until ? note : null, orgId],
     );
     for (const r of rows) {

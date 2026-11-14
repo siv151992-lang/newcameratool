@@ -402,6 +402,10 @@ export interface ManagedUser {
   joinedAt: string;
   /** Also a member of another organization: only the system administrator changes their account. */
   otherOrganizations: boolean;
+  /** "limited": sees only the chosen locations and cameras (Org Admins always see all). */
+  cameraAccess: "all" | "limited";
+  accessLocations: number;
+  accessCameras: number;
 }
 
 export interface AuditEntry {

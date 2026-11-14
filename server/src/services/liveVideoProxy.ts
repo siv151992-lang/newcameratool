@@ -4,6 +4,7 @@ import { SESSION_COOKIE, getSession } from "../auth/sessions.js";
 import { config } from "../config.js";
 import { logger } from "../lib/logger.js";
 import { getCameraRow } from "./cameraService.js";
+import { runWithCameraScope } from "../auth/cameraScope.js";
 import { playbackStreamName, prepareStream } from "./liveVideoService.js";
 
 /**
@@ -62,7 +63,11 @@ async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer
   if (!auth) return refuse("401 Unauthorized", token ? "the session has expired or was signed out" : "no session cookie came with the connection");
   if (!auth.user.organizationId || !auth.user.permissions.includes("cameras:live")) return refuse("403 Forbidden", "the user may not view live video");
   let name: string;
+  const u = auth.user;
+  const scope = u.cameraAccess === "limited" && u.role !== "admin" ? { userId: u.id, organizationId: u.organizationId! } : null;
   try {
+    // Only a camera the user may see (a limited member: the locations and cameras chosen for them).
+    await runWithCameraScope(scope, () => getCameraRow(match[1]!, u.organizationId));
     if (match[2]!.toLowerCase() === "live") {
       name = await prepareStream(auth.user.organizationId, match[1]!, channel);
     } else {

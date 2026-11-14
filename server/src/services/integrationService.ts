@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { pool, withTransaction, type Queryable } from "../db/pool.js";
 import { toCameraError, type ConfigurableAdapter } from "../integrations/configurable/adapter.js";
 import { credentialModeFor, integrationConfigSchema, type IntegrationConfig } from "../integrations/configurable/config.js";
@@ -220,7 +221,7 @@ export interface IntegrationSummary {
   updatedAt: string;
 }
 
-// Database rows of SUMMARY_SQL; columns are read by name below.
+// Database rows of summarySql(); columns are read by name below.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function summarize(r: Record<string, any>): IntegrationSummary {
   const builtin = r.integration_type === "builtin" ? registry.builtinMeta(r.key) : r.integration_type === "alias" ? registry.builtinMeta(r.based_on) : undefined;
@@ -255,24 +256,24 @@ function summarize(r: Record<string, any>): IntegrationSummary {
   };
 }
 
-/** $1 is the organization whose cameras are counted (null: every organization). */
-const SUMMARY_SQL = `
+/** $1 is the organization whose cameras are counted (null: every organization), as the user may see them (built per request). */
+const summarySql = () => `
   SELECT b.*, av.version AS active_version, av.config AS active_config,
          lv.version AS latest_version, lv.config AS latest_config, lv.test_status AS latest_test_status,
          (SELECT count(*)::int FROM cameras c WHERE c.brand_key = b.key AND c.deleted_at IS NULL
-            AND ($1::uuid IS NULL OR c.organization_id = $1)) AS camera_count
+            AND ($1::uuid IS NULL OR c.organization_id = $1)${cameraScopeSql("c")}) AS camera_count
   FROM camera_brands b
   LEFT JOIN brand_integration_versions av ON av.id = b.active_version_id
   LEFT JOIN LATERAL (SELECT * FROM brand_integration_versions v WHERE v.brand_key = b.key ORDER BY version DESC LIMIT 1) lv ON true
   WHERE b.deleted_at IS NULL AND b.support_status <> 'planned'`;
 
 export async function listIntegrations(orgId: string | null): Promise<IntegrationSummary[]> {
-  const { rows } = await pool.query(`${SUMMARY_SQL} ORDER BY b.integration_type, lower(b.display_name)`, [orgId]);
+  const { rows } = await pool.query(`${summarySql()} ORDER BY b.integration_type, lower(b.display_name)`, [orgId]);
   return rows.map(summarize);
 }
 
 export async function getIntegration(key: string, orgId: string | null) {
-  const { rows } = await pool.query(`${SUMMARY_SQL} AND b.key = $2`, [orgId, key]);
+  const { rows } = await pool.query(`${summarySql()} AND b.key = $2`, [orgId, key]);
   if (!rows[0]) throw notFound("Brand integration");
   const r = rows[0];
   const versions = await pool.query(
@@ -300,14 +301,14 @@ export async function getIntegration(key: string, orgId: string | null) {
 export async function listIntegrationCameras(key: string, orgId: string | null, page: number, pageSize: number) {
   await brandRow(key);
   const total = (await pool.query<{ n: number }>(
-    "SELECT count(*)::int AS n FROM cameras WHERE brand_key = $1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR organization_id = $2)",
+    `SELECT count(*)::int AS n FROM cameras c WHERE brand_key = $1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR organization_id = $2)${cameraScopeSql("c")}`,
     [key, orgId],
   )).rows[0]!.n;
   const { rows } = await pool.query(
     `SELECT c.id, c.name, c.host, c.port, c.location, c.monitoring_enabled AS "monitoringEnabled",
             s.connection_status AS "connectionStatus", s.storage_health AS "storageHealth", s.last_success_at AS "lastSuccessAt"
      FROM cameras c JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.brand_key = $1 AND c.deleted_at IS NULL AND ($4::uuid IS NULL OR c.organization_id = $4)
+     WHERE c.brand_key = $1 AND c.deleted_at IS NULL AND ($4::uuid IS NULL OR c.organization_id = $4)${cameraScopeSql("c")}
      ORDER BY lower(c.name) LIMIT $2 OFFSET $3`,
     [key, pageSize, (page - 1) * pageSize, orgId],
   );

@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { formatBytes } from "../lib/format.js";
@@ -57,7 +58,7 @@ export async function buildReport(orgId: string, period: ReportPeriod, deps: { i
                WHERE a.camera_id = c.id AND e.event_type IN ('resolved','auto_resolved') AND e.created_at > $1) AS resolved,
             (SELECT count(*)::int FROM connection_events e WHERE e.camera_id = c.id AND e.to_status = 'offline' AND e.occurred_at > $1) AS drops,
             (SELECT count(*)::int FROM storage_checks s WHERE s.camera_id = c.id AND s.outcome <> 'success' AND s.checked_at > $1) AS failed
-     FROM cameras c WHERE c.organization_id = $2 AND c.deleted_at IS NULL ORDER BY lower(c.name)`,
+     FROM cameras c WHERE c.organization_id = $2 AND c.deleted_at IS NULL${cameraScopeSql("c")} ORDER BY lower(c.name)`,
     [from, orgId],
   );
   const byCamera = rows

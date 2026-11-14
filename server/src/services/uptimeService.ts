@@ -1,3 +1,4 @@
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { pool } from "../db/pool.js";
 
 /**
@@ -38,7 +39,7 @@ export async function uptimeReport(orgId: string, days: number): Promise<UptimeR
      cams AS (
        SELECT c.id, c.name, c.location, greatest(c.created_at, b.from_at) AS start_at, s.connection_status
        FROM cameras c JOIN camera_status s ON s.camera_id = c.id, bounds b
-       WHERE c.organization_id = $1 AND c.deleted_at IS NULL AND c.monitoring_enabled
+       WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")} AND c.monitoring_enabled
      ),
      ev AS (
        SELECT e.camera_id, e.occurred_at, e.from_status, e.to_status,

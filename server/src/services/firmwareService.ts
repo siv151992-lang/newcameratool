@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { pool } from "../db/pool.js";
 import { toCsv } from "../lib/csv.js";
 
@@ -48,7 +49,7 @@ export async function firmwareInventory(orgId: string) {
     `SELECT c.brand_key AS brand, b.display_name AS brand_name,
             COALESCE(NULLIF(s.device_model, ''), NULLIF(c.model, ''), '') AS model, NULLIF(s.firmware_version, '') AS version, count(*)::int AS n
      FROM cameras c JOIN camera_brands b ON b.key = c.brand_key LEFT JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.organization_id = $1 AND c.deleted_at IS NULL
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")}
      GROUP BY 1, 2, 3, 4`,
     [orgId],
   );
@@ -94,7 +95,7 @@ export async function firmwareCameras(orgId: string, q: z.infer<typeof firmwareC
     `SELECT c.id, c.name, c.host, c.location, c.device_type, NULLIF(s.firmware_version, '') AS firmware, s.device_serial AS serial,
             s.device_info_at AS read_at, s.connection_status AS connection
      FROM cameras c LEFT JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.organization_id = $1 AND c.deleted_at IS NULL AND c.brand_key = $2
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")} AND c.brand_key = $2
        AND COALESCE(NULLIF(s.device_model, ''), NULLIF(c.model, ''), '') = $3
      ORDER BY c.name LIMIT 5000`,
     [orgId, q.brand, q.model],
@@ -119,7 +120,7 @@ export async function firmwareCsv(orgId: string) {
             COALESCE(NULLIF(s.device_model, ''), NULLIF(c.model, ''), '') AS model, NULLIF(s.firmware_version, '') AS firmware,
             s.device_serial AS serial, s.device_info_at AS read_at
      FROM cameras c JOIN camera_brands b ON b.key = c.brand_key LEFT JOIN camera_status s ON s.camera_id = c.id
-     WHERE c.organization_id = $1 AND c.deleted_at IS NULL ORDER BY b.display_name, 6, c.name`,
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")} ORDER BY b.display_name, 6, c.name`,
     [orgId],
   );
   const lines: unknown[][] = [["Camera", "Address", "Location", "Brand", "Model", "Serial number", "Firmware", "Newest firmware of this model here", "Older than the newest", "Read at"]];

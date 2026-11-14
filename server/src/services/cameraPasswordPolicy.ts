@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { pool, type Queryable } from "../db/pool.js";
 import { logger } from "../lib/logger.js";
 import { getCipher } from "../security/cipher.js";
@@ -147,7 +148,7 @@ export async function cameraPasswordCounts(orgId: string): Promise<{ ok: number;
   const { rows } = await pool.query<{ status: string; n: number }>(
     `SELECT ${PASSWORD_STATUS_SQL} AS status, count(*)::int AS n
      FROM cameras c JOIN camera_credentials cr ON cr.camera_id = c.id
-     WHERE c.organization_id = $1 AND c.deleted_at IS NULL GROUP BY 1`,
+     WHERE c.organization_id = $1 AND c.deleted_at IS NULL${cameraScopeSql("c")} GROUP BY 1`,
     [orgId],
   );
   const n = (k: string) => rows.find((r) => r.status === k)?.n ?? 0;

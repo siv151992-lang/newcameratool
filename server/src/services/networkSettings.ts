@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { z } from "zod";
 import { config } from "../config.js";
 import { pool, type Queryable } from "../db/pool.js";
@@ -83,7 +84,7 @@ export async function camerasOutside(
 ): Promise<{ id: string; name: string; host: string }[]> {
   const guard = new HostGuard({ allowedNetworks: allowedNetworks.join(","), allowLoopback: config.CAMERA_ALLOW_LOOPBACK });
   const { rows } = await db.query<{ id: string; name: string; host: string }>(
-    "SELECT id, name, host FROM cameras WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR organization_id = $1) ORDER BY lower(name)",
+    `SELECT id, name, host FROM cameras c WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR organization_id = $1)${cameraScopeSql("c")} ORDER BY lower(name)`,
     [orgId],
   );
   return rows.filter((c) => {

@@ -1,4 +1,6 @@
 import { type Request, Router } from "express";
+import { cameraAccessSchema, getCameraAccess, setCameraAccess } from "../services/memberCameraAccess.js";
+import { cameraScopeSql } from "../auth/cameraScope.js";
 import { z } from "zod";
 import { actorOf, orgOf, requirePasswordConfirmation, requirePasswordForChanges, requirePermission } from "../auth/middleware.js";
 import { SYSTEM_PERMISSION } from "../auth/sessions.js";
@@ -53,7 +55,7 @@ const isSystemAdmin = (req: Request) => req.auth!.user.isSystemAdmin;
 export const brandsRouter = Router();
 brandsRouter.get("/", requirePermission("cameras:read"), async (req, res) => {
   const { rows } = await pool.query<{ brand_key: string; n: number }>(
-    "SELECT brand_key, count(*)::int AS n FROM cameras WHERE organization_id = $1 AND deleted_at IS NULL GROUP BY brand_key",
+    `SELECT brand_key, count(*)::int AS n FROM cameras c WHERE organization_id = $1 AND deleted_at IS NULL${cameraScopeSql("c")} GROUP BY brand_key`,
     [orgOf(req)],
   );
   const counts = new Map(rows.map((r) => [r.brand_key, r.n]));
@@ -205,6 +207,13 @@ usersRouter.post("/", async (req, res) => {
 usersRouter.patch("/:id", async (req, res) => {
   await updateMember(orgOf(req), param(req), parse(updateMemberSchema, req.body), { ...actorOf(req), isSystemAdmin: isSystemAdmin(req) }, req.ip);
   res.status(204).end();
+});
+/** Which cameras the member may see: all, or only chosen locations and cameras. */
+usersRouter.get("/:id/camera-access", async (req, res) => {
+  res.json(await getCameraAccess(orgOf(req), param(req)));
+});
+usersRouter.put("/:id/camera-access", async (req, res) => {
+  res.json(await setCameraAccess(orgOf(req), param(req), parse(cameraAccessSchema, req.body), actorOf(req), req.ip));
 });
 usersRouter.delete("/:id", async (req, res) => {
   res.json(await removeMember(orgOf(req), param(req), actorOf(req), req.ip));
