@@ -38,13 +38,35 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) { Fail "Right-click START.bat and choose 'Run as administrator'." }
 if (-not (Test-Path $Node)) { Fail "runtime\node\node.exe is missing: extract the whole package again." }
 
-# The app runs as NETWORK SERVICE, which cannot read inside a user's folders (Downloads, Desktop,
-# Documents...): there it would not start at all. Install a copy in C:\cctv-monitor instead.
+# Where this package should run from:
+# - The app is already installed in another folder (the "CCTV Monitor" task points there, and it
+#   has its data): update that installation. Starting a second copy here would find the database
+#   port taken and an empty database.
+# - Otherwise, from a user's folder (Downloads, Desktop...): the app runs as NETWORK SERVICE,
+#   which cannot read there, so it is installed in C:\cctv-monitor.
 $usersDir = Join-Path $env:SystemDrive "Users"
-if ($Root.StartsWith("$usersDir\", [StringComparison]::OrdinalIgnoreCase)) {
+$target = $null
+$reason = ""
+$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($existingTask) {
+  $taskArgs = ($existingTask.Actions | Select-Object -First 1).Arguments
+  if ($taskArgs) {
+    $taskScript = $taskArgs.Trim().Trim('"')
+    $installed = Split-Path -Parent (Split-Path -Parent $taskScript)
+    $same = [string]::Equals($installed.TrimEnd('\'), $Root.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+    if ($installed -and -not $same -and (Test-Path (Join-Path $installed "data\.env"))) {
+      $target = $installed
+      $reason = "The app is already installed in $target, with its cameras and settings: that installation is updated."
+    }
+  }
+}
+if (-not $target -and $Root.StartsWith("$usersDir\", [StringComparison]::OrdinalIgnoreCase)) {
   $target = Join-Path $env:SystemDrive "cctv-monitor"
+  $reason = "It cannot run from $Root (a user's folder), so it is installed in $target."
+}
+if ($target) {
   Step "Copying the app to $target"
-  Write-Host "It cannot run from $Root (a user's folder), so it is installed in $target."
+  Write-Host $reason
   & (Join-Path $PSScriptRoot "stop.ps1") -Quiet
   $targetStop = Join-Path $target "service\stop.ps1"
   if (Test-Path $targetStop) { & $targetStop -Quiet }  # Its files must not be in use while replaced.
