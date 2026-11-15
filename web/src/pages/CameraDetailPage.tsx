@@ -173,14 +173,14 @@ export function CameraDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {can("cameras:live") && (
-            <>
-              <Button icon={<Video className="h-4 w-4" />} onClick={() => setLive(true)}>
-                Live view
-              </Button>
-              <Button icon={<Film className="h-4 w-4" />} onClick={() => setShowRecordings(true)}>
-                Recordings
-              </Button>
-            </>
+            <Button icon={<Video className="h-4 w-4" />} onClick={() => setLive(true)}>
+              Live view
+            </Button>
+          )}
+          {can("cameras:recordings") && (
+            <Button icon={<Film className="h-4 w-4" />} onClick={() => setShowRecordings(true)}>
+              Recordings
+            </Button>
           )}
           {can("cameras:check") && (
             <>
@@ -200,7 +200,7 @@ export function CameraDetailPage() {
               </Button>
             </>
           )}
-          {can("alerts:manage") && (c.maintenance ? (
+          {can("alerts:manage") && can("cameras:check") && (c.maintenance ? (
             <Button icon={<Wrench className="h-4 w-4" />} loading={endMaintenance.isPending} onClick={() => endMaintenance.mutate({ ids: [c.id], minutes: null })} title="Alerts and notifications resume">
               End maintenance
             </Button>
@@ -718,7 +718,7 @@ function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
                 <th scope="col" className="px-4 py-2 font-medium">Camera</th>
                 <th scope="col" className="px-4 py-2 font-medium">Video</th>
                 <th scope="col" className="px-4 py-2 font-medium">Recording</th>
-                {can("cameras:live") && <th scope="col" className="px-4 py-2 text-right font-medium"><span className="sr-only">Watch</span></th>}
+                {(can("cameras:live") || can("cameras:recordings")) && <th scope="col" className="px-4 py-2 text-right font-medium"><span className="sr-only">Watch</span></th>}
               </tr>
             </thead>
             <tbody>
@@ -736,9 +736,9 @@ function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
                     )}
                   </td>
                   <td className="px-4 py-2">{x.recording ? <RecordingBadge state={x.recording} /> : <span className="text-ink-muted">Not reported</span>}</td>
-                  {can("cameras:live") && (
+                  {(can("cameras:live") || can("cameras:recordings")) && (
                     <td className="whitespace-nowrap px-4 py-1.5 text-right">
-                      <Button
+                      {can("cameras:live") && <Button
                         size="sm"
                         variant="ghost"
                         icon={<Video className="h-4 w-4" />}
@@ -749,10 +749,10 @@ function NvrChannelsCard({ camera: c }: { camera: CameraDetail }) {
                         aria-label={`Live view of channel ${x.channel}`}
                       >
                         Live
-                      </Button>
-                      <Button size="sm" variant="ghost" icon={<Film className="h-4 w-4" />} onClick={() => setRecordings({ id: c.id, name: label(x), channel: x.channel })} aria-label={`Recordings of channel ${x.channel}`}>
+                      </Button>}
+                      {can("cameras:recordings") && <Button size="sm" variant="ghost" icon={<Film className="h-4 w-4" />} onClick={() => setRecordings({ id: c.id, name: label(x), channel: x.channel })} aria-label={`Recordings of channel ${x.channel}`}>
                         Recordings
-                      </Button>
+                      </Button>}
                     </td>
                   )}
                 </tr>

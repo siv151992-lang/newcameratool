@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { allCamerasMiddleware } from "../auth/cameraScope.js";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { Router } from "express";
 import { z } from "zod";
@@ -53,7 +54,7 @@ camerasRouter.get("/", read, async (req, res) => {
   res.json(await listCameras(orgOf(req), parse(listQuerySchema, req.query)));
 });
 
-camerasRouter.get("/report", read, async (req, res) => {
+camerasRouter.get("/report", read, allCamerasMiddleware, async (req, res) => {
   const q = parse(listQuerySchema, req.query);
   const { timeZone } = parse(z.object({ timeZone: z.string().min(1).max(64).default("UTC") }), { timeZone: req.query.timeZone });
   const { csv, rows } = await cameraReportCsv(orgOf(req), q, timeZone);
@@ -73,12 +74,12 @@ camerasRouter.get("/ids", read, async (req, res) => {
 
 // Uptime over the last 7, 30 or 90 days: per camera and location (the page shows the lowest 500; the CSV has all).
 const uptimeQuery = z.object({ days: z.coerce.number().int().refine((d) => [1, 7, 30, 90].includes(d), "Use 1, 7, 30 or 90").default(30) });
-camerasRouter.get("/uptime", read, async (req, res) => {
+camerasRouter.get("/uptime", read, allCamerasMiddleware, async (req, res) => {
   const { days } = parse(uptimeQuery, req.query);
   const r = await uptimeReport(orgOf(req), days);
   res.json({ ...r, cameras: r.cameras.slice(0, 500), camerasShown: Math.min(500, r.cameras.length) });
 });
-camerasRouter.get("/uptime.csv", read, async (req, res) => {
+camerasRouter.get("/uptime.csv", read, allCamerasMiddleware, async (req, res) => {
   const { days } = parse(uptimeQuery, req.query);
   const r = await uptimeReport(orgOf(req), days);
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -87,13 +88,13 @@ camerasRouter.get("/uptime.csv", read, async (req, res) => {
 });
 
 // Firmware inventory: models and firmware versions, the cameras on an older version than the newest here.
-camerasRouter.get("/firmware", read, async (req, res) => {
+camerasRouter.get("/firmware", read, allCamerasMiddleware, async (req, res) => {
   res.json(await firmwareInventory(orgOf(req)));
 });
-camerasRouter.get("/firmware/cameras", read, async (req, res) => {
+camerasRouter.get("/firmware/cameras", read, allCamerasMiddleware, async (req, res) => {
   res.json(await firmwareCameras(orgOf(req), parse(firmwareCamerasQuery, req.query)));
 });
-camerasRouter.get("/firmware.csv", read, async (req, res) => {
+camerasRouter.get("/firmware.csv", read, allCamerasMiddleware, async (req, res) => {
   const { csv, rows } = await firmwareCsv(orgOf(req));
   await audit({ actor: actorOf(req), ip: req.ip, action: "camera.firmware_exported", entityType: "camera", details: { rows } });
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -101,7 +102,7 @@ camerasRouter.get("/firmware.csv", read, async (req, res) => {
   res.send(csv);
 });
 
-camerasRouter.get("/summary", read, async (req, res) => {
+camerasRouter.get("/summary", read, allCamerasMiddleware, async (req, res) => {
   res.json(await getSummary(orgOf(req)));
 });
 
@@ -157,7 +158,7 @@ camerasRouter.post("/bulk-local-storage", write, async (req, res) => {
 });
 
 // Maintenance (planned work): Operators and Org Admins, like handling alerts. minutes: null ends it.
-camerasRouter.post("/bulk-maintenance", requirePermission("alerts:manage"), async (req, res) => {
+camerasRouter.post("/bulk-maintenance", requirePermission("alerts:manage"), requirePermission("cameras:check"), async (req, res) => {
   const { ids, minutes, note } = parse(
     z.object({
       ids: z.array(z.string().uuid()).min(1).max(500),
@@ -269,25 +270,25 @@ camerasRouter.post("/:id/live/prepare", requirePermission("cameras:live"), liveV
 });
 
 // Recordings on the camera's own storage: what a day holds, and playback from a time (through go2rtc).
-camerasRouter.get("/:id/recordings", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+camerasRouter.get("/:id/recordings", requirePermission("cameras:recordings"), liveViewLimiter, async (req, res) => {
   const { date } = parse(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD") }), req.query);
   res.json(await listRecordings(orgOf(req), param(req), date, channelOf(req.query.channel)));
 });
-camerasRouter.get("/:id/recordings/days", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+camerasRouter.get("/:id/recordings/days", requirePermission("cameras:recordings"), liveViewLimiter, async (req, res) => {
   const { month } = parse(z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Use YYYY-MM") }), req.query);
   res.json({ month, days: await recordedDays(orgOf(req), param(req), month, channelOf(req.query.channel)) });
 });
-camerasRouter.get("/:id/recordings/oldest", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+camerasRouter.get("/:id/recordings/oldest", requirePermission("cameras:recordings"), liveViewLimiter, async (req, res) => {
   res.json({ oldest: await oldestRecording(orgOf(req), param(req), channelOf(req.query.channel)) });
 });
 // Why the camera refused this session's playback (the relay saw its answer; go2rtc only says "wrong response").
-camerasRouter.get("/:id/playback/problem", requirePermission("cameras:live"), async (req, res) => {
+camerasRouter.get("/:id/playback/problem", requirePermission("cameras:recordings"), async (req, res) => {
   await getCameraRow(param(req), orgOf(req));
   const stream = playbackStreamName(param(req), req.auth!.sessionId);
   res.json({ refusal: lastRefusal(stream) ?? null, problem: playbackDiagnosis(stream) ?? null, timings: playbackTimings(stream) ?? null });
 });
 
-camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:recordings"), liveViewLimiter, async (req, res) => {
   const { start, speed, channel } = parse(
     z.object({
       start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS"),
@@ -305,7 +306,7 @@ camerasRouter.post("/:id/playback/prepare", requirePermission("cameras:live"), l
 
 // A clip of the recording as an MP4 download (evidence). The camera sends it at normal speed, so the
 // download takes about as long as the clip; closing it stops the recording.
-camerasRouter.get("/:id/recordings/clip", requirePermission("cameras:live"), liveViewLimiter, async (req, res) => {
+camerasRouter.get("/:id/recordings/clip", requirePermission("cameras:recordings"), liveViewLimiter, async (req, res) => {
   const { start, seconds, channel } = parse(
     z.object({
       start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:MM:SS"),

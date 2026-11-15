@@ -33,6 +33,14 @@ export function cameraScopeMiddleware(req: Request, _res: Response, next: NextFu
   runWithCameraScope(limited ? { userId: u.id, organizationId: u.organizationId! } : null, next);
 }
 
+/**
+ * Pages every member sees for every camera (Dashboard, Alerts, reports, AI Mode): the rest of
+ * the request is not limited, whatever cameras the member may open.
+ */
+export function allCamerasMiddleware(_req: Request, _res: Response, next: NextFunction) {
+  store.run(null, next);
+}
+
 /** Whether the current request is limited to some cameras. */
 export const isCameraScoped = () => Boolean(store.getStore());
 

@@ -1,4 +1,5 @@
 import { type Request, Router } from "express";
+import { allCamerasMiddleware } from "../auth/cameraScope.js";
 import { cameraAccessSchema, getCameraAccess, setCameraAccess } from "../services/memberCameraAccess.js";
 import { cameraScopeSql } from "../auth/cameraScope.js";
 import { z } from "zod";
@@ -179,7 +180,7 @@ settingsRouter.patch("/weekly-report", requirePermission("settings:write"), asyn
   await audit({ actor: actorOf(req), ip: req.ip, action: "settings.weekly_report_updated", entityType: "settings", entityId: "weekly_report", details: patch });
   res.json(saved);
 });
-settingsRouter.get("/weekly-report/preview", requirePermission("settings:read"), async (req, res) => {
+settingsRouter.get("/weekly-report/preview", requirePermission("settings:read"), allCamerasMiddleware, async (req, res) => {
   const s = await getWeeklyReportSettings(orgOf(req));
   const report = await buildWeeklyReport(orgOf(req), s.timeZone);
   res.type("html").set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'").send(report.html);

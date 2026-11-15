@@ -123,13 +123,27 @@ export async function listMemberships(userId: string) {
   return rows as { id: string; name: string; role: string }[];
 }
 
+/**
+ * The role's permissions, narrowed by the member's switches (Org Admins are never narrowed):
+ * cameras:live (live view, snapshots) and cameras:check (refresh, ping, test, maintenance) are
+ * dropped when switched off, and cameras:recordings (playback, clip export) is given to whoever
+ * may see live video unless recordings are switched off.
+ */
+export function memberPermissions(r: { role: string; permissions: string[]; can_live?: boolean; can_recordings?: boolean; can_actions?: boolean }): string[] {
+  const admin = r.role === "admin";
+  const has = (p: string) => r.permissions.includes(p);
+  const out = r.permissions.filter((p) => admin || (p === "cameras:live" ? r.can_live !== false : p === "cameras:check" ? r.can_actions !== false : true));
+  if (has("cameras:live") && (admin || r.can_recordings !== false)) out.push("cameras:recordings");
+  return out;
+}
+
 export async function getSession(token: string): Promise<AuthContext | null> {
   const id = hashToken(token);
   // A removed membership or deactivated organization leaves the session without an organization.
   const { rows } = await pool.query(
     `SELECT s.id, s.csrf_token, s.last_seen_at, u.id AS user_id, u.username, u.display_name, u.email, u.is_system_admin,
             o.id AS organization_id, o.name AS organization_name, m.role, coalesce(r.permissions, '{}') AS permissions,
-            m.camera_access
+            m.camera_access, m.can_live, m.can_recordings, m.can_actions
      FROM sessions s JOIN users u ON u.id = s.user_id
      LEFT JOIN organization_members m ON m.user_id = u.id AND m.organization_id = s.organization_id
      LEFT JOIN organizations o ON o.id = m.organization_id AND o.is_active
@@ -149,7 +163,7 @@ export async function getSession(token: string): Promise<AuthContext | null> {
     user: {
       id: r.user_id, username: r.username, displayName: r.display_name, email: r.email ?? null,
       role: inOrg ? r.role : null,
-      permissions: [...(inOrg ? r.permissions : []), ...(r.is_system_admin ? [SYSTEM_PERMISSION] : [])],
+      permissions: [...(inOrg ? memberPermissions(r) : []), ...(r.is_system_admin ? [SYSTEM_PERMISSION] : [])],
       isSystemAdmin: r.is_system_admin,
       organizationId: inOrg ? r.organization_id : null,
       organizationName: inOrg ? r.organization_name : null,

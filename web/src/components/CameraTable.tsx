@@ -554,14 +554,14 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
                         <Eye className="h-4 w-4" />
                       </IconAction>
                       {can("cameras:live") && (
-                        <>
-                          <IconAction label={`Live view of ${c.name}`} onClick={() => setLive(c)}>
-                            <Video className="h-4 w-4" />
-                          </IconAction>
-                          <IconAction label={`Recordings of ${c.name}`} onClick={() => setRecordings(c)}>
-                            <Film className="h-4 w-4" />
-                          </IconAction>
-                        </>
+                        <IconAction label={`Live view of ${c.name}`} onClick={() => setLive(c)}>
+                          <Video className="h-4 w-4" />
+                        </IconAction>
+                      )}
+                      {can("cameras:recordings") && (
+                        <IconAction label={`Recordings of ${c.name}`} onClick={() => setRecordings(c)}>
+                          <Film className="h-4 w-4" />
+                        </IconAction>
                       )}
                       {can("cameras:check") && (
                         <IconAction label={`Ping ${c.name}`} onClick={() => setPinging(c)}>

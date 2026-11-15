@@ -84,7 +84,7 @@ export async function listMembers(orgId: string) {
     `SELECT u.id, u.username, u.display_name AS "displayName", u.email, m.role, u.is_active AS "isActive",
             u.last_login_at AS "lastLoginAt", (u.locked_until > now()) AS "locked", m.joined_at AS "joinedAt",
             (SELECT count(*)::int FROM organization_members o WHERE o.user_id = u.id) > 1 AS "otherOrganizations",
-            m.camera_access AS "cameraAccess",
+            m.camera_access AS "cameraAccess", m.can_live AS "canLive", m.can_recordings AS "canRecordings", m.can_actions AS "canActions",
             (SELECT count(*)::int FROM member_camera_access a WHERE a.organization_id = m.organization_id AND a.user_id = m.user_id AND a.location IS NOT NULL) AS "accessLocations",
             (SELECT count(*)::int FROM member_camera_access a JOIN cameras c ON c.id = a.camera_id AND c.deleted_at IS NULL
               WHERE a.organization_id = m.organization_id AND a.user_id = m.user_id) AS "accessCameras"

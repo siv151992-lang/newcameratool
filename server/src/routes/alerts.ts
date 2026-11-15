@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { allCamerasMiddleware } from "../auth/cameraScope.js";
 import { z } from "zod";
 import { actorOf, orgOf, requirePermission } from "../auth/middleware.js";
 import { param, parse } from "../lib/validate.js";
@@ -7,6 +8,8 @@ import { acknowledgeAlert, alertListQuery, bulkAlertSchema, bulkAlerts, getAlert
 export const alertsRouter = Router();
 const noteSchema = z.object({ note: z.string().trim().max(500).optional() }).strict();
 
+// Alerts: every member sees every camera's alerts (acting on them follows the role).
+alertsRouter.use(allCamerasMiddleware);
 alertsRouter.get("/", requirePermission("alerts:read"), async (req, res) => {
   res.json(await listAlerts(orgOf(req), parse(alertListQuery, req.query)));
 });

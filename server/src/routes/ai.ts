@@ -1,4 +1,5 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
+import { allCamerasMiddleware } from "../auth/cameraScope.js";
 import { z } from "zod";
 import { aiSettingsSchema, assistantAvailability, getAiSettings, requireAiEnabled, updateAiSettings } from "../ai/aiSettings.js";
 import { chatSchema, runAssistant } from "../ai/assistant.js";
@@ -20,6 +21,8 @@ const whenEnabled = (req: Request, _res: Response, next: NextFunction) => {
 };
 const periodSchema = z.object({ period: z.enum(Object.keys(REPORT_PERIODS) as [ReportPeriod, ...ReportPeriod[]]).default("24h") });
 
+// AI Mode reports on every camera, like the Dashboard.
+aiRouter.use(allCamerasMiddleware);
 aiRouter.get("/status", requirePermission("cameras:read"), async (req, res) => {
   const settings = await getAiSettings(orgOf(req));
   res.json({ enabled: settings.enabled, assistant: assistantAvailability() });

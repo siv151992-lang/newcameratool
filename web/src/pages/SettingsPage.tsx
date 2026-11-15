@@ -823,7 +823,7 @@ function UsersTab() {
                 <tr>
                   <th scope="col" className="px-4 py-2 font-medium">User</th>
                   <th scope="col" className="px-4 py-2 font-medium">Role</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Cameras</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Access</th>
                   <th scope="col" className="px-4 py-2 font-medium">Status</th>
                   <th scope="col" className="px-4 py-2 font-medium">Last sign-in</th>
                   <th scope="col" className="px-4 py-2 text-right font-medium">Actions</th>
@@ -847,7 +847,7 @@ function UsersTab() {
                     <td className="px-4 py-2">
                       <div className={u.role !== "admin" && u.cameraAccess === "limited" ? "font-medium" : "text-ink-secondary"}>{cameraAccessLabel(u)}</div>
                       {u.role !== "admin" && (
-                        <Button size="sm" variant="ghost" className="-ml-2" aria-label={`Change cameras for ${u.username}`} onClick={() => setCameraAccessOf(u)}>Change</Button>
+                        <Button size="sm" variant="ghost" className="-ml-2" aria-label={`Change access for ${u.username}`} onClick={() => setCameraAccessOf(u)}>Change</Button>
                       )}
                     </td>
                     <td className="px-4 py-2">{u.isActive ? (u.locked ? "Locked (too many attempts)" : "Active") : "Disabled"}</td>

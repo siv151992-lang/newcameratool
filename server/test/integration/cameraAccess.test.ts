@@ -40,7 +40,7 @@ beforeEach(async () => {
 });
 
 describe("camera access per user", () => {
-  it("shows a limited member only their locations and cameras, everywhere", async () => {
+  it("shows everyone the Dashboard, Alerts and reports, and limits the camera pages, live view, recordings and actions", async () => {
     const gate = await camera("Gate", "Site A");
     const lobby = await camera("Lobby", "Site A");
     const store = await camera("Store", "Site B");
@@ -59,43 +59,37 @@ describe("camera access per user", () => {
 
     const v = viewer.agent;
     const names = async (agent = v) => ((await agent.get("/api/cameras?pageSize=100").expect(200)).body.items as { name: string }[]).map((c) => c.name).sort();
+    // Cameras list and camera pages: the chosen cameras only.
     expect(await names()).toEqual(["Gate", "Lobby", "Roof"]);
     expect(await names(admin.agent)).toEqual(["Gate", "Lobby", "Roof", "Store"]);
-    expect((await v.get("/api/cameras/summary").expect(200)).body.totalCameras).toBe(3);
     expect((await v.get("/api/cameras/ids").expect(200)).body.total).toBe(3);
     expect((await v.get("/api/cameras/locations").expect(200)).body).toEqual(["Site A"]);
-
-    // Another camera's page, history, events, alerts: not found.
     await v.get(`/api/cameras/${gate.id}`).expect(200);
     await v.get(`/api/cameras/${store.id}`).expect(404);
     await v.get(`/api/cameras/${store.id}/history`).expect(404);
     await v.get(`/api/cameras/${store.id}/events`).expect(404);
-    await v.get(`/api/cameras/${store.id}/storage`).expect(404);
+
+    // Dashboard, Alerts and reports: every camera.
+    expect((await v.get("/api/cameras/summary").expect(200)).body.totalCameras).toBe(4);
+    expect((await v.get("/api/cameras/summary").expect(200)).body.alerts.critical).toBe(4);
     const alertCams = ((await v.get("/api/alerts?pageSize=100").expect(200)).body.items as { cameraName: string }[]).map((a) => a.cameraName).sort();
-    expect(alertCams).toEqual(["Gate", "Lobby", "Roof"]);
-    await v.get(`/api/alerts/${store.alertId}`).expect(404);
-    expect((await v.get("/api/cameras/summary").expect(200)).body.alerts.critical).toBe(3);
+    expect(alertCams).toEqual(["Gate", "Lobby", "Roof", "Store"]);
+    await v.get(`/api/alerts/${store.alertId}`).expect(200);
+    expect((await v.get("/api/cameras/report?timeZone=UTC").expect(200)).text).toContain("Store");
+    expect(((await v.get("/api/cameras/uptime?days=7").expect(200)).body.cameras as { name: string }[]).map((c) => c.name)).toContain("Store");
+    expect(JSON.stringify((await v.get("/api/cameras/firmware/cameras?brand=hikvision").expect(200)).body)).toContain("Store");
 
-    // Reports and lists built from the cameras.
-    const csv = (await v.get("/api/cameras/report?timeZone=UTC").expect(200)).text;
-    expect(csv).toContain("Gate");
-    expect(csv).not.toContain("Store");
-    const uptime = (await v.get("/api/cameras/uptime?days=7").expect(200)).body.cameras as { name: string }[];
-    expect(uptime.map((c) => c.name)).not.toContain("Store");
-    const firmware = JSON.stringify((await v.get("/api/cameras/firmware/cameras?brand=hikvision").expect(200)).body);
-    expect(firmware).not.toContain("Store");
-    expect(firmware).toContain("Gate");
-
-    // The operator can act only on Site A: checks, live view, alerts, maintenance.
+    // The operator: live view, recordings and actions on Site A only; alerts as the role allows.
     const op = operator.agent;
     await op.post(`/api/cameras/${roof.id}/check-storage`).set("X-CSRF-Token", operator.csrf).expect(404);
     await op.post(`/api/cameras/${store.id}/live/prepare`).set("X-CSRF-Token", operator.csrf).send({}).expect(404);
     await op.get(`/api/cameras/${store.id}/recordings?date=2026-11-01`).expect(404);
-    await op.post(`/api/alerts/${store.alertId}/acknowledge`).set("X-CSRF-Token", operator.csrf).send({}).expect(404);
-    const bulk = (await op.post("/api/alerts/bulk").set("X-CSRF-Token", operator.csrf).send({ action: "acknowledge", filter: { status: "open" } }).expect(200)).body;
-    expect(bulk.done).toBe(2); // Gate and Lobby, not Store or Roof
+    await op.get(`/api/cameras/${store.id}/snapshot`).expect(404);
+    await op.post(`/api/alerts/${store.alertId}/acknowledge`).set("X-CSRF-Token", operator.csrf).send({}).expect(200);
     const statusOf = async (alertId: string) => (await pool.query("SELECT status FROM alerts WHERE id = $1", [alertId])).rows[0].status;
-    expect(await statusOf(store.alertId)).toBe("active");
+    expect(await statusOf(store.alertId)).toBe("acknowledged");
+    const bulk = (await op.post("/api/alerts/bulk").set("X-CSRF-Token", operator.csrf).send({ action: "acknowledge", filter: { status: "active" } }).expect(200)).body;
+    expect(bulk.done).toBe(3);
     expect(await statusOf(lobby.alertId)).toBe("acknowledged");
     await op.post("/api/cameras/bulk-maintenance").set("X-CSRF-Token", operator.csrf).send({ ids: [store.id, gate.id], minutes: 60 }).expect(200);
     const inMaintenance = (await pool.query("SELECT name FROM cameras WHERE maintenance_until > now() ORDER BY name")).rows.map((r) => r.name);
@@ -104,6 +98,41 @@ describe("camera access per user", () => {
     // Back to all cameras.
     await admin.agent.put(`/api/users/${viewer.id}/camera-access`).set("X-CSRF-Token", admin.csrf).send({ mode: "all" }).expect(200);
     expect(await names()).toEqual(["Gate", "Lobby", "Roof", "Store"]);
+  });
+
+  it("turns live view, recordings and camera actions off per member, never beyond the role", async () => {
+    const gate = await camera("Gate", "Site A");
+    const admin = await signIn("admin");
+    const operator = await signIn("operator");
+    const viewer = await signIn("viewer");
+    const perms = async (who: typeof operator) => ((await who.agent.get("/api/auth/me").expect(200)).body.user?.permissions ?? (await who.agent.get("/api/auth/me")).body.permissions) as string[];
+    expect(await perms(operator)).toEqual(expect.arrayContaining(["cameras:live", "cameras:recordings", "cameras:check"]));
+    expect(await perms(viewer)).not.toContain("cameras:recordings"); // a Viewer has no live view, so no recordings either
+
+    const access = (await admin.agent.get(`/api/users/${viewer.id}/camera-access`).expect(200)).body;
+    expect(access.available).toEqual({ live: false, recordings: false, actions: false });
+
+    // Live view off, recordings on, actions off.
+    await admin.agent.put(`/api/users/${operator.id}/camera-access`).set("X-CSRF-Token", admin.csrf)
+      .send({ mode: "all", features: { live: false, recordings: true, actions: false } }).expect(200);
+    expect(await perms(operator)).toEqual(expect.arrayContaining(["cameras:recordings", "cameras:read", "alerts:manage"]));
+    expect(await perms(operator)).not.toContain("cameras:live");
+    expect(await perms(operator)).not.toContain("cameras:check");
+    const op = operator.agent;
+    await op.post(`/api/cameras/${gate.id}/live/prepare`).set("X-CSRF-Token", operator.csrf).send({}).expect(403);
+    await op.get(`/api/cameras/${gate.id}/snapshot`).expect(403);
+    await op.post(`/api/cameras/${gate.id}/check-storage`).set("X-CSRF-Token", operator.csrf).expect(403);
+    await op.post("/api/cameras/bulk-maintenance").set("X-CSRF-Token", operator.csrf).send({ ids: [gate.id], minutes: 60 }).expect(403);
+    // Recordings stay allowed: the request gets past the permission (the camera itself is not reachable in tests).
+    expect((await op.get(`/api/cameras/${gate.id}/recordings?date=2026-11-01`)).status).not.toBe(403);
+
+    // Recordings off too.
+    await admin.agent.put(`/api/users/${operator.id}/camera-access`).set("X-CSRF-Token", admin.csrf)
+      .send({ mode: "all", features: { live: true, recordings: false, actions: true } }).expect(200);
+    await op.get(`/api/cameras/${gate.id}/recordings?date=2026-11-01`).expect(403);
+    expect(await perms(operator)).toEqual(expect.arrayContaining(["cameras:live", "cameras:check"]));
+    const listed = (await admin.agent.get("/api/users").expect(200)).body.find((u: { username: string }) => u.username === "operator-user");
+    expect(listed).toMatchObject({ canLive: true, canRecordings: false, canActions: true });
   });
 
   it("never limits an Org Admin, and checks what is chosen", async () => {
@@ -125,7 +154,7 @@ describe("camera access per user", () => {
     await viewer.agent.put(`/api/users/${viewer.id}/camera-access`).set("X-CSRF-Token", viewer.csrf).send({ mode: "all" }).expect(403);
   });
 
-  it("keeps a limited member's AI analysis to their cameras, apart from everyone else's", async () => {
+  it("keeps cached analyses of limited and unlimited requests apart (AI Mode itself shows every camera)", async () => {
     await camera("Gate", "Site A");
     await camera("Store", "Site B");
     const viewer = await signIn("viewer");

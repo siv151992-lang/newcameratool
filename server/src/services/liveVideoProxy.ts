@@ -61,7 +61,10 @@ async function relay(req: http.IncomingMessage, socket: net.Socket, head: Buffer
   const token = cookie(req.headers.cookie, SESSION_COOKIE);
   const auth = token ? await getSession(token) : null;
   if (!auth) return refuse("401 Unauthorized", token ? "the session has expired or was signed out" : "no session cookie came with the connection");
-  if (!auth.user.organizationId || !auth.user.permissions.includes("cameras:live")) return refuse("403 Forbidden", "the user may not view live video");
+  const playback = match[2]!.toLowerCase() !== "live";
+  if (!auth.user.organizationId || !auth.user.permissions.includes(playback ? "cameras:recordings" : "cameras:live")) {
+    return refuse("403 Forbidden", playback ? "the user may not watch recordings" : "the user may not view live video");
+  }
   let name: string;
   const u = auth.user;
   const scope = u.cameraAccess === "limited" && u.role !== "admin" ? { userId: u.id, organizationId: u.organizationId! } : null;

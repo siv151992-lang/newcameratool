@@ -404,6 +404,10 @@ export interface ManagedUser {
   otherOrganizations: boolean;
   /** "limited": sees only the chosen locations and cameras (Org Admins always see all). */
   cameraAccess: "all" | "limited";
+  /** Live view, recordings and camera actions switched on for this member (within what the role allows). */
+  canLive: boolean;
+  canRecordings: boolean;
+  canActions: boolean;
   accessLocations: number;
   accessCameras: number;
 }

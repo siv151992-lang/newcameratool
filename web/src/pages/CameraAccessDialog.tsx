@@ -7,22 +7,38 @@ import { Button, Checkbox, Dialog, ErrorMessage, Input, Spinner } from "../compo
 import { useToast } from "../components/toast";
 import { ROLE_LABELS } from "../hooks/auth";
 
+type Features = { live: boolean; recordings: boolean; actions: boolean };
+
 interface CameraAccess {
   mode: "all" | "limited";
   locations: string[];
   cameraIds: string[];
   role: string;
+  features: Features;
+  /** What the role allows at all (a Viewer has no live view, recordings or camera actions). */
+  available: Features;
 }
 
-/** "All cameras", or what a limited member sees, for the Users list. */
+const FEATURES: { key: keyof Features; label: string; description: string }[] = [
+  { key: "live", label: "Live view", description: "Live video, the live grid and snapshots." },
+  { key: "recordings", label: "Recordings", description: "Playing recordings and exporting clips." },
+  { key: "actions", label: "Camera actions", description: "Refresh now, ping, test connection and maintenance mode." },
+];
+
+/** What a member may do and on which cameras, for the Users list. */
 export function cameraAccessLabel(u: ManagedUser): string {
-  if (u.role === "admin") return "All cameras (Org Admin)";
-  if (u.cameraAccess !== "limited") return "All cameras";
+  if (u.role === "admin") return "Everything (Org Admin)";
+  const off = [
+    u.role === "operator" && !u.canLive && "no live view",
+    u.role === "operator" && !u.canRecordings && "no recordings",
+    u.role === "operator" && !u.canActions && "no camera actions",
+  ].filter(Boolean);
   const parts = [
     u.accessLocations && `${u.accessLocations} location${u.accessLocations === 1 ? "" : "s"}`,
     u.accessCameras && `${u.accessCameras} camera${u.accessCameras === 1 ? "" : "s"}`,
   ].filter(Boolean);
-  return `Only ${parts.join(" + ") || "chosen cameras"}`;
+  const where = u.cameraAccess === "limited" ? `Only ${parts.join(" + ") || "chosen cameras"}` : "All cameras";
+  return off.length ? `${where} · ${off.join(", ")}` : where;
 }
 
 /**
@@ -40,6 +56,7 @@ export function CameraAccessDialog({ user, onClose }: { user: ManagedUser | null
   });
   const locations = useQuery({ queryKey: ["cameras", "locations"], queryFn: () => api<string[]>("/cameras/locations"), enabled: open });
   const [mode, setMode] = useState<"all" | "limited">("all");
+  const [features, setFeatures] = useState<Features>({ live: true, recordings: true, actions: true });
   const [chosenLocations, setChosenLocations] = useState<string[]>([]);
   const [chosenCameras, setChosenCameras] = useState<string[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
@@ -48,6 +65,7 @@ export function CameraAccessDialog({ user, onClose }: { user: ManagedUser | null
   useEffect(() => {
     if (!access.data) return;
     setMode(access.data.mode);
+    setFeatures(access.data.features);
     setChosenLocations(access.data.locations);
     setChosenCameras(access.data.cameraIds);
   }, [access.data]);
@@ -76,10 +94,10 @@ export function CameraAccessDialog({ user, onClose }: { user: ManagedUser | null
     mutationFn: () =>
       api<CameraAccess>(`/users/${user!.id}/camera-access`, {
         method: "PUT",
-        body: mode === "all" ? { mode } : { mode, locations: chosenLocations, cameraIds: chosenCameras },
+        body: { mode, ...(mode === "limited" ? { locations: chosenLocations, cameraIds: chosenCameras } : {}), features },
       }),
     onSuccess: () => {
-      toast("success", mode === "all" ? `${user!.username} sees all cameras` : `${user!.username} sees only the chosen locations and cameras`);
+      toast("success", `Access saved for ${user!.username}`);
       void qc.invalidateQueries({ queryKey: ["users"] });
       onClose();
     },
@@ -94,7 +112,7 @@ export function CameraAccessDialog({ user, onClose }: { user: ManagedUser | null
       open={open}
       onClose={onClose}
       size="lg"
-      title={`Cameras ${user?.username ?? ""} can see`}
+      title={`Access for ${user?.username ?? ""}`}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -113,19 +131,40 @@ export function CameraAccessDialog({ user, onClose }: { user: ManagedUser | null
               {ROLE_LABELS.admin}s always see every camera. What is chosen here applies if their role is changed to {ROLE_LABELS.operator} or {ROLE_LABELS.viewer}.
             </p>
           )}
-          <div className="space-y-2">
-            <label className="flex items-start gap-2">
-              <input type="radio" name="camera-access" className="mt-1" checked={mode === "all"} onChange={() => setMode("all")} />
-              <span><span className="font-medium">All cameras</span><span className="block text-ink-secondary">Every camera of the organization, including ones added later.</span></span>
-            </label>
-            <label className="flex items-start gap-2">
-              <input type="radio" name="camera-access" className="mt-1" checked={mode === "limited"} onChange={() => setMode("limited")} />
-              <span>
-                <span className="font-medium">Only the locations and cameras chosen below</span>
-                <span className="block text-ink-secondary">Everything else is hidden from them: cameras, alerts, live view, recordings, reports and AI Mode.</span>
-              </span>
-            </label>
-          </div>
+          <p className="rounded-md border border-line bg-raised px-3 py-2 text-ink-secondary">
+            The Dashboard, Alerts and reports always show every camera. Here you choose what this user may <b>do</b>, and on which cameras.
+          </p>
+          <section>
+            <h3 className="mb-2 font-medium">Allowed</h3>
+            <div className="space-y-2">
+              {FEATURES.map((f) => (
+                <Checkbox
+                  key={f.key}
+                  label={f.label}
+                  description={access.data && !access.data.available[f.key] ? `${f.description} Not part of the ${ROLE_LABELS[user!.role]} role.` : f.description}
+                  checked={!!access.data?.available[f.key] && features[f.key]}
+                  disabled={!access.data?.available[f.key]}
+                  onChange={(e) => setFeatures({ ...features, [f.key]: e.target.checked })}
+                />
+              ))}
+            </div>
+          </section>
+          <section>
+            <h3 className="mb-2 font-medium">On which cameras</h3>
+            <div className="space-y-2">
+              <label className="flex items-start gap-2">
+                <input type="radio" name="camera-access" className="mt-1" checked={mode === "all"} onChange={() => setMode("all")} />
+                <span><span className="font-medium">All cameras</span><span className="block text-ink-secondary">Every camera, including ones added later.</span></span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input type="radio" name="camera-access" className="mt-1" checked={mode === "limited"} onChange={() => setMode("limited")} />
+                <span>
+                  <span className="font-medium">Only the locations and cameras chosen below</span>
+                  <span className="block text-ink-secondary">Other cameras are left out of their Cameras list, and they cannot open, watch or act on them (they still appear on the Dashboard, in Alerts and in reports).</span>
+                </span>
+              </label>
+            </div>
+          </section>
 
           {mode === "limited" && (
             <>
