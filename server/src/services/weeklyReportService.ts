@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { type Cell, writeXlsx } from "../lib/xlsx.js";
 import { pool } from "../db/pool.js";
 import { zonedParts } from "../lib/csv.js";
 import { badRequest } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
 import { publicLink, sendMail } from "../notifications/mailer.js";
-import { cameraReportCsv } from "./cameraReportService.js";
+import { cameraReportTable } from "./cameraReportService.js";
 import { listQuerySchema } from "./cameraService.js";
 import { getMonitoringSettings } from "./settingsService.js";
 import { uptimeReport } from "./uptimeService.js";
@@ -12,7 +13,7 @@ import { uptimeReport } from "./uptimeService.js";
 /**
  * The weekly email report: per camera, how many days of recordings it holds, and every open
  * problem, with the week's outages. It goes to the organization's email alert addresses
- * (Settings → Notifications), on the day and hour chosen there, with the full camera list as CSV.
+ * (Settings → Notifications), on the day and hour chosen there, with an Excel workbook of every camera and issue.
  */
 
 export const weeklyReportSettingsSchema = z
@@ -29,6 +30,7 @@ export type WeeklyReportSettings = z.infer<typeof weeklyReportSettingsSchema>;
 const SERVER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const DEFAULTS: WeeklyReportSettings = { enabled: true, day: 1, hour: 9, timeZone: SERVER_ZONE };
 const KEY = "weekly_report";
+export const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export async function getWeeklyReportSettings(orgId: string): Promise<WeeklyReportSettings & { recipients: string[]; lastSent: string | null }> {
@@ -87,7 +89,8 @@ export interface WeeklyReport {
   subject: string;
   text: string;
   html: string;
-  csv: string;
+  /** The Excel workbook: Summary, Open issues, Recording days, Outages, All cameras. */
+  xlsx: Buffer;
 }
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -115,8 +118,8 @@ export async function buildWeeklyReport(orgId: string, timeZone: string, now = n
        ORDER BY lower(c.name)`,
       [orgId],
     ),
-    pool.query<{ title: string; severity: string; name: string; host: string; since: Date }>(
-      `SELECT a.title, a.severity, c.name, c.host, a.first_detected_at AS since
+    pool.query<{ title: string; severity: string; status: string; name: string; host: string; location: string | null; since: Date; description: string }>(
+      `SELECT a.title, a.severity, a.status, c.name, c.host, c.location, a.first_detected_at AS since, a.description
        FROM alerts a JOIN cameras c ON c.id = a.camera_id
        WHERE c.organization_id = $1 AND c.deleted_at IS NULL AND a.status <> 'resolved'
        ORDER BY CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.title, lower(c.name)`,
@@ -225,11 +228,63 @@ ${outages.length
         .map((c) => `<tr><td style="${td}">${esc(c.name)}</td><td style="${td}">${c.outages}</td><td style="${td}">${c.uptime === null ? "—" : c.uptime.toFixed(1)}%</td></tr>`)
         .join("")}</table>`
     : ""}
-<p style="margin-top:20px;color:#6b7280">${link ? `<a href="${esc(link)}">Open the dashboard</a> · ` : ""}The attached CSV lists every camera.</p>
+<p style="margin-top:20px;color:#6b7280">${link ? `<a href="${esc(link)}">Open the dashboard</a> · ` : ""}The attached Excel workbook has every camera and every open issue.</p>
 </body></html>`;
 
-  const { csv } = await cameraReportCsv(orgId, listQuerySchema.parse({}), timeZone);
-  return { subject, text: text.join("\n"), html, csv };
+  // ---- Excel workbook
+  const local = (d: Date | null) => (d ? zonedParts(new Date(d).getTime(), timeZone).text.slice(0, 16) : "");
+  const nowMs = now.getTime();
+  const num = (v: unknown) => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : (v as Cell));
+  const all = (await cameraReportTable(orgId, listQuerySchema.parse({}), timeZone)).map((r) => r.map(num));
+  const xlsx = writeXlsx([
+    {
+      name: "Summary",
+      plain: true,
+      widths: [36, 40],
+      rows: [
+        [`Weekly CCTV report — ${orgName}`, null],
+        ["Date", date],
+        ["Time zone", timeZone],
+        [null, null],
+        ...summary.map(([k, v]): Cell[] => [k, typeof v === "string" && /^-?\d+(\.\d+)?%?$/.test(v) && !v.endsWith("%") ? Number(v) : v]),
+        [null, null],
+        ["Required days of recordings", minDays > 0 ? minDays : "not set"],
+      ],
+    },
+    {
+      name: "Open issues",
+      rows: [
+        ["Issue", "Severity", "Status", "Camera", "IP address", "Location", `Since (${timeZone})`, "Days open", "Details"],
+        ...(alerts.length ? [] : [["No open issues"] as Cell[]]),
+        ...alerts.map((a): Cell[] => [
+          a.title, a.severity, a.status, a.name, a.host, a.location, local(a.since),
+          Math.round(((nowMs - new Date(a.since).getTime()) / 86_400_000) * 10) / 10, a.description,
+        ]),
+      ],
+    },
+    {
+      name: "Recording days",
+      rows: [
+        ["Camera", "IP address", "Location", "Days of recordings", "At least (search stopped)", "SD card used %", "Status"],
+        ...[...sortedDays, ...withStorage.filter((c) => !known.includes(c))].map((c): Cell[] => [
+          c.name, c.host, c.location, days(c) === null ? "unknown" : Math.round(days(c)! * 10) / 10,
+          c.recording_days_at_least ? "yes" : "", c.used_percentage === null ? null : Math.round(Number(c.used_percentage) * 10) / 10, status(c),
+        ]),
+      ],
+    },
+    {
+      name: "Outages (7 days)",
+      rows: [
+        ["Camera", "Location", "Times offline", "Longest outage (minutes)", "Uptime %"],
+        ...(uptime.cameras.some((c) => c.outages > 0) ? [] : [["None in the last 7 days"] as Cell[]]),
+        ...uptime.cameras.filter((c) => c.outages > 0).map((c): Cell[] => [
+          c.name, c.location, c.outages, Math.round(c.longestOutageSeconds / 60), c.uptime === null ? null : Math.round(c.uptime * 10) / 10,
+        ]),
+      ],
+    },
+    { name: "All cameras", rows: all },
+  ]);
+  return { subject, text: text.join("\n"), html, xlsx };
 }
 
 /** Builds the report and emails it to every email alert address. */
@@ -247,7 +302,7 @@ export async function sendWeeklyReport(orgId: string): Promise<{ sentTo: string[
         subject: report.subject,
         text: report.text,
         html: report.html,
-        attachments: [{ filename: `cctv-cameras-${date}.csv`, content: report.csv, contentType: "text/csv; charset=utf-8" }],
+        attachments: [{ filename: `cctv-weekly-report-${date}.xlsx`, content: report.xlsx, contentType: XLSX_TYPE }],
       });
       sentTo.push(to);
     } catch (err) {

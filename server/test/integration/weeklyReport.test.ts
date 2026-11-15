@@ -1,3 +1,4 @@
+import { inflateRawSync } from "node:zlib";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../src/db/pool.js";
 import { type MailMessage, setMailSender } from "../../src/notifications/mailer.js";
@@ -14,6 +15,23 @@ import {
 import { createTestUser, prepareDb, resetData, testOrgId } from "../helpers.js";
 
 let actor: { id: string; username: string };
+
+/** The parts of a zip (an .xlsx), by name, as text. */
+function unzip(buf: Buffer): Record<string, string> {
+  const out: Record<string, string> = {};
+  const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let p = buf.readUInt32LE(end + 16);
+  for (let i = 0; i < buf.readUInt16LE(end + 10); i++) {
+    const nameLen = buf.readUInt16LE(p + 28);
+    const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
+    const local = buf.readUInt32LE(p + 42);
+    const size = buf.readUInt32LE(p + 20);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    out[name] = inflateRawSync(buf.subarray(start, start + size)).toString("utf8");
+    p += 46 + nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+  }
+  return out;
+}
 let mail: MailMessage[] = [];
 let nextHost = 2;
 
@@ -72,7 +90,13 @@ describe("weekly report", () => {
     expect(r.text).toContain("- Camera not recording (warning, 1): Lobby (10.0.0.3)");
     expect(r.html).toContain("Not recording");
     expect(r.html).toContain("No SD card");
-    expect(r.csv.split("\n")[0]).toContain("Recordings available (days)");
+    // The Excel workbook: its sheets, the issue and the cameras' days, as numbers.
+    const book = unzip(r.xlsx);
+    expect(book["xl/workbook.xml"]).toMatch(/name="Summary".*name="Open issues".*name="Recording days".*name="Outages \(7 days\)".*name="All cameras"/);
+    expect(book["xl/worksheets/sheet2.xml"]).toContain("Camera not recording");
+    expect(book["xl/worksheets/sheet2.xml"]).toContain("Lobby");
+    expect(book["xl/worksheets/sheet3.xml"]).toMatch(/Lobby.*<v>12.5<\/v>/);
+    expect(book["xl/worksheets/sheet5.xml"]).toContain("Recordings available (days)");
   });
 
   it("goes to the email alert addresses, with the camera list attached", async () => {
@@ -84,7 +108,8 @@ describe("weekly report", () => {
     expect(r.sentTo.sort()).toEqual(["guard@example.com", "ops@example.com"]);
     expect(mail).toHaveLength(2);
     expect(mail[0]!.html).toContain("Gate");
-    expect(mail[0]!.attachments?.[0]?.filename).toMatch(/^cctv-cameras-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(mail[0]!.attachments?.[0]?.filename).toMatch(/^cctv-weekly-report-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(Buffer.isBuffer(mail[0]!.attachments?.[0]?.content)).toBe(true);
   });
 
   it("is sent once on its day and hour, in its time zone", async () => {

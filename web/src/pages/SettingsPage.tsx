@@ -731,6 +731,14 @@ function WeeklyReportCard({ editable }: { editable: boolean }) {
       actions={
         <div className="flex gap-2">
           <Button size="sm" variant="ghost" onClick={() => window.open("/api/settings/weekly-report/preview", "_blank", "noopener")}>Preview</Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Download className="h-4 w-4" />}
+            onClick={() => downloadFile("/settings/weekly-report.xlsx", `cctv-weekly-report-${new Date().toISOString().slice(0, 10)}.xlsx`).catch((e: Error) => toast("error", e.message))}
+          >
+            Download Excel
+          </Button>
           {editable && <Button size="sm" icon={<Send className="h-4 w-4" />} loading={send.isPending} disabled={!r.recipients.length} onClick={() => send.mutate()}>Send now</Button>}
         </div>
       }
@@ -738,7 +746,7 @@ function WeeklyReportCard({ editable }: { editable: boolean }) {
       <div className="space-y-3 p-4 text-sm">
         <p className="text-ink-secondary">
           Every camera's days of recordings (fewest first), every open problem (offline, not recording, SD card, storage…) and the week's outages,
-          with the full camera list attached as a spreadsheet.
+          in the email and as an attached Excel workbook (sheets: Summary, Open issues, Recording days, Outages, All cameras).
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Checkbox label="Send it every" checked={r.enabled} disabled={!editable || save.isPending} onChange={(e) => save.mutate({ enabled: e.target.checked })} />

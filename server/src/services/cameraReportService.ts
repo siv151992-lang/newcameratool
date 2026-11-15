@@ -58,6 +58,12 @@ export function sdCardStatus(r: Pick<ReportRow, "local_storage" | "last_success_
 }
 
 export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: string): Promise<{ csv: string; rows: number }> {
+  const lines = await cameraReportTable(orgId, q, timeZone);
+  return { csv: toCsv(lines), rows: lines.length - 1 };
+}
+
+/** The camera status report as a table: a header row, then one row per camera. */
+export async function cameraReportTable(orgId: string, q: ListQuery, timeZone: string): Promise<unknown[][]> {
   zonedParts(Date.now(), timeZone); // validates the zone
   const { clause, params } = listFilter(orgId, q);
   const order = `${SORT_COLUMNS[q.sort]} ${q.order === "desc" ? "DESC" : "ASC"} NULLS LAST, c.id`;
@@ -110,5 +116,5 @@ export async function cameraReportCsv(orgId: string, q: ListQuery, timeZone: str
       PASSWORD[r.password_status] ?? "",
     ]);
   }
-  return { csv: toCsv(lines), rows: rows.length };
+  return lines;
 }

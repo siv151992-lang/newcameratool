@@ -14,7 +14,7 @@ export interface MailMessage {
   text: string;
   /** Optional HTML version (the text one is always sent too). */
   html?: string;
-  attachments?: { filename: string; content: string; contentType: string }[];
+  attachments?: { filename: string; content: string | Buffer; contentType: string }[];
 }
 
 type Sender = (m: MailMessage) => Promise<void>;

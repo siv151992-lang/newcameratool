@@ -25,7 +25,7 @@ import { camerasOutside, getNetworkSettings, networkSettingsSchema, updateNetwor
 import { emailSettingsSchema, emailSettingsView, getEmailSettings, updateEmailSettings } from "../services/emailSettings.js";
 import { sendMail } from "../notifications/mailer.js";
 import { detectMailServer } from "../services/mailDetect.js";
-import { buildWeeklyReport, getWeeklyReportSettings, sendWeeklyReport, updateWeeklyReportSettings, weeklyReportSettingsSchema } from "../services/weeklyReportService.js";
+import { buildWeeklyReport, getWeeklyReportSettings, sendWeeklyReport, updateWeeklyReportSettings, weeklyReportSettingsSchema, XLSX_TYPE } from "../services/weeklyReportService.js";
 import { redirectUri } from "../auth/oauth.js";
 import { providerSettingsSchema, providerSettingsView, updateProviderSettings } from "../services/providerSettings.js";
 import { deviceLimiter } from "./limits.js";
@@ -184,6 +184,13 @@ settingsRouter.get("/weekly-report/preview", requirePermission("settings:read"),
   const s = await getWeeklyReportSettings(orgOf(req));
   const report = await buildWeeklyReport(orgOf(req), s.timeZone);
   res.type("html").set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'").send(report.html);
+});
+/** The weekly report as an Excel workbook, to download now. */
+settingsRouter.get("/weekly-report.xlsx", requirePermission("settings:read"), allCamerasMiddleware, async (req, res) => {
+  const s = await getWeeklyReportSettings(orgOf(req));
+  const report = await buildWeeklyReport(orgOf(req), s.timeZone);
+  const date = new Date().toISOString().slice(0, 10);
+  res.set("Content-Type", XLSX_TYPE).set("Content-Disposition", `attachment; filename="cctv-weekly-report-${date}.xlsx"`).send(report.xlsx);
 });
 settingsRouter.post("/weekly-report/send", requirePermission("settings:write"), async (req, res) => {
   res.json(await sendWeeklyReport(orgOf(req)));
