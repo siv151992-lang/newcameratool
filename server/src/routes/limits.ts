@@ -20,4 +20,6 @@ export const importLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 30,
 export const aiLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 20, message: msg("Too many AI requests. Wait a minute and try again.") });
 // Integration tests contact a camera with an administrator-supplied configuration.
 export const integrationLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 20, message: msg("Too many integration tests. Wait a minute and try again.") });
+// Report workbooks read every camera and a week of history.
+export const reportLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 10, message: msg("Too many report downloads. Wait a minute and try again.") });
 export const apiLimiter = rateLimit({ ...common, windowMs: 60_000, limit: 600, message: msg("Too many requests.") });

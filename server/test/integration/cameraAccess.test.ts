@@ -65,7 +65,10 @@ describe("camera access per user", () => {
     expect((await v.get("/api/cameras/ids").expect(200)).body.total).toBe(3);
     expect((await v.get("/api/cameras/locations").expect(200)).body).toEqual(["Site A"]);
     await v.get(`/api/cameras/${gate.id}`).expect(200);
-    await v.get(`/api/cameras/${store.id}`).expect(404);
+    // A camera outside the member's access (its alert links here): a clear "no access", not "not found".
+    expect((await v.get(`/api/cameras/${store.id}`).expect(403)).body.error.code).toBe("NO_CAMERA_ACCESS");
+    await v.get("/api/cameras/00000000-0000-4000-8000-000000000000").expect(404);
+    expect((await v.get("/api/auth/me").expect(200)).body.user.cameraAccess).toBe("limited");
     await v.get(`/api/cameras/${store.id}/history`).expect(404);
     await v.get(`/api/cameras/${store.id}/events`).expect(404);
 

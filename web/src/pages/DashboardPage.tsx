@@ -32,7 +32,7 @@ function StatTile({ label, value, icon, hint, to }: { label: string; value: Reac
 }
 
 export function DashboardPage() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const navigate = useNavigate();
   const summary = useQuery({ queryKey: ["summary"], queryFn: () => api<Summary>("/cameras/summary"), refetchInterval: 30_000 });
   const report = useDownloadCameraReport();
@@ -59,7 +59,11 @@ export function DashboardPage() {
       {/* Adding, importing and listing cameras live on the Cameras page; each tile opens it filtered. */}
       <PageHeader
         title="Dashboard"
-        description="Storage health across all registered cameras. Select a tile to see those cameras."
+        description={
+          user?.cameraAccess === "limited"
+            ? "Storage health across all registered cameras. The counts include every camera; the tiles open only the cameras you have access to."
+            : "Storage health across all registered cameras. Select a tile to see those cameras."
+        }
         actions={
           <>
             {updatedAt > 0 && (

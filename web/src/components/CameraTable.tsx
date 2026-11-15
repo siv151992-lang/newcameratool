@@ -294,7 +294,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
     mutationFn: () =>
       downloadFile(
         `/cameras/weekly-report.xlsx?timeZone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`,
-        `cctv-weekly-report-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        `cctv-weekly-report-${new Date().toLocaleDateString("en-CA")}.xlsx`,
       ),
     onError: (e: Error) => toast("error", e.message),
   });

@@ -735,7 +735,7 @@ function WeeklyReportCard({ editable }: { editable: boolean }) {
             size="sm"
             variant="ghost"
             icon={<Download className="h-4 w-4" />}
-            onClick={() => downloadFile("/settings/weekly-report.xlsx", `cctv-weekly-report-${new Date().toISOString().slice(0, 10)}.xlsx`).catch((e: Error) => toast("error", e.message))}
+            onClick={() => downloadFile("/settings/weekly-report.xlsx", `cctv-weekly-report-${new Date().toLocaleDateString("en-CA")}.xlsx`).catch((e: Error) => toast("error", e.message))}
           >
             Download Excel
           </Button>

@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
-import { buildWeeklyReport, XLSX_TYPE } from "../services/weeklyReportService.js";
-import { allCamerasMiddleware } from "../auth/cameraScope.js";
+import { sendWeeklyReportXlsx } from "./weeklyReportDownload.js";
+import { allCamerasMiddleware, isCameraScoped, runWithCameraScope } from "../auth/cameraScope.js";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { Router } from "express";
 import { z } from "zod";
@@ -44,7 +44,7 @@ import { firmwareCameras, firmwareCamerasQuery, firmwareCsv, firmwareInventory }
 import { fetchCameraCertificate } from "../services/tlsCertificate.js";
 import { CLIP_MAX_SECONDS, listRecordings, liveProblem, liveVideoEnabled, oldestRecording, playbackStreamName, preparePlayback, recordedDays, recordingClip, prepareStream } from "../services/liveVideoService.js";
 import { lastRefusal, playbackDiagnosis, playbackTimings } from "../services/rtspReplayRelay.js";
-import { deviceLimiter, importLimiter, liveViewLimiter } from "./limits.js";
+import { deviceLimiter, importLimiter, liveViewLimiter, reportLimiter } from "./limits.js";
 
 export const camerasRouter = Router();
 const read = requirePermission("cameras:read");
@@ -70,13 +70,9 @@ camerasRouter.get("/report", read, allCamerasMiddleware, async (req, res) => {
 });
 
 /** The weekly report as an Excel workbook, for anyone who can see cameras (reports cover every camera). */
-camerasRouter.get("/weekly-report.xlsx", read, allCamerasMiddleware, async (req, res) => {
+camerasRouter.get("/weekly-report.xlsx", read, reportLimiter, allCamerasMiddleware, async (req, res) => {
   const { timeZone } = parse(z.object({ timeZone: z.string().min(1).max(64).default("UTC") }), { timeZone: req.query.timeZone });
-  const report = await buildWeeklyReport(orgOf(req), timeZone);
-  await audit({ actor: actorOf(req), ip: req.ip, action: "camera.weekly_report_exported", entityType: "camera", details: {} });
-  res.setHeader("Content-Type", XLSX_TYPE);
-  res.setHeader("Content-Disposition", `attachment; filename="cctv-weekly-report-${new Date().toISOString().slice(0, 10)}.xlsx"`);
-  res.send(report.xlsx);
+  await sendWeeklyReportXlsx(req, res, timeZone);
 });
 
 camerasRouter.get("/ids", read, async (req, res) => {
@@ -198,7 +194,16 @@ camerasRouter.get("/live-video", requirePermission("cameras:live"), (_req, res) 
 });
 
 camerasRouter.get("/:id", read, async (req, res) => {
-  res.json(await getCamera(param(req), orgOf(req)));
+  try {
+    res.json(await getCamera(param(req), orgOf(req)));
+  } catch (e) {
+    // A limited member can see every camera's alerts, so links lead here: say why it does not open.
+    if (e instanceof HttpError && e.status === 404 && isCameraScoped()) {
+      const exists = await runWithCameraScope(null, () => getCameraRow(param(req), orgOf(req)).then(() => true, () => false));
+      if (exists) throw new HttpError(403, "NO_CAMERA_ACCESS", "You do not have access to this camera. Ask an Org Admin to add it to your cameras.");
+    }
+    throw e;
+  }
 });
 
 camerasRouter.patch("/:id", write, async (req, res) => {

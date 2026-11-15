@@ -73,6 +73,7 @@ describe("weekly report", () => {
     await camera("Gate", { connection: "online", recording: "recording", days: 32 });
     const lobby = await camera("Lobby", { connection: "online", recording: "idle", days: 12.5 });
     await camera("Store", { connection: "online", recording: "recording", days: null, devices: 0 });
+    await camera("007", { connection: "online", recording: "recording", days: 40 });
     await pool.query(
       "INSERT INTO alerts (camera_id, type, severity, status, title, description) VALUES ($1, 'not_recording', 'warning', 'active', 'Camera not recording', 'x')",
       [lobby],
@@ -97,6 +98,9 @@ describe("weekly report", () => {
     expect(book["xl/worksheets/sheet2.xml"]).toContain("Lobby");
     expect(book["xl/worksheets/sheet3.xml"]).toMatch(/Lobby.*<v>12.5<\/v>/);
     expect(book["xl/worksheets/sheet5.xml"]).toContain("Recordings available (days)");
+    // A camera named "007" stays text (not the number 7); its days are a number.
+    expect(book["xl/worksheets/sheet5.xml"]).toMatch(/t="inlineStr"><is><t xml:space="preserve">007<\/t>/);
+    expect(r.fileName).toMatch(/^cctv-weekly-report-\d{4}-\d{2}-\d{2}\.xlsx$/);
   });
 
   it("goes to the email alert addresses, with the camera list attached", async () => {

@@ -91,6 +91,8 @@ export interface WeeklyReport {
   html: string;
   /** The Excel workbook: Summary, Open issues, Recording days, Outages, All cameras. */
   xlsx: Buffer;
+  /** The workbook's file name, with the date in the report's time zone. */
+  fileName: string;
 }
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -234,8 +236,12 @@ ${outages.length
   // ---- Excel workbook
   const local = (d: Date | null) => (d ? zonedParts(new Date(d).getTime(), timeZone).text.slice(0, 16) : "");
   const nowMs = now.getTime();
-  const num = (v: unknown) => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : (v as Cell));
-  const all = (await cameraReportTable(orgId, listQuerySchema.parse({}), timeZone)).map((r) => r.map(num));
+  // Only the numeric columns become numbers: a camera named "007" or a serial stays text.
+  const table = await cameraReportTable(orgId, listQuerySchema.parse({}), timeZone);
+  const numeric = new Set(["Port", "Capacity (GB)", "Used (GB)", "Free (GB)", "Used %", "Recordings available (days)", "SD card wear % (camera-reported)"]);
+  const numCols = new Set((table[0] ?? []).map((h, i) => (numeric.has(String(h)) ? i : -1)).filter((i) => i >= 0));
+  const num = (v: unknown, i: number) => (numCols.has(i) && typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : (v as Cell));
+  const all = table.map((r, ri) => (ri === 0 ? (r as Cell[]) : r.map(num)));
   const xlsx = writeXlsx([
     {
       name: "Summary",
@@ -284,7 +290,7 @@ ${outages.length
     },
     { name: "All cameras", rows: all },
   ]);
-  return { subject, text: text.join("\n"), html, xlsx };
+  return { subject, text: text.join("\n"), html, xlsx, fileName: `cctv-weekly-report-${date}.xlsx` };
 }
 
 /** Builds the report and emails it to every email alert address. */

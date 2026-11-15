@@ -18,6 +18,8 @@ export interface User {
   isSystemAdmin: boolean;
   organizationId: string | null;
   organizationName: string | null;
+  /** "limited": an Org Admin chose which locations or cameras this member can open. */
+  cameraAccess?: "all" | "limited";
 }
 
 /** An organization the signed-in user belongs to. */
