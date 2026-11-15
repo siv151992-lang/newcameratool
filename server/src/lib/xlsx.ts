@@ -18,7 +18,8 @@ export interface SheetData {
 
 const esc = (v: string) =>
   v.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!)
-    // Characters XML 1.0 does not allow.
+    // Characters XML 1.0 does not allow (matching control characters is the point here).
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
 
 function colName(i: number): string {
