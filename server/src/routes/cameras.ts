@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { buildWeeklyReport, XLSX_TYPE } from "../services/weeklyReportService.js";
 import { allCamerasMiddleware } from "../auth/cameraScope.js";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { Router } from "express";
@@ -66,6 +67,16 @@ camerasRouter.get("/report", read, allCamerasMiddleware, async (req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="camera-status-report-${day}.csv"`);
   res.send(csv);
+});
+
+/** The weekly report as an Excel workbook, for anyone who can see cameras (reports cover every camera). */
+camerasRouter.get("/weekly-report.xlsx", read, allCamerasMiddleware, async (req, res) => {
+  const { timeZone } = parse(z.object({ timeZone: z.string().min(1).max(64).default("UTC") }), { timeZone: req.query.timeZone });
+  const report = await buildWeeklyReport(orgOf(req), timeZone);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "camera.weekly_report_exported", entityType: "camera", details: {} });
+  res.setHeader("Content-Type", XLSX_TYPE);
+  res.setHeader("Content-Disposition", `attachment; filename="cctv-weekly-report-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(report.xlsx);
 });
 
 camerasRouter.get("/ids", read, async (req, res) => {

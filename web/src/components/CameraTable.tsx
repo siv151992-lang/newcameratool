@@ -1,10 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, ArrowUpDown, Camera as CameraIcon, Download, Eye, Film, HardDrive, HardDriveDownload, Pencil, Radar, RefreshCw, Search, ShieldAlert, Trash2, Video, Wrench } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Camera as CameraIcon, Download, Eye, FileSpreadsheet, Film, HardDrive, HardDriveDownload, Pencil, Radar, RefreshCw, Search, ShieldAlert, Trash2, Video, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { PingDialog } from "./PingDialog";
-import { api, toQuery } from "../api/client";
+import { api, downloadFile, toQuery } from "../api/client";
 import type { Brand, Camera, Page } from "../api/types";
 import { useAuth } from "../hooks/auth";
 import { useCheckNow, useDownloadCameraReport, useRemoveCameras, useSetLocalStorage, useSetPriority } from "../hooks/cameras";
@@ -17,6 +17,7 @@ import { RemoveCamerasDialog } from "./RemoveCamerasDialog";
 import { MaintenanceDialog } from "./MaintenanceDialog";
 import { ConnectionBadge, CriticalAreaBadge, HealthBadge, MaintenanceBadge, NoLocalStorageBadge, NvrBadge, PasswordBadge, RecordingBadge, UsageMeter } from "./status";
 import { Button, EmptyState, ErrorMessage, Input, Pagination, Select, Spinner } from "./ui";
+import { useToast } from "./toast";
 
 type SortKey = "name" | "host" | "brand" | "location" | "connection" | "health" | "recording" | "usage" | "lastSuccess" | "recordingDays" | "password";
 
@@ -288,6 +289,15 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
     }
   };
   const canWrite = can("cameras:write");
+  const toast = useToast();
+  const weekly = useMutation({
+    mutationFn: () =>
+      downloadFile(
+        `/cameras/weekly-report.xlsx?timeZone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`,
+        `cctv-weekly-report-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      ),
+    onError: (e: Error) => toast("error", e.message),
+  });
 
   return (
     <section className="rounded-lg border border-line bg-surface">
@@ -319,6 +329,14 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
               title={filtered ? "Status report (CSV) of the cameras matching these filters" : "Status report (CSV) of all cameras"}
             >
               {filtered ? `Download report (${total})` : "Download report"}
+            </Button>
+            <Button
+              icon={<FileSpreadsheet className="h-4 w-4" />}
+              loading={weekly.isPending}
+              onClick={() => weekly.mutate()}
+              title="Weekly report (Excel): summary, open issues, days of recordings, outages and every camera"
+            >
+              Weekly report
             </Button>
             <ColumnsMenu columns={COLUMNS} {...columnVisibility} />
           </div>

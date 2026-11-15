@@ -78,6 +78,14 @@ describe("camera access per user", () => {
     expect((await v.get("/api/cameras/report?timeZone=UTC").expect(200)).text).toContain("Store");
     expect(((await v.get("/api/cameras/uptime?days=7").expect(200)).body.cameras as { name: string }[]).map((c) => c.name)).toContain("Store");
     expect(JSON.stringify((await v.get("/api/cameras/firmware/cameras?brand=hikvision").expect(200)).body)).toContain("Store");
+    // The weekly report in Excel, from the Cameras page: for a Viewer too, covering every camera.
+    const xlsx = await v.get("/api/cameras/weekly-report.xlsx?timeZone=Asia/Kolkata").buffer(true).parse((res, cb) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => cb(null, Buffer.concat(chunks)));
+    }).expect(200);
+    expect(xlsx.headers["content-type"]).toContain("spreadsheetml");
+    expect((xlsx.body as Buffer).subarray(0, 2).toString()).toBe("PK");
 
     // The operator: live view, recordings and actions on Site A only; alerts as the role allows.
     const op = operator.agent;
