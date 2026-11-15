@@ -2,37 +2,22 @@ import clsx from "clsx";
 
 export const APP_NAME = "Zoho IBMS CCTV Monitoring";
 
-/** The Zoho mark: four overlapping rounded squares, red, green, blue and yellow, each tilted a little. */
-export function ZohoMark({ className }: { className?: string }) {
-  const squares = [
-    { x: 3, y: 10, color: "#E42527", turn: -9 },
-    { x: 25, y: 8, color: "#089949", turn: 9 },
-    { x: 47, y: 10, color: "#226DB4", turn: -7 },
-    { x: 69, y: 9, color: "#F9B21D", turn: 5 },
-  ];
-  return (
-    <svg viewBox="0 0 96 40" className={className} aria-hidden focusable="false">
-      {squares.map((q) => (
-        <rect key={q.color} x={q.x} y={q.y} width="22" height="22" rx="4.5" fill="none" stroke={q.color} strokeWidth="4.2"
-          transform={`rotate(${q.turn} ${q.x + 11} ${q.y + 11})`} />
-      ))}
-    </svg>
-  );
+/** The IBMS mark: the building in a circle, white on IBMS blue (public/ibms-mark.png). */
+export function IbmsMark({ className }: { className?: string }) {
+  return <img src="/ibms-mark.png" alt="" aria-hidden draggable={false} className={clsx("rounded-[22%] object-cover", className)} />;
 }
 
 /**
- * The app's name as a brand: the Zoho mark and a two-line wordmark, "Zoho IBMS" over
- * "CCTV MONITORING". `compact` shows the mark only; `onDark` is for dark panels.
+ * The app's name as a brand: the IBMS mark with "IBMS" under it, and a two-line wordmark,
+ * "Zoho IBMS" over "CCTV MONITORING". `compact` shows the mark only; `onDark` is for dark panels.
  */
 export function Brand({ compact, onDark, size = "md", className }: { compact?: boolean; onDark?: boolean; size?: "sm" | "md" | "lg"; className?: string }) {
-  const mark = compact
-    ? "h-5 w-12"
-    : size === "lg" ? "h-11 w-[6.5rem]" : size === "sm" ? "h-6 w-[3.6rem]" : "h-7 w-[4.1rem]";
+  const mark = compact ? "h-7 w-7" : size === "lg" ? "h-12 w-12" : size === "sm" ? "h-7 w-7" : "h-9 w-9";
   return (
     <span className={clsx("inline-flex min-w-0 items-center gap-2", className)} title={compact ? APP_NAME : undefined}>
-      {/* The Zoho logo: the four squares with "ZOHO" under them. */}
+      {/* The IBMS logo with "IBMS" under it. */}
       <span className="flex shrink-0 flex-col items-center leading-none">
-        <ZohoMark className={mark} />
+        <IbmsMark className={mark} />
         <span
           className={clsx(
             "font-bold uppercase",
@@ -41,7 +26,7 @@ export function Brand({ compact, onDark, size = "md", className }: { compact?: b
           )}
           style={{ marginRight: "-0.38em" }}
         >
-          Zoho
+          IBMS
         </span>
       </span>
       {!compact && (
