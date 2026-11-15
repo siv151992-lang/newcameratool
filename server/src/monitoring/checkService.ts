@@ -434,7 +434,10 @@ async function persist(
     );
     const cam = rows[0];
     if (!cam) return [];
-    const thresholds = thresholdsFor(settings, cam);
+    // A camera that overwrites its oldest recordings when the card is full is meant to run full:
+    // no storage usage alerts for it (as set on the camera; read every few hours).
+    const base = thresholdsFor(settings, cam);
+    const thresholds = cam.recording_overwrite === true ? { ...base, usageAlertsEnabled: false } : base;
     const prevConnection = cam.connection_status as "online" | "offline" | "unknown";
 
     let connection = prevConnection;

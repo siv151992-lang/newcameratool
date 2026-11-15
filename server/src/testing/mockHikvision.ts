@@ -83,7 +83,7 @@ export class MockHikvisionCamera {
    */
   continuousClips = true;
   /** Overwrite when full (<LoopEnable> in the recording track). */
-  overwrite = true;
+  overwrite: boolean | null = true; // null: not reported, like many cameras
   /** Where the API is served: "/ISAPI" (Hikvision), or "/pramaAPI" (newer Prama firmware; /ISAPI is then 404). */
   apiRoot = "/ISAPI";
   /** Set to simulate an NVR: its channels (cameras), with video or not, recording or not. */
@@ -295,7 +295,7 @@ export class MockHikvisionCamera {
         return `<?xml version="1.0" encoding="UTF-8"?><CMSearchResult version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><responseStatus>true</responseStatus><responseStatusStrg>OK</responseStatusStrg><numOfMatches>${items.length}</numOfMatches><matchList>${matches}</matchList></CMSearchResult>`;
       },
       "/ISAPI/ContentMgmt/record/tracks/101": () =>
-        `<?xml version="1.0" encoding="UTF-8"?><Track version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><id>101</id><Enable>${this.recording === "idle" ? "false" : "true"}</Enable><LoopEnable>${this.overwrite}</LoopEnable><TrackSchedule><ScheduleBlockList><ScheduleBlock>${days
+        `<?xml version="1.0" encoding="UTF-8"?><Track version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema"><id>101</id><Enable>${this.recording === "idle" ? "false" : "true"}</Enable>${this.overwrite === null ? "" : `<LoopEnable>${this.overwrite}</LoopEnable>`}<TrackSchedule><ScheduleBlockList><ScheduleBlock>${days
           .map((d) => `<ScheduleAction><id>1</id><ScheduleActionStartTime><DayOfWeek>${d}</DayOfWeek><TimeOfDay>00:00:00</TimeOfDay></ScheduleActionStartTime><ScheduleActionEndTime><DayOfWeek>${d}</DayOfWeek><TimeOfDay>24:00:00</TimeOfDay></ScheduleActionEndTime><Actions><Record>true</Record><ActionRecordingMode>CMR</ActionRecordingMode></Actions></ScheduleAction>`)
           .join("")}</ScheduleBlock></ScheduleBlockList></TrackSchedule></Track>`,
     };

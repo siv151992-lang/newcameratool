@@ -316,7 +316,7 @@ function MonitoringSettingsTab({ groupKey }: { groupKey: string }) {
             <div className="sm:col-span-2 lg:col-span-3">
               <Checkbox
                 label="Raise alerts for high storage usage"
-                description="Turn this off if cameras are set to overwrite old recordings, so cards that are always nearly full don't stay in warning. Disk health, read-only and offline alerts still apply."
+                description="Cameras that report overwrite on (Hikvision, Prama, Dahua, Hanwha) never get usage alerts: a full card is normal for them. Turn this off to stop usage alerts for every camera, e.g. when all cameras overwrite but some brands do not report it (Uniview, ONVIF). Disk health, read-only, not-recording and offline alerts still apply."
                 disabled={!editable}
                 checked={usageAlerts}
                 onChange={(e) => setUsageAlerts(e.target.checked)}

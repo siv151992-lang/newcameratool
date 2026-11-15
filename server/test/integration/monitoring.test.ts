@@ -14,6 +14,8 @@ const sent: NotificationEvent[] = [];
 const deps = { registry, notifier: { dispatch: async (e: NotificationEvent[]) => void sent.push(...e) }, sleep: async () => undefined };
 
 const cam = new MockHikvisionCamera("admin", "Cam-Pass-123");
+// Overwrite not reported unless a test says otherwise: usage alerts apply (with overwrite on, a full card is normal).
+cam.overwrite = null;
 let port: number;
 let actor: { id: string; username: string };
 
@@ -194,6 +196,7 @@ describe("storage checks", () => {
   });
 
   it("alerts when overwrite is off and when the last 24 hours of recordings have gaps", async () => {
+    cam.overwrite = true;
     const id = await addCamera();
     await runCheck(id, "manual", deps);
     expect((await status(id))).toMatchObject({ recording_overwrite: true, recording_continuous: true, recording_gaps: [] });
@@ -212,6 +215,24 @@ describe("storage checks", () => {
     }
     await runCheck(id, "manual", deps);
     expect((await alerts(id)).every((a) => a.status === "resolved")).toBe(true);
+    cam.overwrite = null;
+  });
+
+  it("raises no storage usage alerts for a camera that overwrites when full", async () => {
+    cam.setDisks([{ id: 1, name: "hdd1", status: "ok", capacityMb: 128_000, freeMb: 6_000, property: "RW" }]); // 95% used
+    const id = await addCamera();
+    cam.overwrite = true;
+    try {
+      await runCheck(id, "manual", deps);
+      expect(await alerts(id)).toEqual([]);
+      expect((await status(id)).storage_health).toBe("healthy");
+      // The same card with overwrite off: the camera would stop recording when full, so it is critical.
+      cam.overwrite = false;
+      await runCheck(id, "manual", deps);
+      expect((await alerts(id)).map((a) => `${a.type}:${a.severity}`).sort()).toEqual(["overwrite_off:warning", "storage_usage:critical"]);
+    } finally {
+      cam.overwrite = null;
+    }
   });
 
   it("alerts when the SD card has been formatting for over an hour, and clears when it is done", async () => {

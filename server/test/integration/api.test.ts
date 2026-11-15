@@ -8,6 +8,8 @@ import { createTestUser, PASSWORD, prepareDb, resetData } from "../helpers.js";
 
 const app = createApp();
 const cam = new MockHikvisionCamera("admin", "Cam-Pass-123");
+// Overwrite not reported: a nearly full card raises usage alerts (with overwrite on it is normal).
+cam.overwrite = null;
 let port: number;
 
 async function signIn(role: "admin" | "operator" | "viewer", opts: { systemAdmin?: boolean } = {}) {
