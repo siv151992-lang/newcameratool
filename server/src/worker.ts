@@ -11,6 +11,8 @@ import { notifier } from "./notifications/notifier.js";
 import { getCipher } from "./security/cipher.js";
 import { syncBrands } from "./services/brandService.js";
 import { sendDueWeeklyReports } from "./services/weeklyReportService.js";
+import { backupIfDue } from "./services/backupService.js";
+import { notifyHealthProblems, recordWorkerHeartbeat } from "./services/healthService.js";
 
 async function main() {
   getCipher(); // fail fast if the encryption key is missing
@@ -22,11 +24,22 @@ async function main() {
   streams.start();
   // Weekly email reports: each organization's goes out once on its chosen day and hour.
   const reports = setInterval(() => void sendDueWeeklyReports(), 5 * 60_000);
+  // The daily backup, once its hour has come (Settings → Backups).
+  const backups = setInterval(() => void backupIfDue(), 5 * 60_000);
+  // A heartbeat for Settings → System health: when this worker last ran.
+  const beat = () => void recordWorkerHeartbeat(INSTANCE_ID).catch(() => undefined);
+  beat();
+  const heartbeat = setInterval(beat, 60_000);
+  // Emails the system administrators when a part of the installation turns into a problem.
+  const health = setInterval(() => void notifyHealthProblems().catch(() => undefined), 15 * 60_000);
   logger.info({ instance: INSTANCE_ID }, "Monitoring worker started");
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Stopping worker, waiting for in-flight checks");
     clearInterval(reports);
+    clearInterval(backups);
+    clearInterval(heartbeat);
+    clearInterval(health);
     await Promise.all([scheduler.stop(), streams.stop()]);
     await pool.end();
     process.exit(0);

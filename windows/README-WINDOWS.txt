@@ -52,9 +52,15 @@ SETTINGS
 LOGS (send these to support if something does not work)
 - C:\cctv-monitor\data\logs\  supervisor.log, api.log, worker.log, postgres.log, caddy.log
 
-BACKUP
-- Stop the app (STOP.bat) and copy the whole C:\cctv-monitor\data folder.
-  To restore: put it back, then START.bat.
+BACKUP AND RESTORE
+- The app backs up all its data every night to C:\cctv-monitor\data\backups (Settings -> Backups:
+  time, how many days to keep, another folder such as a network share, and "Back up now").
+- To restore one: RESTORE.bat (Run as administrator), choose the backup, type RESTORE. The app
+  restarts with the backup's data; everyone signs in again. A backup file from elsewhere can be
+  dragged onto RESTORE.bat.
+- Keep a copy of data\credential.key somewhere safe, apart from the backups: it is needed to read
+  the camera passwords after restoring on another server.
+- Settings -> System health shows whether backups, disk space, the database and monitoring work.
 
 Adding cameras: in the dashboard (Cameras -> Add camera / Scan network / Import CSV),
 see CCTV-Monitor-Guide.pdf.

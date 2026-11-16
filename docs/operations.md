@@ -124,6 +124,29 @@ Take a backup first.
 
 ## Backup and recovery
 
+**Built-in daily backup (Settings → Backups, super admin)**
+
+The app backs up the whole database every day at the chosen hour into `/app/server/data/backups`
+(the `app-data` volume; on Windows `data\backups`), keeps them for the chosen number of days, and has
+**Back up now**. Settings → System health shows the last backup, and the system administrators are
+emailed when one fails. To keep backups outside the volume, mount a host folder (for example
+`- /var/backups/cctv:/backups` under both `api` and `worker`) and set the folder to `/backups`.
+Copy backups out with `docker compose cp api:/app/server/data/backups ./backups`.
+
+Restore one (replaces all data; everyone signs in again):
+
+```bash
+docker compose stop api worker
+docker compose run --rm api node dist/cli/restoreBackup.js data/backups/cctv-backup-YYYYMMDD-HHMMSS.json.gz          # shows what it holds
+docker compose run --rm api node dist/cli/restoreBackup.js data/backups/cctv-backup-YYYYMMDD-HHMMSS.json.gz --yes    # restores it
+docker compose start api worker
+```
+
+On Windows: `RESTORE.bat` (Run as administrator). The restore runs in one transaction: a cut-off
+file, or one from a newer version of the app, is refused and the database is left as it was.
+
+The pg_dump script below remains an alternative for hosts that already back up with cron.
+
 **What to back up**
 
 | Item | Why | How |

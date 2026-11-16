@@ -73,6 +73,11 @@ export function LoginPage() {
       footer={options.data?.signupEnabled && <>New here? <Link to="/signup" className={authLink}>Create an account</Link></>}
     >
       {providerError && <ErrorMessage error={new Error(providerError)} className="mb-4" />}
+      {params.get("reason") === "idle" && (
+        <p className="mb-4 rounded-md border border-line bg-raised px-3 py-2 text-sm text-ink-secondary" role="status">
+          You were signed out after a while without use. Sign in again to continue.
+        </p>
+      )}
       <SignInForm />
     </AuthLayout>
   );

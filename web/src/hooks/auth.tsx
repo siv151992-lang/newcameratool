@@ -9,6 +9,8 @@ interface AuthState {
   organizations: Membership[];
   /** Open invitations to the user's confirmed email address. */
   invitations: PendingInvitation[];
+  /** Sign out after this many minutes without use (0: never). */
+  idleTimeoutMinutes: number;
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -24,6 +26,7 @@ interface Me {
   csrfToken: string;
   organizations: Membership[];
   invitations: PendingInvitation[];
+  idleTimeoutMinutes?: number;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -35,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [organizations, setOrganizations] = useState<Membership[]>([]);
   const [invitations, setInvitations] = useState<PendingInvitation[]>([]);
+  const [idleTimeoutMinutes, setIdleTimeoutMinutes] = useState(0);
   const [loading, setLoading] = useState(true);
   const qc = useQueryClient();
 
@@ -44,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(r.user);
     setOrganizations(r.organizations);
     setInvitations(r.invitations ?? []);
+    setIdleTimeoutMinutes(r.idleTimeoutMinutes ?? 0);
   }, []);
 
   useEffect(() => {
@@ -82,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const can = useCallback((p: string) => !!user?.permissions.includes(p), [user]);
 
   return (
-    <AuthContext.Provider value={{ user, organizations, invitations, loading, login, logout, switchOrganization, refresh: load, can }}>
+    <AuthContext.Provider value={{ user, organizations, invitations, idleTimeoutMinutes, loading, login, logout, switchOrganization, refresh: load, can }}>
       {children}
     </AuthContext.Provider>
   );

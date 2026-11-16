@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BackupsTab, HealthTab } from "./SystemPages";
+import { SessionsCard, SessionTable, type SessionRow } from "../components/SessionsCard";
 import { AUDIT_CATEGORIES, auditIsProblem, auditLabel } from "../lib/auditLabels";
 import { ActionMenu } from "../components/ActionMenu";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, KeyRound, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, UserCheck, UserX, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, KeyRound, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, DatabaseBackup, HeartPulse, LogOut, MonitorSmartphone, Sun, Trash2, UserCheck, UserX, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
@@ -46,8 +48,10 @@ function useSections(): Section[] {
     can("settings:read") && { path: "ai", label: "AI Mode", description: "Turn on forecasts, anomaly detection, the assistant and AI reports.", icon: <Sparkles className={icon} />, element: <AiSettingsTab /> },
     can("users:manage") && { path: "users", label: "Users", description: `The people in ${user?.organizationName ?? "this organization"}: add them, set their roles, and delete them.`, icon: <UsersIcon className={icon} />, element: <UsersTab /> },
     can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
+    can("system:manage") && { path: "health", label: "System health", description: "Whether every part of the installation works: database, monitoring, disk space, backups, email and live video.", icon: <HeartPulse className={icon} />, element: <HealthTab /> },
+    can("system:manage") && { path: "backups", label: "Backups", description: "The daily backup of all data, how long backups are kept, and how to restore one.", icon: <DatabaseBackup className={icon} />, element: <BackupsTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
-    { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, and your password.", icon: <Palette className={icon} />, element: <AccountTab /> },
+    { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, your password, and where you're signed in.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },
   ];
   return all.filter(Boolean) as Section[];
@@ -791,6 +795,20 @@ function UsersTab() {
   const [resetting, setResetting] = useState<ManagedUser | null>(null);
   const [removing, setRemoving] = useState<ManagedUser | null>(null);
   const [cameraAccessOf, setCameraAccessOf] = useState<ManagedUser | null>(null);
+  const [sessionsOf, setSessionsOf] = useState<ManagedUser | null>(null);
+  const memberSessions = useQuery({
+    queryKey: ["users", sessionsOf?.id, "sessions"],
+    queryFn: () => api<{ sessions: SessionRow[] }>(`/users/${sessionsOf!.id}/sessions`),
+    enabled: !!sessionsOf,
+  });
+  const signOut = useMutation({
+    mutationFn: (u: ManagedUser) => api<{ ended: number }>(`/users/${u.id}/sign-out`, { method: "POST" }),
+    onSuccess: (r, u) => {
+      toast("success", r.ended ? `${u.username} signed out on ${r.ended} device${r.ended === 1 ? "" : "s"}` : `${u.username} was not signed in`);
+      void qc.invalidateQueries({ queryKey: ["users"] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
   const [newPassword, setNewPassword] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: ["users"] });
   // Accounts that also belong to another organization are changed by the system administrator only.
@@ -877,6 +895,8 @@ function UsersTab() {
                             hidden: u.id === user?.id || !ownsAccount(u),
                             onClick: () => update.mutate({ id: u.id, body: { isActive: !u.isActive } }),
                           },
+                          { label: "Where signed in…", icon: <MonitorSmartphone className="h-4 w-4" />, onClick: () => setSessionsOf(u) },
+                          { label: "Sign out everywhere", icon: <LogOut className="h-4 w-4" />, hidden: u.id === user?.id || (u.superAdmin && u.id !== user?.id), onClick: () => signOut.mutate(u) },
                           { label: "Delete user", icon: <Trash2 className="h-4 w-4" />, danger: true, hidden: fixed(u), onClick: () => setRemoving(u) },
                         ]}
                       />
@@ -888,6 +908,23 @@ function UsersTab() {
           </div>
         )}
         <CameraAccessDialog user={cameraAccessOf} onClose={() => setCameraAccessOf(null)} />
+        <Dialog
+          open={!!sessionsOf}
+          onClose={() => setSessionsOf(null)}
+          title={`Where ${sessionsOf?.username} is signed in`}
+          footer={
+            <>
+              <Button onClick={() => setSessionsOf(null)}>Close</Button>
+              {sessionsOf && sessionsOf.id !== user?.id && !sessionsOf.superAdmin && (memberSessions.data?.sessions.length ?? 0) > 0 && (
+                <Button variant="primary" icon={<LogOut className="h-4 w-4" />} loading={signOut.isPending} onClick={() => signOut.mutate(sessionsOf, { onSuccess: () => void memberSessions.refetch() })}>
+                  Sign out everywhere
+                </Button>
+              )}
+            </>
+          }
+        >
+          {memberSessions.isLoading ? <Spinner /> : memberSessions.error ? <ErrorMessage error={memberSessions.error} /> : <div className="-mx-4"><SessionTable sessions={memberSessions.data?.sessions ?? []} /></div>}
+        </Dialog>
         <Dialog open={!!resetting} onClose={() => setResetting(null)} title={`Reset password for ${resetting?.username}`} footer={<><Button onClick={() => setResetting(null)}>Cancel</Button><Button variant="primary" loading={update.isPending} onClick={() => update.mutate({ id: resetting!.id, body: { password: newPassword } })}>Reset password</Button></>}>
           <p className="mb-3 text-ink-secondary">They are signed out of all sessions.</p>
           <Field label="New password" hint="At least 10 characters">{(id, d) => <Input id={id} aria-describedby={d} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />}</Field>
@@ -1028,6 +1065,9 @@ function AccountTab() {
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="lg:col-span-2">
         <AppearanceCard />
+      </div>
+      <div className="lg:col-span-2">
+        <SessionsCard />
       </div>
       <Card title={hasPassword ? `Change password (${user?.username})` : `Set a password (${user?.username})`}>
         <form

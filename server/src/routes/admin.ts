@@ -1,4 +1,7 @@
 import { type Request, Router } from "express";
+import { backupFolder, backupSettingsSchema, defaultBackupFolder, getBackupSettings, getBackupStatus, listBackupFiles, runBackup, updateBackupSettings } from "../services/backupService.js";
+import { systemHealth } from "../services/healthService.js";
+import { endSessions, getSecuritySettings, listSessions, securitySettingsSchema, updateSecuritySettings } from "../services/sessionService.js";
 import { allCamerasMiddleware } from "../auth/cameraScope.js";
 import { cameraAccessSchema, getCameraAccess, setCameraAccess } from "../services/memberCameraAccess.js";
 import { cameraScopeSql } from "../auth/cameraScope.js";
@@ -31,8 +34,10 @@ import { providerSettingsSchema, providerSettingsView, updateProviderSettings } 
 import { deviceLimiter, reportLimiter } from "./limits.js";
 import { sendWeeklyReportXlsx } from "./weeklyReportDownload.js";
 import {
+  assertNotSuperAdmin,
   createOrganization,
   createOrganizationSchema,
+  getMemberSummary,
   listMembers,
   listOrganizations,
   removeMember,
@@ -151,6 +156,44 @@ settingsRouter.post("/email/test", requirePermission(SYSTEM_PERMISSION), deviceL
 settingsRouter.get("/sign-in-providers", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
   res.json({ providers: await providerSettingsView(), redirectUris: { google: await redirectUri("google"), zoho: await redirectUri("zoho") } });
 });
+/** Backups: the daily backup's settings, the last outcome, and the backups kept. */
+settingsRouter.get("/backup", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
+  const [settings, status] = await Promise.all([getBackupSettings(), getBackupStatus()]);
+  const folder = backupFolder(settings);
+  res.json({ settings, status, folder, defaultFolder: defaultBackupFolder(), files: listBackupFiles(folder).slice(0, 100) });
+});
+settingsRouter.patch("/backup", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const patch = parse(backupSettingsSchema, req.body);
+  const settings = await updateBackupSettings(patch, req.auth!.user.id);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.backup_updated", entityType: "settings", entityId: "backup", details: patch, organizationId: null });
+  res.json(settings);
+});
+/** Back up now. */
+settingsRouter.post("/backup/run", requirePermission(SYSTEM_PERMISSION), reportLimiter, async (req, res) => {
+  try {
+    const r = await runBackup("manual");
+    await audit({ actor: actorOf(req), ip: req.ip, action: "settings.backup_made", entityType: "settings", entityId: "backup", details: { file: r.file, size: r.size, rows: r.rows }, organizationId: null });
+    res.json(r);
+  } catch (err) {
+    await audit({ actor: actorOf(req), ip: req.ip, action: "settings.backup_failed", entityType: "settings", entityId: "backup", details: { error: (err as Error).message.slice(0, 200) }, organizationId: null });
+    throw err;
+  }
+});
+/** System health: every part of the installation, rated. */
+settingsRouter.get("/health", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
+  res.json(await systemHealth());
+});
+
+/** Security: sign out after a while without use. */
+settingsRouter.get("/security", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
+  res.json(await getSecuritySettings());
+});
+settingsRouter.patch("/security", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const patch = parse(securitySettingsSchema, req.body);
+  const s = await updateSecuritySettings(patch, req.auth!.user.id);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.security_updated", entityType: "settings", entityId: "security", details: patch, organizationId: null });
+  res.json(s);
+});
 settingsRouter.patch("/sign-in-providers", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
   const patch = parse(providerSettingsSchema, req.body);
   const providers = await updateProviderSettings(patch, req.auth!.user.id);
@@ -237,6 +280,19 @@ usersRouter.get("/:id/camera-access", async (req, res) => {
 });
 usersRouter.put("/:id/camera-access", async (req, res) => {
   res.json(await refusedOnSuperAdmin(req, "camera access", () => setCameraAccess(orgOf(req), param(req), parse(cameraAccessSchema, req.body), actorOf(req), req.ip)));
+});
+/** Where a member is signed in. */
+usersRouter.get("/:id/sessions", async (req, res) => {
+  await getMemberSummary(orgOf(req), param(req));
+  res.json({ sessions: (await listSessions(param(req), null)).map((s) => ({ ...s, current: s.id === req.auth!.sessionId })) });
+});
+/** Signs a member out everywhere (not the super admin, unless it is themself). */
+usersRouter.post("/:id/sign-out", async (req, res) => {
+  const m = await getMemberSummary(orgOf(req), param(req));
+  await refusedOnSuperAdmin(req, "sign out", async () => assertNotSuperAdmin(m, param(req), req.auth!.user.id, true));
+  const ended = await endSessions(param(req), param(req) === req.auth!.user.id ? req.auth!.sessionId : null);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "member.signed_out", entityType: "user", entityId: param(req), details: { username: m.username, sessions: ended } });
+  res.json({ ended });
 });
 usersRouter.delete("/:id", async (req, res) => {
   res.json(await refusedOnSuperAdmin(req, "remove", () => removeMember(orgOf(req), param(req), actorOf(req), req.ip)));

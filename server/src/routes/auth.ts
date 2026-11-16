@@ -24,6 +24,7 @@ import { pool } from "../db/pool.js";
 import { audit } from "../services/auditService.js";
 import { learnDashboardAddress } from "../services/dashboardAddress.js";
 import { accountLimiter, loginLimiter } from "./limits.js";
+import { endOwnSession, endSessions, getSecuritySettings, listSessions } from "../services/sessionService.js";
 
 export const authRouter = Router();
 
@@ -178,6 +179,8 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     organizations: await listMemberships(req.auth!.user.id),
     // Open invitations to the user's confirmed address, to accept from the app.
     invitations: rows[0]?.verified ? await pendingInvitationsFor(req.auth!.user.email) : [],
+    // The browser signs out after this many minutes without mouse or keyboard use (0: never).
+    idleTimeoutMinutes: (await getSecuritySettings()).idleTimeoutMinutes,
   });
 });
 
@@ -195,6 +198,25 @@ authRouter.post("/logout", requireAuth, requireCsrf, async (req, res) => {
   await logout(req.auth!.sessionId);
   res.clearCookie(SESSION_COOKIE, { path: "/" });
   res.status(204).end();
+});
+
+/** Where the user is signed in (this session first). */
+authRouter.get("/sessions", requireAuth, async (req, res) => {
+  res.json({ sessions: await listSessions(req.auth!.user.id, req.auth!.sessionId), idleTimeoutMinutes: (await getSecuritySettings()).idleTimeoutMinutes });
+});
+/** Signs out one of the user's other sessions. */
+authRouter.delete("/sessions/:id", requireAuth, requireCsrf, async (req, res) => {
+  const u = req.auth!.user;
+  await endOwnSession(u.id, String(req.params.id), req.auth!.sessionId);
+  await audit({ actor: { id: u.id, username: u.username, organizationId: u.organizationId }, ip: req.ip, action: "auth.session_ended", entityType: "user", entityId: u.id });
+  res.status(204).end();
+});
+/** Signs out everywhere else. */
+authRouter.post("/sessions/sign-out-others", requireAuth, requireCsrf, async (req, res) => {
+  const u = req.auth!.user;
+  const ended = await endSessions(u.id, req.auth!.sessionId);
+  await audit({ actor: { id: u.id, username: u.username, organizationId: u.organizationId }, ip: req.ip, action: "auth.other_sessions_ended", entityType: "user", entityId: u.id, details: { sessions: ended } });
+  res.json({ ended });
 });
 
 /** Whether Settings are open in this session, and until when. */

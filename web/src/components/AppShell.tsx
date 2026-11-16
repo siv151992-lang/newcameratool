@@ -1,4 +1,6 @@
 import clsx from "clsx";
+import { HealthBar } from "./HealthBar";
+import { IdleSignOut } from "./IdleSignOut";
 import { Activity, Bell, Building2, Camera, Cpu, LayoutDashboard, MonitorPlay, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
@@ -102,7 +104,7 @@ function OrganizationSwitcher() {
 }
 
 export function AppShell() {
-  const { user, logout, can } = useAuth();
+  const { user, logout, can, idleTimeoutMinutes } = useAuth();
   useRedirectNotice();
   const { theme, toggle, palette } = useTheme();
   const [open, setOpen] = useState(false);
@@ -202,9 +204,11 @@ export function AppShell() {
             <span className="hidden sm:inline">Sign out</span>
           </Button>
         </header>
+        {can("system:manage") && <HealthBar />}
         <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6">
           <Outlet />
         </main>
+        <IdleSignOut minutes={idleTimeoutMinutes} />
       </div>
     </div>
   );

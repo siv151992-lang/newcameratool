@@ -173,6 +173,7 @@ export function EmailSettingsTab() {
   };
 
   return (
+    <div className="space-y-5">
     <form
       className="space-y-5"
       onSubmit={(e: FormEvent) => {
@@ -285,5 +286,41 @@ export function EmailSettingsTab() {
         </div>
       </details>
     </form>
+    <SecurityCard />
+    </div>
+  );
+}
+
+/** Server-wide sign-in security: sign out after a while without use. */
+function SecurityCard() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["settings", "security"], queryFn: () => api<{ idleTimeoutMinutes: number }>("/settings/security") });
+  const [minutes, setMinutes] = useState<string | null>(null);
+  const value = minutes ?? String(q.data?.idleTimeoutMinutes ?? "");
+  const save = useMutation({
+    mutationFn: () => api<{ idleTimeoutMinutes: number }>("/settings/security", { method: "PATCH", body: { idleTimeoutMinutes: Number(value) } }),
+    onSuccess: (r) => {
+      toast("success", r.idleTimeoutMinutes ? `People are signed out after ${r.idleTimeoutMinutes} minutes without use` : "Idle sign-out turned off");
+      setMinutes(null);
+      void qc.invalidateQueries({ queryKey: ["settings", "security"] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+  const valid = /^\d+$/.test(value) && Number(value) <= 1440;
+  return (
+    <Card title="Sign-in security">
+      <div className="space-y-3 p-4">
+        <Field
+          label="Sign out after this many minutes without use"
+          hint="0 = never. A minute before, people are asked whether they are still there. The Live page stays open (for control-room screens)."
+          className="max-w-md"
+        >
+          {(id, d) => <Input id={id} aria-describedby={d} inputMode="numeric" value={value} onChange={(e) => setMinutes(e.target.value.trim())} invalid={!valid} />}
+        </Field>
+        <p className="text-xs text-ink-secondary">Each person can see where they are signed in, and sign out other devices, under Account &amp; theme. Org Admins can sign a user out everywhere from Users.</p>
+        <Button variant="primary" disabled={!valid || minutes === null} loading={save.isPending} onClick={() => save.mutate()}>Save</Button>
+      </div>
+    </Card>
   );
 }

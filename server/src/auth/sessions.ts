@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { getSecuritySettings } from "../services/sessionService.js";
 import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { hashPassword, PASSWORD_POLICY, verifyPassword } from "../security/passwords.js";
@@ -153,7 +154,15 @@ export async function getSession(token: string): Promise<AuthContext | null> {
   );
   const r = rows[0];
   if (!r) return null;
-  if (Date.now() - new Date(r.last_seen_at).getTime() > 5 * 60_000) {
+  // Not used for longer than the idle limit (Settings → Email & sign-in → Security): signed out.
+  // last_seen_at is written at most every 5 minutes, hence the margin.
+  const idle = Date.now() - new Date(r.last_seen_at).getTime();
+  const { idleTimeoutMinutes } = await getSecuritySettings();
+  if (idleTimeoutMinutes > 0 && idle > (idleTimeoutMinutes + 5) * 60_000) {
+    await pool.query("DELETE FROM sessions WHERE id = $1", [id]);
+    return null;
+  }
+  if (idle > 5 * 60_000) {
     await pool.query("UPDATE sessions SET last_seen_at = now() WHERE id = $1", [id]);
   }
   const inOrg = r.organization_id !== null;

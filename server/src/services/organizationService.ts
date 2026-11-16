@@ -118,6 +118,12 @@ export function assertNotSuperAdmin(target: { superAdmin: boolean }, targetId: s
   }
 }
 
+/** A member of the organization (404 otherwise): name and whether they are the super admin. */
+export async function getMemberSummary(orgId: string, userId: string) {
+  const m = await getMembership(orgId, userId);
+  return { username: m.username, superAdmin: m.superAdmin };
+}
+
 /** Every organization keeps at least one active Org Admin. */
 async function assertAnotherAdmin(orgId: string, userId: string, db: Queryable) {
   const { rows } = await db.query(

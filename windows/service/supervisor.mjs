@@ -157,6 +157,25 @@ function keepRunning(name, command, args, options) {
   start();
 }
 
+/**
+ * RESTORE.bat writes data\restore.request (the backup to restore) and restarts the app: the backup
+ * is restored here, with the database running and the API and worker not yet started, as the same
+ * account the app runs as. The outcome goes to data\restore.result and logs\restore.log.
+ */
+function restoreIfRequested(node, serverDir) {
+  const request = path.join(DATA, "restore.request");
+  if (!fs.existsSync(request)) return;
+  const file = fs.readFileSync(request, "utf8").trim();
+  fs.unlinkSync(request);
+  log(`Restoring the backup ${file}`);
+  const r = spawnSync(node, [path.join(serverDir, "dist", "cli", "restoreBackup.js"), file, "--yes"], { cwd: serverDir, env: appEnv, encoding: "utf8", windowsHide: true, timeout: 60 * 60_000 });
+  const output = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  fs.writeFileSync(path.join(DATA, "logs", "restore.log"), `${new Date().toISOString()} ${file}\n${output}`);
+  const ok = r.status === 0;
+  fs.writeFileSync(path.join(DATA, "restore.result"), ok ? "ok" : `failed: ${output.trim().split(/\r?\n/).slice(-2).join(" ")}`);
+  log(ok ? "Backup restored" : "Restore failed: see logs\\restore.log (the database was left as it was)");
+}
+
 async function main() {
   log(`Starting CCTV Storage Monitor from ${ROOT} (dashboard https://${site}${httpsPort === "443" ? "" : `:${httpsPort}`})`);
   try { fs.unlinkSync(STOP_FILE); } catch { /* none */ }
@@ -167,6 +186,7 @@ async function main() {
 
   const node = process.execPath;
   const serverDir = path.join(ROOT, "app", "server");
+  restoreIfRequested(node, serverDir);
   keepRunning("api", node, [path.join(serverDir, "dist", "index.js")], { cwd: serverDir, env: appEnv });
   // The API applies database changes first; the worker waits for the same lock, so either order is safe.
   setTimeout(() => keepRunning("worker", node, [path.join(serverDir, "dist", "worker.js")], { cwd: serverDir, env: appEnv }), 5000);
