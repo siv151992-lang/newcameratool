@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "../config.js";
 import { registry } from "../integrations/registry.js";
-import type { CameraBrandAdapter, CameraConfig, RecordingList } from "../integrations/types.js";
+import { CameraApiError, type CameraBrandAdapter, type CameraConfig, type RecordingList } from "../integrations/types.js";
 import { HttpError } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
 import { getCameraConfig, getCameraRow } from "./cameraService.js";
@@ -266,6 +266,38 @@ export async function listRecordings(orgId: string, cameraId: string, date: stri
   return { date, cameraNow: wall(result.nowMs), segments, playsFromRecordingStart: result.playsFromRecordingStart ?? false };
 }
 
+/** Most searches one calendar month or oldest-recording lookup may send to a camera. */
+const SEARCH_BUDGET = 24;
+
+/**
+ * Recordings between two times, also on cameras that cannot answer for a long period at once:
+ * some firmware refuses a long search (Hikvision "badParameters"), so a refused period is searched
+ * again in halves, down to single days, and days still refused are left out. Fails only when
+ * nothing at all could be read.
+ */
+async function listInParts(adapter: CameraBrandAdapter, config: CameraConfig, from: number, to: number, channel: number | undefined, budget: { left: number }): Promise<RecordingList> {
+  budget.left--;
+  try {
+    return await adapter.listRecordings!(config, from, to, channel);
+  } catch (err) {
+    const refusal = err instanceof CameraApiError && ["API_ERROR", "INVALID_RESPONSE", "TIMEOUT"].includes(err.code);
+    if (!refusal || to - from <= DAY_MS || budget.left < 2) throw err;
+    const mid = from + Math.ceil((to - from) / 2 / DAY_MS) * DAY_MS;
+    const parts = await Promise.allSettled([listInParts(adapter, config, from, mid, channel, budget), listInParts(adapter, config, mid, to, channel, budget)]);
+    const ok = parts.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    if (!ok.length) throw err;
+    return { ...ok[ok.length - 1]!, segments: ok.flatMap((l) => l.segments).sort((a, b) => a.start - b.start) };
+  }
+}
+
+/** Calendar days (camera time) a set of recordings touches, within [from, to). */
+function daysTouched(segments: { start: number; end: number }[], from: number, to: number, into = new Set<number>()) {
+  for (const s of segments) {
+    for (let d = Math.max(Math.floor(s.start / DAY_MS) * DAY_MS, from); d < Math.min(s.end, to); d += DAY_MS) into.add(d);
+  }
+  return into;
+}
+
 /** Per camera and month: the days holding recordings, kept briefly so paging the calendar is quick. */
 const dayCache = new Map<string, { at: number; days: string[] }>();
 
@@ -279,13 +311,39 @@ export async function recordedDays(orgId: string, cameraId: string, month: strin
   const next = new Date(from);
   next.setUTCMonth(next.getUTCMonth() + 1);
   const to = next.getTime();
-  const list = await adapter.listRecordings!(config, from, to, channel);
-  const days = new Set<string>();
-  for (const s of list.segments) {
-    // Every day the recording touches, within the month.
-    for (let d = Math.max(Math.floor(s.start / DAY_MS) * DAY_MS, from); d < Math.min(s.end, to); d += DAY_MS) days.add(wall(d).slice(0, 10));
+  const budget = { left: SEARCH_BUDGET };
+  const list = await listInParts(adapter, config, from, to, channel, budget);
+  const touched = daysTouched(list.segments, from, to);
+  // Many cameras answer a long search with only part of it (the first and last recordings, and no
+  // "more"): runs of whole days with nothing listed between recordings, or up to today, are searched
+  // again on their own, so a day in the middle of the month is not left out of the calendar.
+  const lastDay = Math.min(to, Math.floor(list.nowMs / DAY_MS) * DAY_MS + DAY_MS);
+  const runs = (): [number, number][] => {
+    const out: [number, number][] = [];
+    // From the month's start when anything was found (a camera may answer with only its latest recordings).
+    const first = [...touched].some((d) => d >= 0) ? from : lastDay;
+    for (let d = first; d < lastDay; d += DAY_MS) {
+      if (touched.has(d) || touched.has(-d - 1)) continue;
+      const last = out[out.length - 1];
+      if (last && last[1] === d) last[1] = d + DAY_MS;
+      else out.push([d, d + DAY_MS]);
+    }
+    return out;
+  };
+  for (let gaps = runs(); gaps.length && budget.left > 0; gaps = runs()) {
+    let found = false;
+    for (const [a, b] of gaps) {
+      if (budget.left <= 0) break;
+      const part = await listInParts(adapter, config, a, b, channel, budget).catch(() => undefined);
+      const before = touched.size;
+      if (part) daysTouched(part.segments, a, b, touched);
+      // A run with nothing in it really holds no recordings: not searched again.
+      if (touched.size > before) found = true;
+      else for (let d = a; d < b; d += DAY_MS) touched.add(-d - 1); // marked as searched (never a real day)
+    }
+    if (!found) break;
   }
-  const result = [...days].sort();
+  const result = [...touched].filter((d) => d >= 0).sort((a, b) => a - b).map((d) => wall(d).slice(0, 10));
   if (dayCache.size > 2000) dayCache.clear();
   dayCache.set(key, { at: Date.now(), days: result });
   return result;
@@ -305,9 +363,19 @@ export async function oldestRecording(orgId: string, cameraId: string, channel?:
     if (range !== undefined) return range?.oldest ?? null;
   }
   const now = Date.now();
-  const list = await adapter.listRecordings!(config, now - 400 * DAY_MS, now + DAY_MS, channel);
-  const first = list.segments[0];
-  return first ? wall(first.start) : null;
+  // The last 400 days, or a shorter period on cameras that refuse a long search.
+  let lastError: unknown;
+  for (const days of [400, 90, 31, 7, 1, 0.25]) {
+    try {
+      const list = await adapter.listRecordings!(config, now - days * DAY_MS, now + DAY_MS, channel);
+      const first = list.segments[0];
+      return first ? wall(first.start) : null;
+    } catch (err) {
+      lastError = err;
+      if (!(err instanceof CameraApiError && ["API_ERROR", "INVALID_RESPONSE", "TIMEOUT"].includes(err.code))) throw err;
+    }
+  }
+  throw lastError;
 }
 
 /** A listing this recent is used even for a time after its last recording (the next one may not be in it yet). */
@@ -379,6 +447,11 @@ export async function preparePlayback(
   const listing = await listingFor(adapter, config, cameraId, local, channel);
   const shift = listing?.shiftMs ?? 0;
   const segment = listing?.segments.find((s) => s.start <= local && local < s.end) ?? listing?.segments.find((s) => s.start > local);
+  // The day was listed and holds nothing at or after this time: say so, rather than a blank player.
+  // (A time in the last minutes may be in a recording still being written: tried as before.)
+  if (listing && !segment && !listing.viaOnvif && local < listing.nowMs - 10 * 60_000) {
+    throw new HttpError(422, "NO_RECORDINGS", `No recordings on the camera at or after ${start.replace("T", " ")} that day. Choose a day marked in the calendar.`);
+  }
   const fromStart = listing?.playsFromRecordingStart && segment;
   // A time in a gap (or before the first recording of the day) plays from the next recording.
   const playFrom = segment && segment.start > local ? segment.start : local;

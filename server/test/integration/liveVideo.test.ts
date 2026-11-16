@@ -111,6 +111,42 @@ async function addCamera(admin: { cookie: string; csrf: string }) {
   return res.body.id as string;
 }
 
+describe("recordings calendar on cameras with partial or refused searches", () => {
+  it("lists every day of the month although the camera answers a long search with only part of it", async () => {
+    // Hourly clips for 40 days: a month-long search answers only its first and last 50 clips.
+    const full = new MockHikvisionCamera("admin", "Cam P@ss:1");
+    full.recordedDays = 40;
+    const p = await full.start();
+    onTestFinished(() => full.stop());
+    const admin = await sessionCookie("admin");
+    const id = (await request(app).post("/api/cameras").set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf)
+      .send({ name: "Gate", host: "127.0.0.1", port: p, protocol: "http", brand: "Hikvision", username: "admin", password: "Cam P@ss:1" }).expect(201)).body.id;
+    const today = new Date().toISOString().slice(0, 10);
+    const month = today.slice(0, 7);
+    const { days } = (await request(app).get(`/api/cameras/${id}/recordings/days?month=${month}`).set("Cookie", admin.cookie).expect(200)).body;
+    const expected = Array.from({ length: Number(today.slice(8, 10)) }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`);
+    expect(days).toEqual(expected);
+
+    // Firmware that refuses searches reaching more than 3 days back: the recent days are still
+    // listed, and the oldest recording is found with a shorter search instead of failing.
+    full.searchMaxDays = 3;
+    const lastMonth = new Date(Date.parse(`${month}-01T00:00:00Z`) - 86_400_000).toISOString().slice(0, 7);
+    await request(app).get(`/api/cameras/${id}/recordings/days?month=${lastMonth}`).set("Cookie", admin.cookie);
+    const recent = (await request(app).get(`/api/cameras/${id}/recordings/days?month=${month}`).set("Cookie", admin.cookie)).body.days ?? [];
+    if (Number(today.slice(8, 10)) >= 3) expect(recent).toContain(today);
+    const oldest = await request(app).get(`/api/cameras/${id}/recordings/oldest`).set("Cookie", admin.cookie);
+    expect(oldest.status).toBe(200);
+
+    // A day without recordings: playing it says so instead of opening a blank player.
+    full.searchMaxDays = Infinity;
+    full.recording = "idle";
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const empty = await request(app).post(`/api/cameras/${id}/playback/prepare`).set("Cookie", admin.cookie).set("X-CSRF-Token", admin.csrf).send({ start: `${yesterday}T10:00:00` });
+    expect(empty.status).toBe(422);
+    expect(empty.body.error.code).toBe("NO_RECORDINGS");
+  });
+});
+
 describe("live video", () => {
   it("relays the video WebSocket to go2rtc for a signed-in Org Admin, with the camera's RTSP stream", async () => {
     const admin = await sessionCookie("admin");
