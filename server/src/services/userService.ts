@@ -7,7 +7,8 @@ import { validateNewPassword } from "../auth/sessions.js";
 import { type Actor, audit } from "./auditService.js";
 import { addMember, ROLES, type Role } from "./organizationService.js";
 
-export const usernameSchema = z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/, "Letters, numbers, dot, dash and underscore only");
+// Any visible characters except spaces (an email address is fine); no control or invisible characters.
+export const usernameSchema = z.string().trim().min(3).max(64).regex(/^[^\s\p{C}]+$/u, "No spaces");
 export const emailSchema = z.string().trim().toLowerCase().max(254).email("Enter a valid email address");
 
 /** An account added by an Org Admin straight into their organization (replaced by invitations). */
@@ -33,6 +34,14 @@ interface AccountInput {
 /** Creates a sign-in account (no organization). */
 export async function createAccount(input: AccountInput, db: Queryable = pool): Promise<string> {
   if (input.password != null) validateNewPassword(input.password);
+  // People sign in with a username or an email: neither may be another account's other one.
+  const clash = await db.query(
+    "SELECT 1 FROM users WHERE lower(email) = lower($1) OR ($2::text IS NOT NULL AND lower(username) = lower($2))",
+    [input.username, input.email ?? null],
+  );
+  if (clash.rowCount) {
+    throw new HttpError(409, "CONFLICT", "That username or email is already used to sign in by another account");
+  }
   try {
     const { rows } = await db.query<{ id: string }>(
       `INSERT INTO users (username, display_name, email, email_verified_at, password_hash, is_system_admin)
@@ -67,6 +76,7 @@ export async function createUser(orgId: string, input: z.infer<typeof createUser
  * `npm run create-admin`. Joins the oldest active organization, or creates the default one.
  */
 export async function createSystemAdmin(input: { username: string; password: string; email?: string | null }) {
+  input = { ...input, username: usernameSchema.parse(input.username) };
   return withTransaction(async (db) => {
     const id = await createAccount({ ...input, isSystemAdmin: true, emailVerified: Boolean(input.email) }, db);
     let org = (await db.query<{ id: string }>("SELECT id FROM organizations WHERE is_active ORDER BY created_at LIMIT 1")).rows[0]?.id;

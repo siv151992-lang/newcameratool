@@ -83,6 +83,7 @@ export async function listMembers(orgId: string) {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.display_name AS "displayName", u.email, m.role, u.is_active AS "isActive",
             u.last_login_at AS "lastLoginAt", (u.locked_until > now()) AS "locked", m.joined_at AS "joinedAt",
+            u.is_system_admin AS "superAdmin",
             (SELECT count(*)::int FROM organization_members o WHERE o.user_id = u.id) > 1 AS "otherOrganizations",
             m.camera_access AS "cameraAccess", m.can_live AS "canLive", m.can_recordings AS "canRecordings", m.can_actions AS "canActions",
             (SELECT count(*)::int FROM member_camera_access a WHERE a.organization_id = m.organization_id AND a.user_id = m.user_id AND a.location IS NOT NULL) AS "accessLocations",
@@ -98,12 +99,23 @@ export async function listMembers(orgId: string) {
 async function getMembership(orgId: string, userId: string, db: Queryable = pool) {
   if (!isUuid(userId)) throw notFound("Member");
   const { rows } = await db.query(
-    `SELECT m.role, u.username, (SELECT count(*)::int FROM organization_members o WHERE o.user_id = u.id) AS memberships
+    `SELECT m.role, u.username, u.is_system_admin AS "superAdmin", (SELECT count(*)::int FROM organization_members o WHERE o.user_id = u.id) AS memberships
      FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.organization_id = $1 AND m.user_id = $2`,
     [orgId, userId],
   );
   if (!rows[0]) throw notFound("Member");
-  return rows[0] as { role: Role; username: string; memberships: number };
+  return rows[0] as { role: Role; username: string; memberships: number; superAdmin: boolean };
+}
+
+/**
+ * The super admin (the first user, created at installation) keeps full rights: nobody else can
+ * change their role, access, password or account, or remove them. They change their own password
+ * and name under Account.
+ */
+export function assertNotSuperAdmin(target: { superAdmin: boolean }, targetId: string, actorId: string, self = false) {
+  if (target.superAdmin && (targetId !== actorId || !self)) {
+    throw new HttpError(403, "SUPER_ADMIN", "This is the super admin: their rights cannot be changed and they cannot be removed.");
+  }
 }
 
 /** Every organization keeps at least one active Org Admin. */
@@ -126,6 +138,8 @@ export async function updateMember(
 ) {
   await withTransaction(async (db) => {
     const m = await getMembership(orgId, userId, db);
+    // The super admin may only rename themself or set their own password here.
+    assertNotSuperAdmin(m, userId, actor.id, patch.role === undefined && patch.isActive === undefined);
     const accountFields = patch.displayName !== undefined || patch.isActive !== undefined || patch.password !== undefined;
     if (accountFields && m.memberships > 1 && !actor.isSystemAdmin) {
       throw new HttpError(403, "SHARED_ACCOUNT", "This person also belongs to another organization. Only the system administrator can change their account.");
@@ -164,6 +178,7 @@ export async function updateMember(
 export async function removeMember(orgId: string, userId: string, actor: Actor, ip?: string | null) {
   return withTransaction(async (db) => {
     const m = await getMembership(orgId, userId, db);
+    assertNotSuperAdmin(m, userId, actor.id);
     if (m.role === "admin") {
       if (userId === actor.id) throw new HttpError(400, "SELF_LOCKOUT", "You cannot remove yourself as Org Admin");
       await assertAnotherAdmin(orgId, userId, db);

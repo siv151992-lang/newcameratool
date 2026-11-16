@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertNotSuperAdmin } from "./organizationService.js";
 import { pool, withTransaction } from "../db/pool.js";
 import { badRequest, notFound } from "../lib/errors.js";
 import { clearInsightsCache } from "../ai/insightsService.js";
@@ -73,8 +74,13 @@ export async function setCameraAccess(orgId: string, userId: string, input: Came
     throw badRequest("Choose at least one location or camera, or give access to all cameras.");
   }
   await withTransaction(async (db) => {
-    const member = await db.query("SELECT 1 FROM organization_members WHERE organization_id = $1 AND user_id = $2 FOR UPDATE", [orgId, userId]);
-    if (!member.rowCount) throw notFound("Member");
+    const member = await db.query<{ superAdmin: boolean }>(
+      `SELECT u.is_system_admin AS "superAdmin" FROM organization_members m JOIN users u ON u.id = m.user_id
+       WHERE m.organization_id = $1 AND m.user_id = $2 FOR UPDATE OF m`,
+      [orgId, userId],
+    );
+    if (!member.rows[0]) throw notFound("Member");
+    assertNotSuperAdmin(member.rows[0], userId, actor.id);
     if (cameraIds.length) {
       const own = await db.query<{ n: number }>(
         "SELECT count(*)::int AS n FROM cameras WHERE id = ANY($1::uuid[]) AND organization_id = $2 AND deleted_at IS NULL",

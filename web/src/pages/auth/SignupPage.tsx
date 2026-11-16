@@ -55,7 +55,7 @@ export function SignupForm({ invitationToken, invitedEmail, onSignedIn }: Signup
       <Field label="Email" required error={fieldError("email")} hint={invitedEmail ? "The invitation was sent to this address" : undefined}>
         {(id, d) => <Input id={id} aria-describedby={d} type="email" autoComplete="email" required readOnly={!!invitedEmail} value={form.email} onChange={set("email")} invalid={!!fieldError("email")} />}
       </Field>
-      <Field label="Username" required hint="Letters, numbers, dot, dash and underscore" error={fieldError("username")}>
+      <Field label="Username" required hint="Anything except spaces, e.g. a name or an email address" error={fieldError("username")}>
         {(id, d) => <Input id={id} aria-describedby={d} autoComplete="username" required value={form.username} onChange={set("username")} invalid={!!fieldError("username")} />}
       </Field>
       <Field label="Password" required hint="At least 10 characters" error={fieldError("password")}>

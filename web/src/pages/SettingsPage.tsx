@@ -792,7 +792,9 @@ function UsersTab() {
   const [newPassword, setNewPassword] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: ["users"] });
   // Accounts that also belong to another organization are changed by the system administrator only.
-  const ownsAccount = (u: ManagedUser) => !u.otherOrganizations || can("system:manage");
+  const ownsAccount = (u: ManagedUser) => (!u.otherOrganizations || can("system:manage")) && (!u.superAdmin || u.id === user?.id);
+  // The super admin's rights are fixed: nobody (themself included) changes their role or access here.
+  const fixed = (u: ManagedUser) => u.superAdmin || u.id === user?.id;
 
   const update = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api(`/users/${id}`, { method: "PATCH", body }),
@@ -843,10 +845,11 @@ function UsersTab() {
                     <td className="px-4 py-2">
                       <div className="font-medium">{u.username}{u.id === user?.id && <span className="ml-1 text-xs font-normal text-ink-muted">(you)</span>}</div>
                       <div className="text-xs text-ink-muted">{[u.displayName, u.email].filter(Boolean).join(" · ")}</div>
+                      {u.superAdmin && <div className="text-xs font-medium text-accent-ink" title="The first user: their rights cannot be changed and they cannot be removed">Super admin</div>}
                       {u.otherOrganizations && <div className="text-xs text-ink-muted">Also in another organization</div>}
                     </td>
                     <td className="px-4 py-2">
-                      <Select aria-label={`Role for ${u.username}`} className="w-auto py-1" value={u.role} disabled={u.id === user?.id || update.isPending} onChange={(e) => update.mutate({ id: u.id, body: { role: e.target.value } })}>
+                      <Select aria-label={`Role for ${u.username}`} className="w-auto py-1" value={u.role} disabled={fixed(u) || update.isPending} onChange={(e) => update.mutate({ id: u.id, body: { role: e.target.value } })}>
                         <option value="admin">{ROLE_LABELS.admin}</option>
                         <option value="operator">{ROLE_LABELS.operator}</option>
                         <option value="viewer">{ROLE_LABELS.viewer}</option>
@@ -854,7 +857,7 @@ function UsersTab() {
                     </td>
                     <td className="px-4 py-2">
                       <div className={u.role !== "admin" && u.cameraAccess === "limited" ? "font-medium" : "text-ink-secondary"}>{cameraAccessLabel(u)}</div>
-                      {u.role !== "admin" && (
+                      {u.role !== "admin" && !u.superAdmin && (
                         <Button size="sm" variant="ghost" className="-ml-2" aria-label={`Change access for ${u.username}`} onClick={() => setCameraAccessOf(u)}>Change</Button>
                       )}
                     </td>
@@ -867,7 +870,7 @@ function UsersTab() {
                           {u.isActive ? "Disable" : "Enable"}
                         </Button>
                       )}
-                      {u.id !== user?.id && <Button size="sm" variant="ghost" onClick={() => setRemoving(u)}>Delete</Button>}
+                      {!fixed(u) && <Button size="sm" variant="ghost" onClick={() => setRemoving(u)}>Delete</Button>}
                     </td>
                   </tr>
                 ))}

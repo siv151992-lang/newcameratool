@@ -321,7 +321,7 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
       <div className="space-y-3">
         <p className="text-ink-secondary">The account works at once. Tell them the username and password yourself; they can change the password under Account &amp; theme.</p>
         <Field label="Name">{(id) => <Input id={id} autoComplete="off" value={form.displayName} onChange={set("displayName")} autoFocus />}</Field>
-        <Field label="Username" required hint="Letters, numbers, dot, dash and underscore" error={fieldError("username")}>
+        <Field label="Username" required hint="Anything except spaces, e.g. a name or an email address" error={fieldError("username")}>
           {(id, d) => <Input id={id} aria-describedby={d} autoComplete="off" value={form.username} invalid={!!fieldError("username")} onChange={set("username")} />}
         </Field>
         <Field label="Email (optional)" error={fieldError("email")}>

@@ -404,6 +404,8 @@ export interface ManagedUser {
   joinedAt: string;
   /** Also a member of another organization: only the system administrator changes their account. */
   otherOrganizations: boolean;
+  /** The first user: nobody else can change their rights or remove them. */
+  superAdmin: boolean;
   /** "limited": sees only the chosen locations and cameras (Org Admins always see all). */
   cameraAccess: "all" | "limited";
   /** Live view, recordings and camera actions switched on for this member (within what the role allows). */
