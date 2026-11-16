@@ -82,3 +82,41 @@ export function parseReolinkChannels(value: Record<string, unknown>): NvrChannel
     }))
     .sort((a, b) => a.channel - b.channel);
 }
+
+/** A Reolink date and time: { year, mon, day, hour, min, sec } (the camera's own clock). */
+export interface ReolinkTime { year: number; mon: number; day: number; hour?: number; min?: number; sec?: number }
+const p2 = (n: number) => String(n).padStart(2, "0");
+const isTime = (t: unknown): t is ReolinkTime =>
+  !!t && typeof t === "object" && ["year", "mon", "day"].every((k) => Number.isInteger((t as Record<string, unknown>)[k]));
+/** "YYYY-MM-DDTHH:MM:SS" from a Reolink time. */
+export const reolinkTimeText = (t: ReolinkTime) => `${t.year}-${p2(t.mon)}-${p2(t.day)}T${p2(t.hour ?? 0)}:${p2(t.min ?? 0)}:${p2(t.sec ?? 0)}`;
+
+/** GetTime: the camera's clock, { Time: { year, mon, day, hour, min, sec } }. */
+export function parseReolinkTime(value: Record<string, unknown>): ReolinkTime {
+  if (!isTime(value.Time)) throw new CameraApiError("INVALID_RESPONSE", "The camera did not report its time");
+  return value.Time;
+}
+
+/**
+ * Search with onlyStatus 1: per month, a table of the days with recordings,
+ * { SearchResult: { Status: [{ year, mon, table: "0011…" }] } } (character N-1 is day N). Returns "YYYY-MM-DD" days.
+ */
+export function parseReolinkRecordedDays(value: Record<string, unknown>): string[] {
+  const status = (value.SearchResult as { Status?: unknown } | undefined)?.Status;
+  const days: string[] = [];
+  for (const m of Array.isArray(status) ? status : []) {
+    const { year, mon, table } = (m ?? {}) as { year?: unknown; mon?: unknown; table?: unknown };
+    if (!Number.isInteger(year) || !Number.isInteger(mon) || typeof table !== "string") continue;
+    [...table].forEach((c, i) => c === "1" && days.push(`${year}-${p2(mon as number)}-${p2(i + 1)}`));
+  }
+  return days.sort();
+}
+
+/** Search with onlyStatus 0: the recording files, { SearchResult: { File: [{ StartTime, EndTime }] } }, oldest first. */
+export function parseReolinkFiles(value: Record<string, unknown>): { start: string; end: string }[] {
+  const files = (value.SearchResult as { File?: unknown } | undefined)?.File;
+  return (Array.isArray(files) ? files : [])
+    .filter((f): f is { StartTime: ReolinkTime; EndTime: ReolinkTime } => isTime(f?.StartTime) && isTime(f?.EndTime))
+    .map((f) => ({ start: reolinkTimeText(f.StartTime), end: reolinkTimeText(f.EndTime) }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+}

@@ -16,7 +16,8 @@ export async function syncBrands(registry: BrandRegistry) {
          auth_methods = EXCLUDED.auth_methods, default_http_port = EXCLUDED.default_http_port,
          default_https_port = EXCLUDED.default_https_port, capabilities = EXCLUDED.capabilities,
          notes = EXCLUDED.notes, integration_type = 'builtin', integration_version = EXCLUDED.integration_version,
-         compatibility_notes = EXCLUDED.compatibility_notes`,
+         compatibility_notes = EXCLUDED.compatibility_notes
+       WHERE camera_brands.integration_type = 'builtin'`,
       [b.key, b.displayName, b.supportStatus, b.authMethods, b.defaultPorts.http, b.defaultPorts.https, b.capabilities, b.notes, b.version, b.compatibility ?? null],
     );
   }

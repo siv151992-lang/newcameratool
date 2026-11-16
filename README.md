@@ -7,7 +7,7 @@ goes offline or stops recording, or its credentials stop working. Cameras can al
 their recordings played back from the dashboard.
 
 **Hikvision / Prama (ISAPI) is fully implemented and used on real cameras.** Dahua / CP Plus / Amcrest (CGI), Axis (VAPIX), Uniview (LAPI) and
-generic ONVIF (SOAP, WS-Security), Hanwha Vision / Wisenet (SUNAPI), Panasonic / i-PRO, Reolink (JSON API, HTTPS) and Bosch (ONVIF Profile S/G) adapters are also available, marked
+generic ONVIF (SOAP, WS-Security), Hanwha Vision / Wisenet (SUNAPI), Panasonic / i-PRO, Reolink (JSON API, HTTPS), Bosch, Vivotek, Avigilon, Pelco, Honeywell, Tiandy, Milesight, Mobotix, TP-Link VIGI, Matrix and Godrej (ONVIF Profile S/G) adapters are also available, marked
 *unverified* until they have been confirmed on real hardware — use Test Connection when adding such a camera. Prama (Hikvision India) is
 supported, and brands sold on Hikvision or Dahua firmware (HiLook, HiWatch, Annke, LTS; Lorex, IC Realtime, Imou) use those adapters;
 Vivotek, Sony, Avigilon, Milesight, Tiandy, TP-Link VIGI and Mobotix cameras are read over ONVIF.

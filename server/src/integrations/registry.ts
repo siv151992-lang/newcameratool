@@ -1,6 +1,7 @@
 import { hostGuard } from "../security/hostGuardInstance.js";
 import { AxisAdapter } from "./axis/adapter.js";
 import { BoschAdapter } from "./bosch/adapter.js";
+import { onvifBrandAdapters } from "./onvifBrands/adapters.js";
 import { MilestoneAdapter } from "./milestone/adapter.js";
 import { DahuaAdapter } from "./dahua/adapter.js";
 import { HanwhaAdapter } from "./hanwha/adapter.js";
@@ -100,6 +101,8 @@ export class BrandRegistry {
         ),
       );
     }
+    // A brand an administrator added before a built-in one of the same name existed stays theirs.
+    for (const [k, st] of states) if (st.type !== "builtin" && this.adapters.has(k)) this.adapters.delete(k);
     this.states = states;
     this.configured = configured;
     this.aliases = aliases;
@@ -207,16 +210,22 @@ export class BrandRegistry {
       milestoneopennetworkbridge: "milestone",
       bosch: "bosch",
       boschsecurity: "bosch",
-      // Brands without an API of their own here: their cameras are read over ONVIF.
-      vivotek: "onvif",
+      // Brands read over ONVIF under their own name.
+      vivotek: "vivotek",
+      avigilon: "avigilon",
+      pelco: "pelco",
+      honeywell: "honeywell",
+      milesight: "milesight",
+      tiandy: "tiandy",
+      tplink: "tplink-vigi",
+      tplinkvigi: "tplink-vigi",
+      vigi: "tplink-vigi",
+      mobotix: "mobotix",
+      matrix: "matrix",
+      matrixcomsec: "matrix",
+      godrej: "godrej",
+      // Other brands without an API of their own here: read as generic ONVIF cameras.
       sony: "onvif",
-      avigilon: "onvif",
-      milesight: "onvif",
-      tiandy: "onvif",
-      tplink: "onvif",
-      tplinkvigi: "onvif",
-      vigi: "onvif",
-      mobotix: "onvif",
     };
     const key = aliases[s] ?? s;
     if (this.adapters.has(key) || this.planned.has(key) || this.states.has(key)) return key;
@@ -259,6 +268,7 @@ export function createRegistry(http = new CameraHttpClient(hostGuard)): BrandReg
   registry.register(new ReolinkAdapter(http));
   registry.register(new BoschAdapter(http));
   registry.register(new MilestoneAdapter(http));
+  for (const a of onvifBrandAdapters(http)) registry.register(a);
   for (const p of PLANNED) registry.registerPlanned(p);
   return registry;
 }

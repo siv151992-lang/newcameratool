@@ -57,7 +57,14 @@ describe("brand registry", () => {
     for (const key of ["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic"]) expect(registry.isSupported(key)).toBe(true);
     for (const key of ["hikvision", "prama", "hanwha", "panasonic"]) expect(registry.get(key).meta.supportStatus).toBe("supported");
     for (const key of ["dahua", "axis", "uniview", "onvif"]) expect(registry.get(key).meta.supportStatus).toBe("unverified");
-    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic", "reolink", "bosch", "milestone"]);
+    expect(registry.list().map((b) => b.key)).toEqual(["hikvision", "prama", "dahua", "axis", "uniview", "onvif", "hanwha", "panasonic", "reolink", "bosch", "milestone",
+      "vivotek", "avigilon", "pelco", "honeywell", "tiandy", "milesight", "mobotix", "tplink-vigi", "matrix", "godrej"]);
+    // Leading brands read over ONVIF under their own name.
+    for (const key of ["vivotek", "honeywell", "matrix", "godrej"]) {
+      expect(registry.get(key).meta.supportStatus).toBe("unverified");
+      expect(registry.get(key).getRecordingRange).toBeTypeOf("function");
+      expect(registry.get(key).listRecordings).toBeTypeOf("function");
+    }
   });
 
   it("resolves brand aliases", () => {
