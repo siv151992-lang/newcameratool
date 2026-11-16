@@ -225,7 +225,8 @@ export async function acceptInvitation(ref: InvitationRef, user: { id: string; u
       throw new HttpError(403, "EMAIL_MISMATCH", `This invitation is for ${inv.email}, but you are signed in as ${email}. Sign in with the invited address.`);
     }
     if (!email) {
-      const taken = await client.query("SELECT 1 FROM users WHERE lower(email) = $1 AND id <> $2", [inv.email, user.id]);
+      // Nor another account's username: people sign in with either.
+      const taken = await client.query("SELECT 1 FROM users WHERE (lower(email) = $1 OR lower(username) = $1) AND id <> $2", [inv.email, user.id]);
       if (taken.rowCount) throw new HttpError(409, "EMAIL_MISMATCH", `Another account uses ${inv.email}. Sign in with that account to accept.`);
     }
     // Following the emailed link proves the address.

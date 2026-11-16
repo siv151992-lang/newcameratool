@@ -46,6 +46,8 @@ export function App() {
           {can("cameras:write") && <Route path="cameras/import" element={<ImportPage />} />}
           {can("cameras:write") && <Route path="cameras/scan" element={<ScanPage />} />}
           {can("cameras:write") && <Route path="cameras/:id/edit" element={<CameraFormPage />} />}
+          {/* Without the right to add cameras, these addresses go to the camera list (not "Camera not found"). */}
+          {!can("cameras:write") && ["cameras/new", "cameras/import", "cameras/scan", "cameras/:id/edit"].map((p) => <Route key={p} path={p} element={<Navigate to="/cameras" replace />} />)}
           <Route path="cameras/:id" element={<CameraDetailPage />} />
           {can("cameras:live") && <Route path="live" element={<LiveWallPage />} />}
           <Route path="uptime" element={<UptimePage />} />

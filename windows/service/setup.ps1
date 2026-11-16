@@ -157,8 +157,13 @@ Write-Host "The app is running." -ForegroundColor Green
 $users = (& $Node (Join-Path $PSScriptRoot "db-users.mjs") 2>$null | Out-String).Trim()
 if ($users -eq "0") {
   Step "Create the administrator (the first user)"
-  $name = Read-Host "User name [admin]"
-  if (-not $name) { $name = "admin" }
+  for (;;) {
+    $name = (Read-Host "User name, e.g. admin or an email address [admin]").Trim()
+    if (-not $name) { $name = "admin" }
+    if ($name -match '[\s"]') { Write-Host "No spaces or double quotes in the user name. Try again." -ForegroundColor Yellow; continue }
+    if ($name.Length -lt 3 -or $name.Length -gt 64) { Write-Host "Use 3 to 64 characters. Try again." -ForegroundColor Yellow; continue }
+    break
+  }
   for (;;) {
     $p1 = Read-Host "Password (at least 10 characters; it is not shown)" -AsSecureString
     $p2 = Read-Host "Type it again" -AsSecureString
