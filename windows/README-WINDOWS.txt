@@ -33,6 +33,15 @@ UPDATE
    (Your data is in C:\cctv-monitor\data and is kept.)
 3. START.bat (Run as administrator), then Ctrl+F5 in the browser.
 
+WINDOWS SERVER (2016, 2019, 2022, 2025 - 64-bit)
+- Install exactly as above, signed in as an administrator (Remote Desktop is fine).
+- If IIS or another web server already uses ports 80/443, the app uses 18080/18443:
+  use the address the window shows.
+- Server Core / no browser on the server: open the address from another PC.
+- If the server has Internet Explorer Enhanced Security, use Edge or another PC.
+- The firewall rule is added for you; a hardware firewall between the server and the
+  users' PCs must allow the same port.
+
 REMOVE
 - UNINSTALL.bat (Run as administrator). Data is deleted only if you type DELETE.
 

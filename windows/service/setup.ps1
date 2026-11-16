@@ -208,4 +208,5 @@ $url = if ($httpsPort -ne "443") { "https://${site}:$httpsPort" } else { "https:
 Write-Host ""
 Write-Host "Ready. Open: $url" -ForegroundColor Green
 Write-Host "It starts by itself with Windows. Stop: STOP.bat. Update: STOP.bat, extract the new package here, START.bat."
-Start-Process $url
+# Windows Server Core (or a server without a browser): open the address from another PC instead.
+try { Start-Process $url -ErrorAction Stop } catch { Write-Host "No browser on this computer: open $url from another PC." -ForegroundColor Yellow }
