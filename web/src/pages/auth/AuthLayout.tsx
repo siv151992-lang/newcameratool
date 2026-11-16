@@ -79,7 +79,7 @@ export function AuthLayout({ title, subtitle, children, footer }: { title: strin
           </ul>
         </div>
 
-        <p className="relative text-xs text-white/50">Hikvision · Dahua · Axis · Hanwha · Uniview · Panasonic · ONVIF</p>
+        <p className="relative text-xs text-white/50">Hikvision · Prama · Dahua · CP Plus · Uniview · Hanwha · Axis · Bosch · Vivotek · and any ONVIF camera</p>
       </aside>
 
       <main className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-4 py-10">

@@ -341,7 +341,7 @@ export function CameraTable({ initialStatus = "", initialRecording = "", initial
             <ColumnsMenu columns={COLUMNS} {...columnVisibility} />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-9">
           <Select aria-label="Filter by brand" className="w-full" value={brand} onChange={(e) => setBrand(e.target.value)}>
             <option value="">All brands</option>
             {brands.data?.filter((b) => b.supportStatus !== "planned" || b.cameraCount > 0).map((b) => (

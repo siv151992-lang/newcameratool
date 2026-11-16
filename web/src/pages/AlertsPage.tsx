@@ -180,8 +180,7 @@ export function AlertsPage() {
                   <th scope="col" className={clsx("py-2.5 pr-2 font-medium", manage ? "pl-2" : "pl-4")}>Severity</th>
                   <th scope="col" className="px-2 py-2.5 font-medium">Camera</th>
                   <th scope="col" className="px-2 py-2.5 font-medium">Problem</th>
-                  <th scope="col" className="px-2 py-2.5 font-medium">Detected</th>
-                  <th scope="col" className="px-2 py-2.5 font-medium">Last seen</th>
+                  <th scope="col" className="px-2 py-2.5 font-medium">Detected · last seen</th>
                   <th scope="col" className="px-2 py-2.5 font-medium">Status</th>
                   {manage && <th scope="col" className="py-2.5 pl-2 pr-4 text-right font-medium">Actions</th>}
                 </tr>
@@ -216,14 +215,10 @@ export function AlertsPage() {
                       </button>
                     </td>
                     <td className="whitespace-nowrap px-2 py-2.5">
-                      <div className="tabular">{formatDateTime(a.firstDetectedAt)}</div>
-                      <div className="text-xs text-ink-muted">{relativeTime(a.firstDetectedAt)}</div>
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-2.5">
-                      <div className="tabular">{formatDateTime(a.lastSeenAt)}</div>
-                      <div className="text-xs text-ink-muted">
-                        {relativeTime(a.lastSeenAt)}
-                        {a.occurrenceCount > 1 && ` · seen ${a.occurrenceCount}×`}
+                      <div className="tabular" title={`Detected ${relativeTime(a.firstDetectedAt)}`}>{formatDateTime(a.firstDetectedAt)}</div>
+                      <div className="text-xs text-ink-muted" title={`Last seen ${formatDateTime(a.lastSeenAt)}`}>
+                        last seen {relativeTime(a.lastSeenAt)}
+                        {a.occurrenceCount > 1 && ` · ${a.occurrenceCount}×`}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-2 py-2.5">

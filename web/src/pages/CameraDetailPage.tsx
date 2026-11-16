@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ActionMenu } from "../components/ActionMenu";
 import clsx from "clsx";
 import { AlertOctagon, ArrowLeft, Film, KeyRound, Pause, Pencil, Play, PlugZap, Radar, RefreshCw, ServerCrash, Table2, Trash2, Video, WifiOff, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -192,39 +193,35 @@ export function CameraDetailPage() {
               >
                 {checkNow.isPending ? "Checking…" : "Refresh now"}
               </Button>
-              <Button icon={<PlugZap className="h-4 w-4" />} loading={testConn.isPending} onClick={() => testConn.mutate({ id: c.id }, { onSuccess: setTestResult })}>
-                Test connection
-              </Button>
-              <Button icon={<Radar className="h-4 w-4" />} onClick={() => setPinging(true)}>
-                Ping
-              </Button>
             </>
           )}
-          {can("alerts:manage") && can("cameras:check") && (c.maintenance ? (
-            <Button icon={<Wrench className="h-4 w-4" />} loading={endMaintenance.isPending} onClick={() => endMaintenance.mutate({ ids: [c.id], minutes: null })} title="Alerts and notifications resume">
-              End maintenance
-            </Button>
-          ) : (
-            <Button icon={<Wrench className="h-4 w-4" />} onClick={() => setMaintaining(true)} title="Planned work: no new alerts or notifications for a while">
-              Maintenance
-            </Button>
-          ))}
           {can("cameras:write") && (
-            <>
-              <Button icon={<Pencil className="h-4 w-4" />} onClick={() => navigate(`/cameras/${c.id}/edit`)}>
-                Edit
-              </Button>
-              <Button
-                icon={c.monitoringEnabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                onClick={() => setMonitoring.mutate({ id: c.id, enabled: !c.monitoringEnabled })}
-              >
-                {c.monitoringEnabled ? "Disable monitoring" : "Enable monitoring"}
-              </Button>
-              <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => setRemoving(true)}>
-                Remove
-              </Button>
-            </>
+            <Button icon={<Pencil className="h-4 w-4" />} onClick={() => navigate(`/cameras/${c.id}/edit`)}>
+              Edit
+            </Button>
           )}
+          <ActionMenu
+            buttonLabel="More"
+            label={`More actions for ${c.name}`}
+            actions={[
+              { label: testConn.isPending ? "Testing connection…" : "Test connection", icon: <PlugZap className="h-4 w-4" />, hidden: !can("cameras:check"), disabled: testConn.isPending, onClick: () => testConn.mutate({ id: c.id }, { onSuccess: setTestResult }) },
+              { label: "Ping", icon: <Radar className="h-4 w-4" />, hidden: !can("cameras:check"), onClick: () => setPinging(true) },
+              {
+                label: c.maintenance ? "End maintenance" : "Maintenance…",
+                icon: <Wrench className="h-4 w-4" />,
+                hidden: !(can("alerts:manage") && can("cameras:check")),
+                disabled: endMaintenance.isPending,
+                onClick: () => (c.maintenance ? endMaintenance.mutate({ ids: [c.id], minutes: null }) : setMaintaining(true)),
+              },
+              {
+                label: c.monitoringEnabled ? "Disable monitoring" : "Enable monitoring",
+                icon: c.monitoringEnabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />,
+                hidden: !can("cameras:write"),
+                onClick: () => setMonitoring.mutate({ id: c.id, enabled: !c.monitoringEnabled }),
+              },
+              { label: "Remove camera", icon: <Trash2 className="h-4 w-4" />, danger: true, hidden: !can("cameras:write"), onClick: () => setRemoving(true) },
+            ]}
+          />
         </div>
       </div>
 

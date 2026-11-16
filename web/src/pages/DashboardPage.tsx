@@ -82,7 +82,10 @@ export function DashboardPage() {
       />
       <ErrorMessage error={summary.error} className="mb-4" />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink-secondary">
+        <Camera className="h-4 w-4" aria-hidden /> Cameras
+      </h2>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile
           label="Critical areas"
           value={s?.criticalArea.total ?? "—"}
@@ -93,6 +96,12 @@ export function DashboardPage() {
         <StatTile label="Registered cameras" value={s?.totalCameras ?? "—"} icon={<Camera className={icon} />} hint={s && s.disabled > 0 ? `${s.disabled} with monitoring disabled` : "All monitored"} to="/cameras" />
         <StatTile label="Online" value={s?.online ?? "—"} icon={<CheckCircle2 className={`${icon} text-good`} />} hint={s && s.unknown > 0 ? `${s.unknown} not yet checked` : undefined} to="/cameras?status=online" />
         <StatTile label="Offline" value={s?.offline ?? "—"} icon={<WifiOff className={`${icon} text-bad`} />} hint="After repeated failed checks" to="/cameras?status=offline" />
+      </div>
+
+      <h2 className="mb-2 mt-6 flex items-center gap-2 text-sm font-semibold text-ink-secondary">
+        <HardDrive className="h-4 w-4" aria-hidden /> Storage
+      </h2>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <StatTile label="Storage warnings" value={s?.storageWarning ?? "—"} icon={<AlertTriangle className={`${icon} text-warn`} />} to="/cameras?status=warning" />
         <StatTile label="Critical storage" value={s?.storageCritical ?? "—"} icon={<AlertOctagon className={`${icon} text-bad`} />} to="/cameras?status=critical" />
         <StatTile

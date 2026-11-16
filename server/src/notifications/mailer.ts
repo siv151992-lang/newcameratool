@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { logger } from "../lib/logger.js";
 import { type EmailSettings, getEmailSettings } from "../services/emailSettings.js";
+import { LOGO_CID, logoAttachment, textEmail } from "./emailLayout.js";
 
 /**
  * Every email the server sends (alerts, invitations, email confirmation, password reset) goes
@@ -12,9 +13,19 @@ export interface MailMessage {
   to: string;
   subject: string;
   text: string;
-  /** Optional HTML version (the text one is always sent too). */
+  /** HTML version (the text one is always sent too); without one, the text in the branded layout. */
   html?: string;
-  attachments?: { filename: string; content: string | Buffer; contentType: string }[];
+  /** The label of the button a link-only line becomes in the branded layout ("Reset password"). */
+  actionLabel?: string;
+  attachments?: { filename: string; content: string | Buffer; contentType: string; cid?: string }[];
+}
+
+/** Every email in the branded layout, with the logo it shows attached inline. */
+function branded(message: MailMessage): MailMessage {
+  const html = message.html ?? textEmail(message.subject, message.text, message.actionLabel);
+  const attachments = [...(message.attachments ?? [])];
+  if (html.includes(`cid:${LOGO_CID}`) && !attachments.some((a) => a.cid === LOGO_CID)) attachments.push(logoAttachment());
+  return { ...message, html, attachments };
 }
 
 type Sender = (m: MailMessage) => Promise<void>;
@@ -57,7 +68,8 @@ function transportFor(s: EmailSettings): Transporter {
 }
 
 /** Sends with the saved settings, or with `settings` (a test from the settings page). */
-export async function sendMail(message: MailMessage, settings?: EmailSettings): Promise<void> {
+export async function sendMail(input: MailMessage, settings?: EmailSettings): Promise<void> {
+  const message = branded(input);
   if (override && !settings) return override(message);
   const s = settings ?? (await getEmailSettings());
   if (!s.smtpHost) throw new Error("Email is not set up. A system administrator can add the mail server in Settings → Email & sign-in.");

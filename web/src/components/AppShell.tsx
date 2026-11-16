@@ -195,7 +195,7 @@ export function AppShell() {
           <div className="hidden text-right text-xs sm:block">
             <div className="font-medium text-ink">{user?.displayName ?? user?.username}</div>
             <div className="text-ink-muted">
-              {[user?.role && ROLE_LABELS[user.role], user?.isSystemAdmin && "System admin"].filter(Boolean).join(" · ")}
+              {[user?.role && ROLE_LABELS[user.role], user?.isSystemAdmin && "Super admin"].filter(Boolean).join(" · ")}
             </div>
           </div>
           <Button variant="ghost" size="sm" onClick={() => void logout()} icon={<LogOut className="h-4 w-4" />}>

@@ -73,6 +73,7 @@ async function sendVerification(userId: string, email: string) {
   await trySendMail({
     to: email,
     subject: "Confirm your email address for Zoho IBMS CCTV Monitoring",
+    actionLabel: "Confirm email address",
     text: [
       "Confirm your email address to finish creating your account:",
       "",
@@ -207,6 +208,7 @@ export async function requestPasswordReset(email: string, ip?: string | null) {
   await trySendMail({
     to: email,
     subject: "Reset your Zoho IBMS CCTV Monitoring password",
+    actionLabel: "Reset password",
     text: [
       `Someone asked to reset the password for ${rows[0].username}. To choose a new password, open:`,
       "",

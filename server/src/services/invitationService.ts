@@ -64,6 +64,7 @@ async function deliver(orgId: string, email: string, role: Role, token: string, 
   return trySendMail({
     to: email,
     subject: `You're invited to ${rows[0]!.name} on Zoho IBMS CCTV Monitoring`,
+    actionLabel: "Accept invitation",
     text: [
       `${inviter} invited you to join ${rows[0]!.name} as ${roleName}.`,
       "",

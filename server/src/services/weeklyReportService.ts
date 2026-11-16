@@ -4,6 +4,7 @@ import { pool } from "../db/pool.js";
 import { zonedParts } from "../lib/csv.js";
 import { badRequest } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
+import { brandedEmail, button, COLORS, esc, pill } from "../notifications/emailLayout.js";
 import { publicLink, sendMail } from "../notifications/mailer.js";
 import { cameraReportTable } from "./cameraReportService.js";
 import { listQuerySchema } from "./cameraService.js";
@@ -95,13 +96,12 @@ export interface WeeklyReport {
   fileName: string;
 }
 
-const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const days = (r: CameraRow) => (r.recording_days === null ? null : Number(r.recording_days));
 const daysText = (r: CameraRow) => {
   const d = days(r);
   return d === null ? "unknown" : `${r.recording_days_at_least ? "at least " : ""}${d.toFixed(1)} days`;
 };
-/** Longest list in the email; the attached CSV has every camera. */
+/** Longest list in the email; the attached Excel workbook has every camera. */
 const LIST_LIMIT = 200;
 
 export async function buildWeeklyReport(orgId: string, timeZone: string, now = new Date()): Promise<WeeklyReport> {
@@ -194,44 +194,51 @@ export async function buildWeeklyReport(orgId: string, timeZone: string, now = n
   for (const [title, g] of groups) text.push(`- ${title} (${g.severity}, ${g.cameras.length}): ${g.cameras.join(", ")}`);
   text.push("", "DAYS OF RECORDINGS PER CAMERA (fewest first)");
   for (const c of recordingRows) text.push(`- ${c.name} (${c.host}): ${daysText(c)}${c.used_percentage === null ? "" : `, card ${Number(c.used_percentage).toFixed(0)}% used`} — ${status(c)}`);
-  if (withStorage.length > LIST_LIMIT) text.push(`…and ${withStorage.length - LIST_LIMIT} more (see the attached CSV).`);
+  if (withStorage.length > LIST_LIMIT) text.push(`…and ${withStorage.length - LIST_LIMIT} more (see the attached Excel workbook).`);
   if (outages.length) {
     text.push("", "OUTAGES IN THE LAST 7 DAYS");
     for (const c of outages) text.push(`- ${c.name}: ${c.outages} time${c.outages === 1 ? "" : "s"} offline, uptime ${c.uptime === null ? "—" : c.uptime.toFixed(1)}%`);
   }
-  text.push("", link ? `Dashboard: ${link}` : "", "The attached CSV lists every camera.");
+  text.push("", link ? `Dashboard: ${link}` : "", "The attached Excel workbook lists every camera.");
 
-  // ---- html
-  const td = "padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top";
-  const th = `${td};background:#f3f4f6;font-weight:600`;
-  const red = "color:#b91c1c;font-weight:600";
-  const html = `<!doctype html><html><body style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#111827;margin:0;padding:16px">
-<h2 style="margin:0 0 4px;color:#0b4a8b">Weekly CCTV report — ${esc(orgName)}</h2>
-<p style="margin:0 0 16px;color:#6b7280">${esc(date)} · ${esc(timeZone)}</p>
-<table style="border-collapse:collapse;margin-bottom:20px">${summary
-    .map(([k, v, bad]) => `<tr><td style="${td}">${esc(k)}</td><td style="${td};${bad ? red : "font-weight:600"}">${esc(v)}</td></tr>`)
-    .join("")}</table>
-<h3 style="margin:0 0 8px">Open issues</h3>
+  // ---- html: the branded email layout
+  const td = `padding:7px 10px;border-top:1px solid ${COLORS.line};text-align:left;vertical-align:top;font-size:13px`;
+  const th = `padding:7px 10px;background:#f8fafc;text-align:left;font-size:12px;font-weight:600;color:${COLORS.muted};text-transform:uppercase;letter-spacing:.4px`;
+  const red = `color:${COLORS.bad};font-weight:600`;
+  const htmlTable = (head: string[], rows: string[]) =>
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid ${COLORS.line};border-radius:6px;border-collapse:separate;margin:0 0 8px"><tr>${head
+      .map((h) => `<th style="${th}">${esc(h)}</th>`)
+      .join("")}</tr>${rows.join("")}</table>`;
+  const h2 = (t: string) => `<h2 style="margin:22px 0 8px;font-size:15px;color:${COLORS.brand}">${esc(t)}</h2>`;
+  // The key numbers as tiles: cameras online, open issues, fewest days of recordings.
+  const tiles = summary.slice(0, 4);
+  const body = `<p style="margin:0 0 14px;color:${COLORS.muted}">${esc(orgName)} · ${esc(date)} · ${esc(timeZone)}</p>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 6px"><tr>${tiles
+    .map(([k, v, bad]) => `<td width="25%" style="padding:4px"><div style="border:1px solid ${COLORS.line};border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:${COLORS.muted}">${esc(k)}</div><div style="font-size:20px;font-weight:700;${bad ? `color:${COLORS.bad}` : ""}">${esc(v)}</div></div></td>`)
+    .join("")}</tr></table>
+${h2("Summary")}
+${htmlTable(["Item", "Value"], summary.map(([k, v, bad]) => `<tr><td style="${td}">${esc(k)}</td><td style="${td};${bad ? red : "font-weight:600"}">${esc(v)}</td></tr>`))}
+${h2("Open issues")}
 ${groups.size
-    ? `<table style="border-collapse:collapse;margin-bottom:20px;width:100%"><tr><th style="${th}">Issue</th><th style="${th}">Cameras</th></tr>${[...groups]
-        .map(([title, g]) => `<tr><td style="${td};${g.severity === "critical" ? red : ""}">${esc(title)} (${g.cameras.length})</td><td style="${td}">${esc(g.cameras.join(", "))}</td></tr>`)
-        .join("")}</table>`
-    : `<p style="margin:0 0 20px">None.</p>`}
-<h3 style="margin:0 0 8px">Days of recordings per camera (fewest first)</h3>
-<table style="border-collapse:collapse;margin-bottom:8px;width:100%"><tr><th style="${th}">Camera</th><th style="${th}">IP</th><th style="${th}">Location</th><th style="${th}">Recordings</th><th style="${th}">SD card used</th><th style="${th}">Status</th></tr>${recordingRows
-    .map((c) => {
-      const st = status(c);
-      return `<tr><td style="${td}">${esc(c.name)}</td><td style="${td}">${esc(c.host)}</td><td style="${td}">${esc(c.location ?? "")}</td><td style="${td}">${esc(daysText(c))}</td><td style="${td}">${c.used_percentage === null ? "—" : `${Number(c.used_percentage).toFixed(0)}%`}</td><td style="${td};${st === "OK" ? "color:#15803d" : red}">${esc(st)}</td></tr>`;
-    })
-    .join("")}</table>
-${withStorage.length > LIST_LIMIT ? `<p style="color:#6b7280">…and ${withStorage.length - LIST_LIMIT} more (see the attached CSV).</p>` : ""}
+    ? htmlTable(["Issue", "Cameras"], [...groups].map(([title, g]) => `<tr><td style="${td};${g.severity === "critical" ? red : ""}">${esc(title)} (${g.cameras.length})</td><td style="${td}">${esc(g.cameras.join(", "))}</td></tr>`))
+    : `<p style="margin:0">${pill("NONE", COLORS.good)} No open issues.</p>`}
+${h2("Days of recordings per camera (fewest first)")}
+${htmlTable(["Camera", "IP", "Location", "Recordings", "SD card used", "Status"], recordingRows.map((c) => {
+    const st = status(c);
+    return `<tr><td style="${td}">${esc(c.name)}</td><td style="${td}">${esc(c.host)}</td><td style="${td}">${esc(c.location ?? "")}</td><td style="${td}">${esc(daysText(c))}</td><td style="${td}">${c.used_percentage === null ? "—" : `${Number(c.used_percentage).toFixed(0)}%`}</td><td style="${td};${st === "OK" ? `color:${COLORS.good}` : red}">${esc(st)}</td></tr>`;
+  }))}
+${withStorage.length > LIST_LIMIT ? `<p style="color:${COLORS.muted}">…and ${withStorage.length - LIST_LIMIT} more (see the attached Excel workbook).</p>` : ""}
 ${outages.length
-    ? `<h3 style="margin:20px 0 8px">Outages in the last 7 days</h3><table style="border-collapse:collapse;width:100%"><tr><th style="${th}">Camera</th><th style="${th}">Times offline</th><th style="${th}">Uptime</th></tr>${outages
-        .map((c) => `<tr><td style="${td}">${esc(c.name)}</td><td style="${td}">${c.outages}</td><td style="${td}">${c.uptime === null ? "—" : c.uptime.toFixed(1)}%</td></tr>`)
-        .join("")}</table>`
+    ? h2("Outages in the last 7 days") + htmlTable(["Camera", "Times offline", "Uptime"], outages.map((c) => `<tr><td style="${td}">${esc(c.name)}</td><td style="${td}">${c.outages}</td><td style="${td}">${c.uptime === null ? "—" : c.uptime.toFixed(1)}%</td></tr>`))
     : ""}
-<p style="margin-top:20px;color:#6b7280">${link ? `<a href="${esc(link)}">Open the dashboard</a> · ` : ""}The attached Excel workbook has every camera and every open issue.</p>
-</body></html>`;
+${link ? button(link, "Open the dashboard") : ""}
+<p style="margin:14px 0 0;color:${COLORS.muted}">The attached Excel workbook has every camera and every open issue.</p>`;
+  const html = brandedEmail({
+    title: "Weekly CCTV report",
+    body,
+    preheader: subject,
+    footer: "Sent every week by Zoho IBMS CCTV Monitoring to the email alert addresses. Change it in Settings → Notifications → Weekly report.",
+  });
 
   // ---- Excel workbook
   const local = (d: Date | null) => (d ? zonedParts(new Date(d).getTime(), timeZone).text.slice(0, 16) : "");

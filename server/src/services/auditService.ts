@@ -51,6 +51,28 @@ function scopeFilter(scope: AuditScope, params: unknown[]) {
   return scope.includeServerWide ? `(a.organization_id = ${org} OR a.organization_id IS NULL)` : `a.organization_id = ${org}`;
 }
 
+/** Groups of actions, to filter the log by subject. */
+export const AUDIT_CATEGORIES = {
+  signin: ["auth."],
+  users: ["user.", "member.", "invitation."],
+  cameras: ["camera."],
+  alerts: ["alert."],
+  settings: ["settings.", "notification_channel.", "organization."],
+  integrations: ["integration."],
+  ai: ["ai."],
+  audit: ["audit."],
+} as const;
+export type AuditCategory = keyof typeof AUDIT_CATEGORIES;
+
+/** Who and what: one user (exact name) and one group of actions. */
+function subjectFilter(opts: { user?: string; category?: AuditCategory }, where: string[], params: unknown[]) {
+  if (opts.user) where.push(`lower(a.actor_username) = lower($${params.push(opts.user)})`);
+  if (opts.category) {
+    const prefixes = AUDIT_CATEGORIES[opts.category].map((p) => `a.action LIKE $${params.push(`${p}%`)}`);
+    where.push(`(${prefixes.join(" OR ")})`);
+  }
+}
+
 /** Entries on calendar days `from` to `to` (inclusive), in the viewer's time zone. */
 function dayFilter(opts: { from?: string; to?: string; timeZone?: string }, where: string[], params: unknown[]) {
   const zone = opts.timeZone ?? "UTC";
@@ -59,12 +81,13 @@ function dayFilter(opts: { from?: string; to?: string; timeZone?: string }, wher
   if (opts.to) where.push(`a.created_at < $${params.push(startOfDay(nextDay(opts.to), zone))}`);
 }
 
-export async function listAudit(scope: AuditScope, opts: { page: number; pageSize: number; entityType?: string; entityId?: string; from?: string; to?: string; timeZone?: string }) {
+export async function listAudit(scope: AuditScope, opts: { page: number; pageSize: number; entityType?: string; entityId?: string; from?: string; to?: string; timeZone?: string; user?: string; category?: AuditCategory }) {
   const params: unknown[] = [];
   const where: string[] = [scopeFilter(scope, params)];
   if (opts.entityType) where.push(`a.entity_type = $${params.push(opts.entityType)}`);
   if (opts.entityId) where.push(`a.entity_id = $${params.push(opts.entityId)}`);
   dayFilter(opts, where, params);
+  subjectFilter(opts, where, params);
   const clause = `WHERE ${where.join(" AND ")}`;
   const total = (await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_logs a ${clause}`, params)).rows[0]!.n;
   params.push(opts.pageSize, (opts.page - 1) * opts.pageSize);
@@ -97,11 +120,12 @@ function describeDetails(details: Record<string, unknown>): string {
  * days (inclusive) and times are written in `timeZone`, the viewer's IANA time zone. Zones are
  * handled here rather than in PostgreSQL, which rejects some names browsers report (Asia/Calcutta).
  */
-export async function exportAuditCsv(scope: AuditScope, opts: { from?: string; to?: string; timeZone: string }) {
+export async function exportAuditCsv(scope: AuditScope, opts: { from?: string; to?: string; timeZone: string; user?: string; category?: AuditCategory }) {
   zonedParts(Date.now(), opts.timeZone); // validates the zone
   const params: unknown[] = [];
   const where: string[] = [scopeFilter(scope, params)];
   dayFilter(opts, where, params);
+  subjectFilter(opts, where, params);
   params.push(AUDIT_EXPORT_MAX_ROWS);
   const { rows } = await pool.query(
     `SELECT a.created_at, a.actor_username, a.action,

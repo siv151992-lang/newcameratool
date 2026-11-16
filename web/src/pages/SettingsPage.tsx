@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AUDIT_CATEGORIES, auditIsProblem, auditLabel } from "../lib/auditLabels";
+import { ActionMenu } from "../components/ActionMenu";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, KeyRound, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, KeyRound, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, Sun, Trash2, UserCheck, UserX, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
@@ -864,13 +866,20 @@ function UsersTab() {
                     <td className="px-4 py-2">{u.isActive ? (u.locked ? "Locked (too many attempts)" : "Active") : "Disabled"}</td>
                     <td className="px-4 py-2 text-ink-secondary" title={absoluteTime(u.lastLoginAt)}>{relativeTime(u.lastLoginAt)}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-right">
-                      {ownsAccount(u) && <Button size="sm" variant="ghost" onClick={() => setResetting(u)}>Reset password</Button>}
-                      {u.id !== user?.id && ownsAccount(u) && (
-                        <Button size="sm" variant="ghost" onClick={() => update.mutate({ id: u.id, body: { isActive: !u.isActive } })}>
-                          {u.isActive ? "Disable" : "Enable"}
-                        </Button>
-                      )}
-                      {!fixed(u) && <Button size="sm" variant="ghost" onClick={() => setRemoving(u)}>Delete</Button>}
+                      <ActionMenu
+                        size="sm"
+                        label={`Actions for ${u.username}`}
+                        actions={[
+                          { label: "Reset password", icon: <KeyRound className="h-4 w-4" />, hidden: !ownsAccount(u), onClick: () => setResetting(u) },
+                          {
+                            label: u.isActive ? "Disable sign-in" : "Enable sign-in",
+                            icon: u.isActive ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />,
+                            hidden: u.id === user?.id || !ownsAccount(u),
+                            onClick: () => update.mutate({ id: u.id, body: { isActive: !u.isActive } }),
+                          },
+                          { label: "Delete user", icon: <Trash2 className="h-4 w-4" />, danger: true, hidden: fixed(u), onClick: () => setRemoving(u) },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -1047,18 +1056,26 @@ function AccountTab() {
 // ------------------------------------------------------------------ Audit
 
 function AuditTab() {
+  const { can } = useAuth();
   const [page, setPage] = useState(1);
   const [from, setFromDay] = useState("");
   const [to, setToDay] = useState("");
   const setFrom = (v: string) => { setFromDay(v); setPage(1); };
   const setTo = (v: string) => { setToDay(v); setPage(1); };
+  const [userFilter, setUserFilterRaw] = useState("");
+  const [category, setCategoryRaw] = useState("");
+  const setUserFilter = (v: string) => { setUserFilterRaw(v); setPage(1); };
+  const setCategory = (v: string) => { setCategoryRaw(v); setPage(1); };
   const rangeInvalid = !!from && !!to && from > to;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const filtered = !!(from || to);
+  const subject = { ...(userFilter.trim() ? { user: userFilter.trim() } : {}), ...(category ? { category } : {}) };
+  const anyFilter = filtered || Object.keys(subject).length > 0;
+  const people = useQuery({ queryKey: ["users"], queryFn: () => api<ManagedUser[]>("/users"), enabled: can("users:manage") });
   // Polled so new entries appear without reloading; mutations also invalidate it (main.tsx).
   const audit = useQuery({
-    queryKey: ["audit", page, from, to],
-    queryFn: () => api<Page<AuditEntry>>(`/audit${toQuery({ page, pageSize: 50, from, to, ...(filtered ? { timeZone } : {}) })}`),
+    queryKey: ["audit", page, from, to, userFilter, category],
+    queryFn: () => api<Page<AuditEntry>>(`/audit${toQuery({ page, pageSize: 50, from, to, ...subject, ...(filtered ? { timeZone } : {}) })}`),
     enabled: !rangeInvalid,
     refetchInterval: 5_000,
     staleTime: 0,
@@ -1072,7 +1089,7 @@ function AuditTab() {
   const download = async () => {
     setDownloading(true);
     try {
-      await downloadFile(`/audit/export${toQuery({ from, to, timeZone })}`, "audit-log.csv");
+      await downloadFile(`/audit/export${toQuery({ from, to, timeZone, ...subject })}`, "audit-log.csv");
       void queryClient.invalidateQueries({ queryKey: ["audit"] }); // the export is itself audited
     } catch (e) {
       toast("error", (e as Error).message);
@@ -1106,52 +1123,78 @@ function AuditTab() {
         <Field label="To" className="w-40">
           {(id, describedBy) => <Input id={id} aria-describedby={describedBy} type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} invalid={rangeInvalid} />}
         </Field>
+        <Field label="User" className="w-48">
+          {(id) => (
+            <>
+              <Input id={id} list={`${id}-people`} value={userFilter} onChange={(e) => setUserFilter(e.target.value)} placeholder="Anyone" autoComplete="off" />
+              <datalist id={`${id}-people`}>{people.data?.map((u) => <option key={u.id} value={u.username} />)}</datalist>
+            </>
+          )}
+        </Field>
+        <Field label="Actions" className="w-56">
+          {(id) => (
+            <Select id={id} value={category} onChange={(e) => setCategory(e.target.value)}>
+              {AUDIT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </Select>
+          )}
+        </Field>
         <Button variant="secondary" onClick={() => showDay(today)} aria-pressed={from === today && to === today}>Today</Button>
-        {filtered && <Button variant="ghost" onClick={() => showDay("")}>Show all</Button>}
+        {anyFilter && <Button variant="ghost" onClick={() => { showDay(""); setUserFilterRaw(""); setCategoryRaw(""); }}>Clear filters</Button>}
         <Button icon={<Download className="h-4 w-4" />} onClick={download} loading={downloading} disabled={rangeInvalid}>
           Download CSV
         </Button>
         <p className="text-xs text-ink-secondary" aria-live="polite">
           {rangeInvalid
             ? "“From” must not be after “To”."
-            : `${filtered ? `Showing ${audit.data?.total ?? "…"} ${audit.data?.total === 1 ? "entry" : "entries"} ${from === to ? `on ${from.split("-").reverse().join("-")}` : "in the selected days"}` : "All entries"}, newest first, times in your time zone. The CSV has the same entries.`}
+            : `${anyFilter ? `${audit.data?.total ?? "…"} matching ${audit.data?.total === 1 ? "entry" : "entries"}${filtered ? (from === to ? ` on ${from.split("-").reverse().join("-")}` : " in the selected days") : ""}` : `All ${audit.data?.total ?? "…"} entries`}, newest first, times in your time zone. The CSV has the same entries.`}
         </p>
       </div>
       {audit.isLoading ? <Spinner /> : audit.error ? <div className="p-4"><ErrorMessage error={audit.error} /></div> : (
         <>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full min-w-[860px] table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[150px]" />
+                <col className="w-[130px]" />
+                <col className="w-[210px]" />
+                <col className="w-[110px]" />
+                <col />
+                <col className="w-[100px]" />
+              </colgroup>
               <thead className="text-xs text-ink-secondary">
                 <tr>
-                  <th scope="col" className="px-4 py-2 font-medium">Time</th>
-                  <th scope="col" className="px-4 py-2 font-medium">User</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Action</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Camera</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Details</th>
-                  <th scope="col" className="px-4 py-2 font-medium">IP</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Time</th>
+                  <th scope="col" className="px-3 py-2 font-medium">User</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Action</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Camera</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Details</th>
+                  <th scope="col" className="px-3 py-2 font-medium">IP</th>
                 </tr>
               </thead>
               <tbody>
                 {audit.data?.items.map((a) => (
                   <tr key={a.id} className="border-t border-line align-top">
-                    <td className="tabular whitespace-nowrap px-4 py-2 text-ink-secondary">{absoluteTime(a.created_at)}</td>
-                    <td className="px-4 py-2">{a.actor_username}</td>
-                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">{a.action}</td>
-                    <td className="max-w-xs px-4 py-2">
+                    <td className="tabular px-3 py-2 text-ink-secondary">{absoluteTime(a.created_at)}</td>
+                    <td className="break-words px-3 py-2">{a.actor_username}</td>
+                    <td className="px-3 py-2">
+                      <div className={clsx("font-medium", auditIsProblem(a.action) && "text-bad")}>{auditLabel(a.action)}</div>
+                      <div className="font-mono text-[11px] text-ink-muted">{a.action}</div>
+                    </td>
+                    <td className="break-words px-3 py-2">
                       {a.camera_name && (a.camera_removed || !a.entity_id ? (
                         <span className="text-ink-secondary" title={a.camera_host ?? undefined}>{a.camera_name}{a.camera_removed && " (removed)"}</span>
                       ) : (
                         <Link to={`/cameras/${a.entity_id}`} className="text-accent hover:underline" title={a.camera_host ?? undefined}>{a.camera_name}</Link>
                       ))}
                     </td>
-                    <td className="max-w-md px-4 py-2 text-xs text-ink-secondary">{describe(a.details)}</td>
-                    <td className="tabular px-4 py-2 text-xs text-ink-muted">{a.ip}</td>
+                    <td className="break-words px-3 py-2 text-xs text-ink-secondary">{describe(a.details)}</td>
+                    <td className="tabular break-all px-3 py-2 text-xs text-ink-muted">{a.ip}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {audit.data?.total === 0 && <p className="border-t border-line px-4 py-6 text-center text-sm text-ink-secondary">{filtered ? "No entries on the selected days." : "No entries yet."}</p>}
+          {audit.data?.total === 0 && <p className="border-t border-line px-4 py-6 text-center text-sm text-ink-secondary">{anyFilter ? "No entries match these filters." : "No entries yet."}</p>}
           {audit.data && <div className="border-t border-line"><Pagination page={page} pageSize={50} total={audit.data.total} onPage={setPage} /></div>}
         </>
       )}

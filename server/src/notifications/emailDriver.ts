@@ -1,5 +1,6 @@
 import type { Transporter } from "nodemailer";
 import { z } from "zod";
+import { alertEmail, logoAttachment } from "./emailLayout.js";
 import { sendMail } from "./mailer.js";
 import type { NotificationChannel, NotificationDriver, NotificationMessage } from "./types.js";
 
@@ -22,10 +23,10 @@ export class EmailDriver implements NotificationDriver {
     const { recipients } = emailConfigSchema.parse(channel.config);
     if (this.transportFactory) {
       this.transporter ??= this.transportFactory();
-      await this.transporter.sendMail({ to: recipients.join(", "), subject: message.subject, text: message.text });
+      await this.transporter.sendMail({ to: recipients.join(", "), subject: message.subject, text: message.text, html: alertEmail(message), attachments: [logoAttachment()] });
       return;
     }
     // The mail server from Settings → Email & sign-in.
-    await sendMail({ to: recipients.join(", "), subject: message.subject, text: message.text });
+    await sendMail({ to: recipients.join(", "), subject: message.subject, text: message.text, html: alertEmail(message) });
   }
 }

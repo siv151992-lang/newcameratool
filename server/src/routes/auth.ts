@@ -190,6 +190,8 @@ authRouter.post("/organization", requireAuth, requireCsrf, async (req, res) => {
 });
 
 authRouter.post("/logout", requireAuth, requireCsrf, async (req, res) => {
+  const u = req.auth!.user;
+  await audit({ actor: { id: u.id, username: u.username, organizationId: u.organizationId }, ip: req.ip, action: "auth.logout", entityType: "user", entityId: u.id });
   await logout(req.auth!.sessionId);
   res.clearCookie(SESSION_COOKIE, { path: "/" });
   res.status(204).end();

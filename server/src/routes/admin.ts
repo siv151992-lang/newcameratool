@@ -11,7 +11,7 @@ import { registry } from "../integrations/registry.js";
 import { hostGuard } from "../security/hostGuardInstance.js";
 import { patchOf, param, parse } from "../lib/validate.js";
 import { notifier } from "../notifications/notifier.js";
-import { audit, exportAuditCsv, listAudit } from "../services/auditService.js";
+import { audit, AUDIT_CATEGORIES, type AuditCategory, exportAuditCsv, listAudit } from "../services/auditService.js";
 import {
   channelInputSchema,
   channelUpdateSchema,
@@ -140,8 +140,10 @@ settingsRouter.post("/email/test", requirePermission(SYSTEM_PERMISSION), deviceL
       { to, subject: "Test email from Zoho IBMS CCTV Monitoring", text: `This is a test email. If you received it, email is set up.\n\nDashboard address: ${merged.publicUrl ?? "(not set)"}` },
       merged,
     );
+    await audit({ actor: actorOf(req), ip: req.ip, action: "settings.email_tested", entityType: "settings", entityId: "email", details: { to, result: "sent" }, organizationId: null });
     res.json({ ok: true, message: `Test email sent to ${to}` });
   } catch (err) {
+    await audit({ actor: actorOf(req), ip: req.ip, action: "settings.email_tested", entityType: "settings", entityId: "email", details: { to, result: "failed" }, organizationId: null });
     res.json({ ok: false, message: (err as Error).message.slice(0, 300) });
   }
 });
@@ -191,10 +193,14 @@ settingsRouter.get("/weekly-report.xlsx", requirePermission("settings:read"), re
   await sendWeeklyReportXlsx(req, res, (await getWeeklyReportSettings(orgOf(req))).timeZone);
 });
 settingsRouter.post("/weekly-report/send", requirePermission("settings:write"), async (req, res) => {
-  res.json(await sendWeeklyReport(orgOf(req)));
+  const r = await sendWeeklyReport(orgOf(req));
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.weekly_report_sent", entityType: "settings", entityId: "weekly_report", details: { sentTo: r.sentTo.length, failed: r.failed.length } });
+  res.json(r);
 });
 settingsRouter.post("/notifications/:id/test", requirePermission("settings:write"), async (req, res) => {
-  res.json(await testChannel(orgOf(req), notifier, param(req)));
+  const r = await testChannel(orgOf(req), notifier, param(req));
+  await audit({ actor: actorOf(req), ip: req.ip, action: "notification_channel.tested", entityType: "notification_channel", entityId: param(req), details: { result: r.ok ? "sent" : "failed" } });
+  res.json(r);
 });
 
 /** Members of the current organization, managed by its Org Admins. */
@@ -210,8 +216,19 @@ usersRouter.post("/", async (req, res) => {
   const id = await createUser(orgOf(req), parse(createUserSchema, req.body), actorOf(req), req.ip);
   res.status(201).json({ id });
 });
+/** An attempt to change the super admin is refused, and recorded. */
+async function refusedOnSuperAdmin<T>(req: Request, attempt: string, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    if (err instanceof HttpError && err.code === "SUPER_ADMIN") {
+      await audit({ actor: actorOf(req), ip: req.ip, action: "member.change_refused", entityType: "user", entityId: param(req), details: { attempt, reason: "super admin" } });
+    }
+    throw err;
+  }
+}
 usersRouter.patch("/:id", async (req, res) => {
-  await updateMember(orgOf(req), param(req), parse(updateMemberSchema, req.body), { ...actorOf(req), isSystemAdmin: isSystemAdmin(req) }, req.ip);
+  await refusedOnSuperAdmin(req, "update", () => updateMember(orgOf(req), param(req), parse(updateMemberSchema, req.body), { ...actorOf(req), isSystemAdmin: isSystemAdmin(req) }, req.ip));
   res.status(204).end();
 });
 /** Which cameras the member may see: all, or only chosen locations and cameras. */
@@ -219,10 +236,10 @@ usersRouter.get("/:id/camera-access", async (req, res) => {
   res.json(await getCameraAccess(orgOf(req), param(req)));
 });
 usersRouter.put("/:id/camera-access", async (req, res) => {
-  res.json(await setCameraAccess(orgOf(req), param(req), parse(cameraAccessSchema, req.body), actorOf(req), req.ip));
+  res.json(await refusedOnSuperAdmin(req, "camera access", () => setCameraAccess(orgOf(req), param(req), parse(cameraAccessSchema, req.body), actorOf(req), req.ip)));
 });
 usersRouter.delete("/:id", async (req, res) => {
-  res.json(await removeMember(orgOf(req), param(req), actorOf(req), req.ip));
+  res.json(await refusedOnSuperAdmin(req, "remove", () => removeMember(orgOf(req), param(req), actorOf(req), req.ip)));
 });
 
 /** Invitations into the current organization: people join only when they accept. */
@@ -269,14 +286,18 @@ export const auditRouter = Router();
 /** The organization's entries; the system administrator also sees server-wide ones. */
 const auditScope = (req: Request) => ({ organizationId: orgOf(req), includeServerWide: isSystemAdmin(req) });
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+const subject = {
+  user: z.string().trim().min(1).max(64).optional(),
+  category: z.enum(Object.keys(AUDIT_CATEGORIES) as [AuditCategory, ...AuditCategory[]]).optional(),
+};
 auditRouter.get("/export", requirePermission("audit:read"), async (req, res) => {
   const q = parse(
-    z.object({ from: day.optional(), to: day.optional(), timeZone: z.string().min(1).max(64).default("UTC") })
+    z.object({ from: day.optional(), to: day.optional(), timeZone: z.string().min(1).max(64).default("UTC"), ...subject })
       .refine((v) => !v.from || !v.to || v.from <= v.to, { message: "From must not be after To", path: ["from"] }),
     req.query,
   );
   const { csv, rows, truncated } = await exportAuditCsv(auditScope(req), q);
-  await audit({ actor: actorOf(req), ip: req.ip, action: "audit.exported", entityType: "audit", details: { from: q.from ?? "start", to: q.to ?? "now", rows } });
+  await audit({ actor: actorOf(req), ip: req.ip, action: "audit.exported", entityType: "audit", details: { from: q.from ?? "start", to: q.to ?? "now", rows, ...(q.user ? { user: q.user } : {}), ...(q.category ? { category: q.category } : {}) } });
   const name = `audit-log${q.from ? `-${q.from}` : ""}${q.to ? `-to-${q.to}` : ""}.csv`;
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
@@ -293,6 +314,7 @@ auditRouter.get("/", requirePermission("audit:read"), async (req, res) => {
       from: day.optional(),
       to: day.optional(),
       timeZone: z.string().min(1).max(64).default("UTC"),
+      ...subject,
     }).refine((v) => !v.from || !v.to || v.from <= v.to, { message: "From must not be after To", path: ["from"] }),
     req.query,
   );

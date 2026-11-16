@@ -236,13 +236,16 @@ camerasRouter.post("/:id/test-connection", check, deviceLimiter, async (req, res
   if (Object.keys(overrides).length > 0 && !req.auth!.user.permissions.includes("cameras:write")) {
     throw new HttpError(403, "FORBIDDEN", "Testing modified settings requires camera edit permission");
   }
-  res.json(await testSavedCamera(orgOf(req), param(req), overrides));
+  const result = await testSavedCamera(orgOf(req), param(req), overrides);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "camera.connection_tested", entityType: "camera", entityId: param(req), details: { result: result.ok ? "passed" : "failed" } });
+  res.json(result);
 });
 
 camerasRouter.post("/:id/check-storage", check, deviceLimiter, async (req, res) => {
   await getCamera(param(req), orgOf(req)); // 404 for unknown cameras and other organizations' cameras
   const outcome = await runCheck(param(req), "manual", { registry, notifier });
   if (outcome.status === "busy") throw new HttpError(409, "CHECK_IN_PROGRESS", "A check for this camera is already running");
+  await audit({ actor: actorOf(req), ip: req.ip, action: "camera.checked", entityType: "camera", entityId: param(req), details: { result: outcome.result?.ok ? "storage read" : "failed" } });
   res.json({ outcome: { result: outcome.result, attempts: outcome.attempts, durationMs: outcome.durationMs }, camera: await getCamera(param(req), orgOf(req)) });
 });
 
@@ -266,7 +269,9 @@ camerasRouter.get("/:id/events", read, async (req, res) => {
 
 // Ping from this server: ICMP (when allowed) and the camera's web and RTSP ports.
 camerasRouter.post("/:id/ping", check, deviceLimiter, async (req, res) => {
-  res.json(await pingCamera(orgOf(req), param(req)));
+  const result = await pingCamera(orgOf(req), param(req));
+  await audit({ actor: actorOf(req), ip: req.ip, action: "camera.pinged", entityType: "camera", entityId: param(req) });
+  res.json(result);
 });
 
 // Live video: registers the camera's stream, then the page opens /api/cameras/:id/live/ws (liveVideoProxy).

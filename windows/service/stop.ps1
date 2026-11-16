@@ -9,7 +9,7 @@ $TaskName = "CCTV Monitor"
 
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($task -and $task.State -eq "Running") {
-  if (-not $Quiet) { Write-Host "Stopping CCTV Storage Monitor..." }
+  if (-not $Quiet) { Write-Host "  Stopping Zoho IBMS CCTV Monitoring..." }
   New-Item -ItemType File -Force (Join-Path $Data "stop.request") | Out-Null
   for ($i = 0; $i -lt 40 -and (Get-ScheduledTask -TaskName $TaskName).State -eq "Running"; $i++) { Start-Sleep -Seconds 1 }
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -24,4 +24,4 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Root, [StringComparison]::OrdinalIgnoreCase) } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Remove-Item (Join-Path $Data "stop.request") -Force -ErrorAction SilentlyContinue
-if (-not $Quiet) { Write-Host "Stopped." -ForegroundColor Green }
+if (-not $Quiet) { Write-Host "      OK  Stopped. It starts again with Windows, or with START.bat." -ForegroundColor Green }

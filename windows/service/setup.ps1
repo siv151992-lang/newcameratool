@@ -12,8 +12,33 @@ $Data = Join-Path $Root "data"
 $Node = Join-Path $Root "runtime\node\node.exe"
 $TaskName = "CCTV Monitor"
 
-function Fail($message) { Write-Host ""; Write-Host $message -ForegroundColor Red; exit 1 }
-function Step($message) { Write-Host ""; Write-Host "== $message" -ForegroundColor Cyan }
+$Rule = "  " + ("-" * 66)
+function Fail($message) {
+  Write-Host ""
+  Write-Host "  [FAILED] $message" -ForegroundColor Red
+  Write-Host "  Logs: $(Join-Path $Data 'logs')" -ForegroundColor DarkGray
+  exit 1
+}
+$script:StepNo = 0
+function Step($message) {
+  $script:StepNo++
+  Write-Host ""
+  Write-Host ("  [{0}] {1}" -f $script:StepNo, $message) -ForegroundColor Cyan
+  Write-Host $Rule -ForegroundColor DarkGray
+}
+function Done($message) { Write-Host "      OK  $message" -ForegroundColor Green }
+
+# ---------------------------------------------------------------------------------------- header
+$version = "1.0.0"
+try { $version = (Get-Content (Join-Path $Root "app\server\package.json") -Raw | ConvertFrom-Json).version } catch { }
+try { $Host.UI.RawUI.WindowTitle = "Zoho IBMS CCTV Monitoring - Setup" } catch { }
+if (-not $env:CCTV_SETUP_NESTED) {
+  Write-Host ""
+  Write-Host ("  " + ("=" * 66)) -ForegroundColor DarkCyan
+  Write-Host "    Zoho IBMS  |  CCTV Monitoring" -ForegroundColor White
+  Write-Host "    Setup and start  |  version $version  |  $($env:COMPUTERNAME)" -ForegroundColor Gray
+  Write-Host ("  " + ("=" * 66)) -ForegroundColor DarkCyan
+}
 function Get-Setting($name) {
   $file = Join-Path $Data ".env"
   if (-not (Test-Path $file)) { return "" }
@@ -75,7 +100,8 @@ if ($target) {
   if (Test-Path (Join-Path $target "data\.env")) { $copyArgs += @("/XD", $Data) }
   robocopy @copyArgs | Out-Null
   if ($LASTEXITCODE -ge 8) { Fail "Could not copy the app to $target (robocopy error $LASTEXITCODE)." }
-  Write-Host "Copied. From now on use the .bat files in $target; you can delete $Root." -ForegroundColor Green
+  Done "Copied. From now on use the .bat files in $target; you can delete $Root"
+  $env:CCTV_SETUP_NESTED = "1"
   & (Join-Path $target "service\setup.ps1")
   exit $LASTEXITCODE
 }
@@ -151,7 +177,7 @@ if (-not $ready) {
   if (-not $found) { Write-Host "No log files in $logs`: the app could not run at all (the task did not start node.exe, or it may not write to data\)." -ForegroundColor Yellow }
   Fail "Send a screenshot of this window (or the files in $logs) to support."
 }
-Write-Host "The app is running." -ForegroundColor Green
+Done "The app is running"
 
 # --------------------------------------------------------------------------------- administrator
 $users = (& $Node (Join-Path $PSScriptRoot "db-users.mjs") 2>$null | Out-String).Trim()
@@ -206,12 +232,21 @@ $httpPort = Get-Setting "HTTP_PORT"; if (-not $httpPort) { $httpPort = "80" }
 $httpsPort = Get-Setting "HTTPS_PORT"; if (-not $httpsPort) { $httpsPort = "443" }
 Remove-NetFirewallRule -DisplayName $TaskName -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName $TaskName -Direction Inbound -Protocol TCP -LocalPort $httpPort, $httpsPort -Action Allow | Out-Null
-Write-Host "Firewall: ports $httpPort and $httpsPort are open for other PCs."
+Done "Windows Firewall: ports $httpPort and $httpsPort open for other PCs"
 
 $site = Get-Setting "SITE_ADDRESS"
 $url = if ($httpsPort -ne "443") { "https://${site}:$httpsPort" } else { "https://$site" }
 Write-Host ""
-Write-Host "Ready. Open: $url" -ForegroundColor Green
-Write-Host "It starts by itself with Windows. Stop: STOP.bat. Update: STOP.bat, extract the new package here, START.bat."
+Write-Host ("  " + ("=" * 66)) -ForegroundColor Green
+Write-Host "    CCTV Monitoring is ready" -ForegroundColor Green
+Write-Host ("  " + ("=" * 66)) -ForegroundColor Green
+Write-Host ("    {0,-14}{1}" -f "Dashboard", $url) -ForegroundColor White
+Write-Host ("    {0,-14}{1}" -f "Installed in", $Root)
+Write-Host ("    {0,-14}{1}" -f "Data", "$Data  (back it up; keep credential.key safe)")
+Write-Host ("    {0,-14}{1}" -f "Certificate", "$(Join-Path $Root 'root.crt')  (install on other PCs)")
+Write-Host ("    {0,-14}{1}" -f "Runs as", "scheduled task '$TaskName': starts with Windows, nobody signed in")
+Write-Host ("    {0,-14}{1}" -f "Stop / start", "STOP.bat / START.bat (Run as administrator)")
+Write-Host ("    {0,-14}{1}" -f "Update", "STOP.bat, extract the new zip over this folder, START.bat")
+Write-Host ("  " + ("-" * 66)) -ForegroundColor DarkGray
 # Windows Server Core (or a server without a browser): open the address from another PC instead.
 try { Start-Process $url -ErrorAction Stop } catch { Write-Host "No browser on this computer: open $url from another PC." -ForegroundColor Yellow }
