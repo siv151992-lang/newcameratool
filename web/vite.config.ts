@@ -13,7 +13,15 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: false,
     rollupOptions: {
-      output: { manualChunks: { react: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"], charts: ["recharts"] } },
+      output: {
+        // Two library chunks: the charts (only the pages with charts load them) and everything else.
+        // Each library is named explicitly: Rollup otherwise moves a shared one (clsx) into the first
+        // chunk that uses it, and the first screen would load the charts.
+        manualChunks(id) {
+          if (/node_modules\/(recharts|recharts-scale|react-smooth|lodash|d3-[a-z-]+|victory-vendor|internmap|decimal\.js-light|eventemitter3|tiny-invariant|fast-equals|react-transition-group|dom-helpers)\//.test(id)) return "charts";
+          if (id.includes("node_modules/") || id.includes("commonjsHelpers")) return "react";
+        },
+      },
     },
   },
   test: { environment: "jsdom", include: ["src/**/*.test.{ts,tsx}"] },

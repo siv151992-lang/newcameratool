@@ -1,25 +1,28 @@
+import { lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { Spinner } from "./components/ui";
 import { useAuth } from "./hooks/auth";
-import { AiPage } from "./pages/AiPage";
-import { AlertsPage } from "./pages/AlertsPage";
 import { ForgotPasswordPage, ResetPasswordPage, VerifyEmailPage } from "./pages/auth/EmailLinkPages";
 import { InvitationPage } from "./pages/auth/InvitationPage";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { SignupPage } from "./pages/auth/SignupPage";
-import { BrandsPage } from "./pages/BrandsPage";
-import { CameraDetailPage } from "./pages/CameraDetailPage";
-import { CameraFormPage } from "./pages/CameraFormPage";
-import { CamerasPage } from "./pages/CamerasPage";
-import { DashboardPage } from "./pages/DashboardPage";
-import { ImportPage } from "./pages/ImportPage";
-import { ScanPage } from "./pages/ScanPage";
-import { LiveWallPage } from "./pages/LiveWallPage";
-import { UptimePage } from "./pages/UptimePage";
-import { FirmwarePage } from "./pages/FirmwarePage";
 import { NoOrganizationPage } from "./pages/NoOrganizationPage";
-import { SettingsPage } from "./pages/SettingsPage";
+
+// The app's pages load when first opened (the sign-in page and the first screen load less).
+const AiPage = lazy(() => import("./pages/AiPage").then((m) => ({ default: m.AiPage })));
+const AlertsPage = lazy(() => import("./pages/AlertsPage").then((m) => ({ default: m.AlertsPage })));
+const BrandsPage = lazy(() => import("./pages/BrandsPage").then((m) => ({ default: m.BrandsPage })));
+const CameraDetailPage = lazy(() => import("./pages/CameraDetailPage").then((m) => ({ default: m.CameraDetailPage })));
+const CameraFormPage = lazy(() => import("./pages/CameraFormPage").then((m) => ({ default: m.CameraFormPage })));
+const CamerasPage = lazy(() => import("./pages/CamerasPage").then((m) => ({ default: m.CamerasPage })));
+const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const ImportPage = lazy(() => import("./pages/ImportPage").then((m) => ({ default: m.ImportPage })));
+const ScanPage = lazy(() => import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })));
+const LiveWallPage = lazy(() => import("./pages/LiveWallPage").then((m) => ({ default: m.LiveWallPage })));
+const UptimePage = lazy(() => import("./pages/UptimePage").then((m) => ({ default: m.UptimePage })));
+const FirmwarePage = lazy(() => import("./pages/FirmwarePage").then((m) => ({ default: m.FirmwarePage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 
 export function App() {
   const { user, loading, can } = useAuth();

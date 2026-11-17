@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { HealthBar } from "./HealthBar";
 import { IdleSignOut } from "./IdleSignOut";
 import { Activity, Bell, Building2, Camera, Cpu, LayoutDashboard, MonitorPlay, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sparkles, Sun, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -12,7 +12,7 @@ import { ROLE_LABELS, useAuth } from "../hooks/auth";
 import { useTheme } from "../hooks/theme";
 import { AlertSound } from "./AlertSound";
 import { useToast } from "./toast";
-import { Button, Select } from "./ui";
+import { Button, Select, Spinner } from "./ui";
 import { ZohoBand } from "./ZohoBand";
 import { Brand } from "./Brand";
 import { useRedirectNotice } from "../pages/ConnectedAccounts";
@@ -206,7 +206,9 @@ export function AppShell() {
         </header>
         {can("system:manage") && <HealthBar />}
         <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6">
-          <Outlet />
+          <Suspense fallback={<Spinner label="Loading" />}>
+            <Outlet />
+          </Suspense>
         </main>
         <IdleSignOut minutes={idleTimeoutMinutes} />
       </div>
