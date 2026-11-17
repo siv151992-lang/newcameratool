@@ -24,8 +24,8 @@ fetch() { # url file sha256
 }
 fetch "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-win-x64.zip" node-win.zip 2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71
 fetch "https://registry.npmjs.org/@embedded-postgres/windows-x64/-/windows-x64-16.15.0-beta.19.tgz" pg-win.tgz 7f338e7eb0e892000e10ec09ac95e005f453a9db24d11c9ed0b83c71f51667ff
-fetch "https://github.com/caddyserver/caddy/releases/download/v2.8.4/caddy_2.8.4_windows_amd64.zip" caddy-win.zip 2631fbe1c4f6fb08783ed6dc6ac238d6655b4c923abe2bce1433dbd7fd079630
-fetch "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.4/go2rtc_win64.zip" go2rtc-win.zip 167b64f12cf0ecb3714d2911a4a92c2809c37d43d9f1dd02a0575b6488107816
+fetch "https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_windows_amd64.zip" caddy-win.zip ad93112d335ee687100c4c9f11bced16ca590377976b7fe7883882b9e797e472
+fetch "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.15/go2rtc_win64.zip" go2rtc-win.zip 5b448fc90f15c925406d8da0984301985e385050222c1c2bbdf0a76fe4b1e9cb
 fetch "https://files.pythonhosted.org/packages/98/33/be9ef68901200813fc174a06758b4ae48ca4eb58fa783280dd879d5fd048/msvc_runtime-14.51.36231-cp312-cp312-win_amd64.whl" msvc-runtime.whl 89f70d1a37bb64164cdb09d02dd82d6b1400e1310be2995b4ed5a9f23efe2222
 
 echo "Building the app"

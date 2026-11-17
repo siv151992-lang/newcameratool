@@ -15,7 +15,7 @@ Write-Host "Building the app from this folder (uses what is already built where 
 docker compose build
 if ($LASTEXITCODE -ne 0) { Fail "The app could not be built here. Run this on a PC where INSTALL.bat works." }
 
-$images = @("cctv-storage-monitor:latest", "postgres:16-alpine", "caddy:2-alpine", "alexxit/go2rtc:1.9.4")
+$images = @("cctv-storage-monitor:latest", "postgres:16-alpine", "caddy:2-alpine", "alexxit/go2rtc:1.9.15")
 Write-Host "Making sure all images are here..." -ForegroundColor Cyan
 foreach ($image in $images[1..($images.Count - 1)]) {
   docker image inspect $image *> $null

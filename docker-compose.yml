@@ -100,7 +100,7 @@ services:
     # Turns camera RTSP streams into video browsers can play. Not published on any host port: only
     # the api reaches it, and it passes the video on to signed-in users. It must reach the cameras
     # on RTSP port 554, like the worker reaches them on HTTP.
-    image: alexxit/go2rtc:1.9.4
+    image: alexxit/go2rtc:1.9.15
     restart: unless-stopped
     volumes:
       - ./deploy/go2rtc.yaml:/config/go2rtc.yaml:ro
