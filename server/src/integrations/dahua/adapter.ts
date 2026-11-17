@@ -16,7 +16,7 @@ export const DAHUA_RECORDING_PATH = "/cgi-bin/record.cgi?action=getRecordStatus"
 export class DahuaAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
     key: "dahua",
-    displayName: "Dahua (incl. CP Plus, Amcrest)",
+    displayName: "Dahua (incl. CP Plus V-series, Amcrest)",
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },

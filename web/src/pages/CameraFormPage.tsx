@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, KeyRound, PlugZap, Save, ShieldCheck, X } from "lucide-react";
+import clsx from "clsx";
+import { Check, KeyRound, PlugZap, Radar, Save, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
@@ -124,6 +125,22 @@ export function CameraFormPage() {
     setFetchCertificateNow((n) => n + 1);
     setTimeout(() => certificateRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
   };
+  // Which brand's interface the device answers: tries each in turn and selects the one that works.
+  const detect = useMutation({
+    mutationFn: () =>
+      api<{ reachable: boolean; match: { key: string; displayName: string; model?: string | null } | null }>("/cameras/detect-brand", {
+        method: "POST",
+        body: { host: form.host.trim(), protocol: form.protocol, username: form.username, password: form.password, ...(form.port.trim() ? { port: Number(form.port) } : {}), ...(form.caCertificate.trim() ? { caCertificate: form.caCertificate.trim() } : {}) },
+      }),
+    onSuccess: (r) => {
+      if (r.match && brands.data?.some((b) => b.key === r.match!.key)) {
+        chooseBrand(r.match.key);
+        if (r.match.model && !form.model.trim()) set("model", r.match.model);
+      }
+    },
+    onError: (e: Error) => setFormError(e),
+  });
+  const cpPlusUSeries = form.brand === "dahua" && /^\s*CP-?U(NC|NR|NVR)/i.test(form.model);
   const snapshot = useMemo(() => JSON.stringify(toPayload(form)), [form]);
   const testIsCurrent = test && testedSnapshot === snapshot;
 
@@ -211,7 +228,9 @@ export function CameraFormPage() {
                 }
               >
                 {(fid, d) => (
-                  <Select id={fid} aria-describedby={d} value={form.brand} onChange={(e) => chooseBrand(e.target.value)}>
+                  <>
+                  <div className="flex gap-2">
+                  <Select id={fid} aria-describedby={d} className="min-w-0 flex-1" value={form.brand} onChange={(e) => chooseBrand(e.target.value)}>
                     {/* Only enabled integrations are listed; keep a disabled one visible when editing its camera. */}
                     {editing && brands.data && !brand && <option value={form.brand}>{camera.data?.brandName ?? form.brand} (disabled)</option>}
                     {brands.data?.map((b) => (
@@ -221,6 +240,27 @@ export function CameraFormPage() {
                       </option>
                     ))}
                   </Select>
+                  <Button
+                    icon={<Radar className="h-4 w-4" />}
+                    loading={detect.isPending}
+                    disabled={!form.host.trim() || !form.password}
+                    title={!form.host.trim() || !form.password ? "Enter the IP address, username and password first" : "Find which brand's interface this device answers"}
+                    onClick={() => detect.mutate()}
+                  >
+                    Detect
+                  </Button>
+                  </div>
+                  {detect.data && (
+                    <p className={clsx("mt-1 text-xs", detect.data.match ? "text-good" : "text-ink-secondary")} role="status">
+                      {detect.data.match
+                        ? `Detected: ${detect.data.match.displayName}${detect.data.match.model ? ` (${detect.data.match.model})` : ""}. Selected.`
+                        : detect.data.reachable
+                          ? "No brand's interface read this device's storage. Choose the brand by hand, or Generic ONVIF."
+                          : "The device did not answer: check the IP address and port."}
+                    </p>
+                  )}
+                  {cpPlusUSeries && <p className="mt-1 text-xs text-ink-secondary">CP Plus U-series models (CP-UNC, CP-UNR) usually run Uniview firmware: choose Uniview, or use Detect.</p>}
+                  </>
                 )}
               </Field>
               <Field label="IP address or hostname" required error={errors.host} hint="For example 10.10.15.57. No http:// or paths.">

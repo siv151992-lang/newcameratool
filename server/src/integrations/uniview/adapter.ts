@@ -15,7 +15,7 @@ export const UNIVIEW_RECORDING_PATH = "/LAPI/V1.0/Storage/Status";
 export class UniviewAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
     key: "uniview",
-    displayName: "Uniview",
+    displayName: "Uniview (incl. CP Plus U-series)",
     supportStatus: "unverified",
     authMethods: ["digest", "basic (HTTPS only)"],
     defaultPorts: { http: 80, https: 443 },

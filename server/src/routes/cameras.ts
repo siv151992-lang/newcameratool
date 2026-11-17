@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { detectBrand, detectSchema } from "../services/integrationService.js";
 import { sendWeeklyReportXlsx } from "./weeklyReportDownload.js";
 import { allCamerasMiddleware, isCameraScoped, runWithCameraScope } from "../auth/cameraScope.js";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
@@ -222,6 +223,11 @@ camerasRouter.post("/:id/monitoring", write, async (req, res) => {
   const { enabled } = parse(z.object({ enabled: z.boolean() }), req.body);
   await setMonitoring(orgOf(req), param(req), enabled, actorOf(req), req.ip);
   res.json(await getCamera(param(req), orgOf(req)));
+});
+
+/** Which brand's API the device speaks (camera form: Detect). Tries each built-in brand in turn. */
+camerasRouter.post("/detect-brand", write, deviceLimiter, async (req, res) => {
+  res.json(await detectBrand(parse(detectSchema, req.body)));
 });
 
 // Test a saved camera, optionally with unsaved edits applied (blank password keeps the stored one).

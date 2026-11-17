@@ -118,11 +118,28 @@ function credentialIssues(v: { brand?: string; username?: string; password?: str
   }
 }
 
-export const cameraInputSchema = z
-  .object(baseFields)
-  .strict()
-  .refine(thresholdsOk, thresholdMessage)
-  .superRefine((v, ctx) => credentialIssues(v, ctx, true));
+/**
+ * CP Plus sells two ranges: its V-series (CP-VNC cameras, CP-VNR recorders) runs Dahua firmware,
+ * its U-series (CP-UNC cameras, CP-UNR recorders) Uniview firmware. "CP Plus" alone means Dahua
+ * (resolveKey); with a U-series model it means Uniview. Detect on the camera form checks the device.
+ */
+export function cpPlusFamily(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const o = raw as { brand?: unknown; model?: unknown };
+  if (typeof o.brand !== "string" || typeof o.model !== "string") return raw;
+  const brand = o.brand.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (brand === "cpplus" && /^\s*CP-?U(NC|NR|NVR)/i.test(o.model)) return { ...o, brand: "uniview" };
+  return raw;
+}
+
+export const cameraInputSchema = z.preprocess(
+  cpPlusFamily,
+  z
+    .object(baseFields)
+    .strict()
+    .refine(thresholdsOk, thresholdMessage)
+    .superRefine((v, ctx) => credentialIssues(v, ctx, true)),
+);
 export type CameraInput = z.infer<typeof cameraInputSchema>;
 
 export const cameraUpdateSchema = patchOf(
