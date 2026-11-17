@@ -42,3 +42,33 @@ describe("Hikvision firmware that searches in UTC, in India, just after midnight
     expect(list.segments.every((s) => s.start >= today - DAY - 3600_000 && s.end <= today + 3600_000)).toBe(true);
   });
 });
+
+describe("Hikvision firmware that answers in local time, in India", () => {
+  const cam = new MockHikvisionCamera("admin", "Cam-Pass-123");
+  let config: CameraConfig;
+  beforeAll(async () => {
+    cam.recordingStatusApi = false;
+    cam.utcOffsetMinutes = IST;
+    cam.searchRepliesUtc = false;
+    const port = await cam.start();
+    config = { host: "127.0.0.1", port, protocol: "http", username: "admin", password: "Cam-Pass-123", timeoutMs: 5000 };
+  });
+  afterAll(() => cam.stop());
+
+  it("lists a past day without shifting it by the time zone (its replies are local, as the recording now shows)", async () => {
+    const localToday = Math.floor((Date.now() + IST * 60_000) / DAY) * DAY;
+    const day = localToday - 3 * DAY;
+    const list = await new HikvisionAdapter(http).listRecordings(config, day, day + DAY);
+    expect(list.shiftMs).toBe(0);
+    expect(list.segments.length).toBeGreaterThan(0);
+    expect(Math.min(...list.segments.map((s) => s.start))).toBe(day);
+    expect(Math.max(...list.segments.map((s) => s.end))).toBe(day + DAY);
+  });
+
+  it("and a past month likewise", async () => {
+    const localToday = Math.floor((Date.now() + IST * 60_000) / DAY) * DAY;
+    const from = localToday - 20 * DAY;
+    const list = await new HikvisionAdapter(http).listRecordings(config, from, localToday - 10 * DAY);
+    expect(list.shiftMs).toBe(0);
+  });
+});

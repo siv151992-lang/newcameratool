@@ -84,6 +84,33 @@ export class HikvisionAdapter implements CameraBrandAdapter {
 
   /** host:port of cameras known to lack Recording/status, with when to try it again. */
   private readonly noStatusApi = new Map<string, number>();
+  /** host:port → whether the firmware's search replies are in UTC (learned from its current recording). */
+  private readonly utcReplies = new Map<string, { utc: boolean; until: number }>();
+
+  /**
+   * Whether this camera's search replies are in UTC rather than its local time: told from the newest
+   * recording around its time now, the one moment both readings can be told apart (the end of a past
+   * day fits either). Remembered for a day; undefined when nothing is recorded at the moment.
+   */
+  private async repliesInUtc(camera: CameraConfig, nowMs: number, offsetMinutes: number | undefined): Promise<boolean | undefined> {
+    if (!offsetMinutes) return false;
+    const key = `${camera.host}:${camera.port}`;
+    const known = this.utcReplies.get(key);
+    if (known && known.until > Date.now()) return known.utc;
+    const latestAround = async (now: number) =>
+      parseSearchLatestEnd(
+        await this.step("searching its recordings", () =>
+          this.getXml(camera, HIKVISION_SEARCH_PATH, searchRequestXml(now - SEARCH_WINDOW_MINUTES * 60_000, now + 5 * 60_000, randomUUID().toUpperCase())),
+        ),
+      );
+    // Firmware answering in UTC also reads the period asked in UTC: try that period too.
+    const latest = (await latestAround(nowMs)) ?? (await latestAround(nowMs - offsetMinutes * 60_000));
+    if (latest === undefined) return undefined;
+    const utc = toLocalWallClock(latest, nowMs, offsetMinutes) !== latest;
+    if (this.utcReplies.size > 100_000) this.utcReplies.clear();
+    this.utcReplies.set(key, { utc, until: Date.now() + 86_400_000 });
+    return utc;
+  }
 
   constructor(private readonly http: CameraHttpClient) {}
 
@@ -265,11 +292,21 @@ export class HikvisionAdapter implements CameraBrandAdapter {
       }
       return found;
     };
+    // UTC or local replies: known from the camera's current recording when it is recording.
+    const utc = await this.repliesInUtc(camera, nowMs, offsetMinutes).catch(() => undefined);
+    if (utc !== undefined) {
+      const shift = utc ? offsetMinutes! * 60_000 : 0;
+      const segments = await search(fromMs - shift, toMs - shift);
+      return { segments: mergeSegments(segments.map((s) => ({ start: s.start + shift, end: s.end + shift }))), nowMs, shiftMs: shift, clips: true };
+    }
+    // Not recording now: told from the period's own recordings, which only works when the period
+    // reaches up to the camera's time now (the end of a past day fits either reading).
     let found = await search(fromMs, toMs);
     let shiftMs = 0;
+    const nearNow = toMs >= nowMs - SEARCH_WINDOW_MINUTES * 60_000;
     const inUtc = (segments: RecordedSegment[]) => {
       const latest = Math.max(...segments.map((s) => s.end));
-      return toLocalWallClock(latest, nowMs, offsetMinutes) !== latest;
+      return nearNow && toLocalWallClock(latest, nowMs, offsetMinutes) !== latest;
     };
     if (offsetMinutes && found.length) {
       if (inUtc(found)) {
