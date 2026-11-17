@@ -66,9 +66,9 @@ export function Brand({ compact, onDark, size = "md", className, withZoho = true
   if (compact || !withZoho) return compact ? lockup : <span className={className}>{lockup}</span>;
   // The Zoho logo under the IBMS logo and name.
   return (
-    <span className={clsx("inline-flex min-w-0 flex-col items-start", size === "lg" ? "gap-3" : "gap-2", className)}>
+    <span className={clsx("inline-flex min-w-0 flex-col items-start", size === "lg" ? "gap-2" : "gap-1.5", className)}>
       {lockup}
-      <ZohoLogo onDark={onDark} className={clsx("w-auto", size === "lg" ? "h-10" : size === "sm" ? "h-5" : "h-7")} />
+      <ZohoLogo onDark={onDark} className={clsx("w-auto", size === "lg" ? "h-7" : size === "sm" ? "h-3.5" : "h-[18px]")} />
     </span>
   );
 }
