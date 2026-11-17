@@ -16,7 +16,12 @@ info:
     only by the system administrator (`system:manage`).
 
     **Roles**: `admin` (everything), `operator` (cameras:read, cameras:check, alerts, settings:read),
-    `viewer` (read-only). Each endpoint lists the permission it needs.
+    `viewer` (read-only). Each endpoint lists the permission it needs. A member may be limited to some
+    locations or cameras and have live view, recordings or camera actions switched off. The super admin (the
+    first user) cannot be changed or signed out by anyone else.
+
+    **Sessions**: a session ends after the idle limit without use (`GET /api/settings/security`), and can be
+    ended from another device (`DELETE /api/auth/sessions/{id}`).
 
     **Secrets**: camera passwords are write-only. No endpoint ever returns a password or its ciphertext.
 
@@ -1069,6 +1074,519 @@ paths:
           content:
             text/csv: {}
 
+  # ------------------------------------------------------------------ sessions and sign-in security
+  /auth/sessions:
+    get:
+      tags: [Auth]
+      summary: Where the signed-in user is signed in (this session first)
+      description: Each session's device (from its browser), IP address, when it started and was last used. Sessions unused for longer than the idle limit are removed first.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions: { type: array, items: { $ref: "#/components/schemas/ActiveSession" } }
+                  idleTimeoutMinutes: { type: integer, description: "Sign-out after this many minutes without use (0: never)" }
+  /auth/sessions/{id}:
+    delete:
+      tags: [Auth]
+      summary: Signs out one of the user's other sessions (the one in use answers 400; use logout)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
+      responses:
+        "204": { description: Signed out }
+        "400": { description: "CURRENT_SESSION: this is the session in use" }
+        "404": { description: Not one of the user's sessions }
+  /auth/sessions/sign-out-others:
+    post:
+      tags: [Auth]
+      summary: Signs out every other session of the user
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { ended: { type: integer } } } } } }
+  /auth/confirm-password:
+    get:
+      tags: [Auth]
+      summary: Whether Settings are unlocked in this session, and until when
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { until: { type: string, format: date-time, nullable: true } } } } } }
+    post:
+      tags: [Auth]
+      summary: Confirms the password again, unlocking Settings changes for a while
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [password], properties: { password: { type: string } } } } }
+      responses:
+        "200": { description: Unlocked, content: { application/json: { schema: { type: object, properties: { until: { type: string, format: date-time } } } } } }
+        "401": { description: Wrong password (audited) }
+    delete:
+      tags: [Auth]
+      summary: Locks Settings again
+      responses:
+        "204": { description: Locked }
+  /auth/identities:
+    get:
+      tags: [Auth]
+      summary: The Google / Zoho sign-ins linked to the account, and whether it has a password
+      responses:
+        "200": { description: OK }
+  /auth/identities/{provider}:
+    delete:
+      tags: [Auth]
+      summary: Removes a linked Google / Zoho sign-in
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [google, zoho] } }
+      responses:
+        "204": { description: Removed }
+  /auth/oauth/{provider}/start:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Starts signing in with Google or Zoho (redirects to the provider)
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [google, zoho] } }
+      responses:
+        "302": { description: To the provider's sign-in page }
+  /auth/oauth/{provider}/callback:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Where the provider returns after sign-in (redirects into the app)
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [google, zoho] } }
+      responses:
+        "302": { description: Into the app, or to the sign-in page with the reason }
+
+  # ------------------------------------------------------------------ cameras: detection, HTTPS, bulk actions
+  /cameras/detect-brand:
+    post:
+      tags: [Cameras]
+      summary: Which brand's interface a device answers (cameras:write)
+      description: Tries each built-in brand in turn (one at a time) and stops at the first that reads the device's storage, at a refused login, or when the device does not answer. Nothing is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host: { type: string }
+                port: { type: integer }
+                protocol: { type: string, enum: [http, https], default: http }
+                username: { type: string }
+                password: { type: string, format: password }
+                caCertificate: { type: string, nullable: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reachable: { type: boolean }
+                  match: { type: object, nullable: true, properties: { key: { type: string }, displayName: { type: string }, model: { type: string, nullable: true } } }
+                  attempts: { type: array, items: { type: object } }
+  /cameras/tls-certificate:
+    post:
+      tags: [Cameras]
+      summary: The certificate a camera presents on HTTPS, to check and trust it (cameras:write)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [host], properties: { host: { type: string }, port: { type: integer, default: 443 } } } } }
+      responses:
+        "200": { description: "Subject, validity, SHA-256 fingerprint and PEM" }
+  /cameras/bulk-maintenance:
+    post:
+      tags: [Cameras]
+      summary: Maintenance for several cameras (alerts:manage and cameras:check)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [ids], properties: { ids: { type: array, items: { type: string, format: uuid } }, minutes: { type: integer, nullable: true, description: "null ends maintenance" }, note: { type: string } } } } }
+      responses:
+        "200": { description: The cameras changed }
+  /cameras/bulk-priority:
+    post:
+      tags: [Cameras]
+      summary: Marks several cameras as critical area or normal (cameras:write)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [ids, priority], properties: { ids: { type: array, items: { type: string, format: uuid } }, priority: { type: string, enum: [critical, normal] } } } } }
+      responses:
+        "200": { description: The cameras changed }
+  /cameras/bulk-local-storage:
+    post:
+      tags: [Cameras]
+      summary: Marks several cameras as recording elsewhere (no SD card) or not (cameras:write)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [ids, localStorage], properties: { ids: { type: array, items: { type: string, format: uuid } }, localStorage: { type: boolean } } } } }
+      responses:
+        "200": { description: The cameras changed }
+  /cameras/{id}/sd-card-replaced:
+    post:
+      tags: [Cameras]
+      summary: Records that the SD card was replaced (resets its age and wear tracking) (cameras:write)
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+      responses:
+        "200": { description: Recorded }
+  /cameras/uptime:
+    get:
+      tags: [Cameras]
+      summary: Uptime per camera and location over 1, 7, 30 or 90 days (cameras:read; every camera)
+      parameters:
+        - { name: days, in: query, schema: { type: integer, enum: [1, 7, 30, 90], default: 30 } }
+      responses:
+        "200": { description: OK (the lowest 500 cameras; the CSV has all) }
+  /cameras/uptime.csv:
+    get:
+      tags: [Cameras]
+      summary: The uptime report as CSV (cameras:read)
+      parameters:
+        - { name: days, in: query, schema: { type: integer, enum: [1, 7, 30, 90], default: 30 } }
+        - { name: timeZone, in: query, schema: { type: string, default: UTC } }
+      responses:
+        "200": { description: CSV, content: { text/csv: {} } }
+  /cameras/weekly-report.xlsx:
+    get:
+      tags: [Cameras]
+      summary: The weekly report as an Excel workbook (cameras:read; every camera; rate limited)
+      parameters:
+        - { name: timeZone, in: query, schema: { type: string, default: UTC } }
+      responses:
+        "200": { description: XLSX workbook, content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {} } }
+        "429": { description: Too many report downloads }
+
+  # ------------------------------------------------------------------ live video and recordings
+  /cameras/live-video:
+    get:
+      tags: [Cameras]
+      summary: Whether smooth live video (go2rtc) is set up on this server
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { enabled: { type: boolean } } } } } }
+  /cameras/{id}/live/prepare:
+    post:
+      tags: [Cameras]
+      summary: Registers the camera's live stream with the video service (cameras:live)
+      description: The browser then opens the WebSocket `/api/cameras/{id}/live/ws`. NVR channels with `?channel=N`.
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+        - { name: channel, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Ready }
+        "422": { description: "LIVE_VIDEO_UNAVAILABLE: why the video cannot be opened" }
+  /cameras/{id}/live/problem:
+    get:
+      tags: [Cameras]
+      summary: Why live video does not play, tested from the server and from the video service (cameras:live)
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+        - { name: channel, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: "{ message } in plain words, without the password" }
+  /cameras/{id}/recordings:
+    get:
+      tags: [Cameras]
+      summary: Recorded periods on one day, camera local time (cameras:recordings)
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+        - { name: channel, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: { type: string, format: date }
+                  cameraNow: { type: string, description: "The camera's clock (YYYY-MM-DDTHH:MM:SS)" }
+                  segments: { type: array, items: { type: object, properties: { start: { type: string }, end: { type: string } } } }
+                  playsFromRecordingStart: { type: boolean }
+  /cameras/{id}/recordings/days:
+    get:
+      tags: [Cameras]
+      summary: The days of a month with recordings, for the calendar (cameras:recordings)
+      description: Cameras that answer a long search with only part of it, or refuse it, are searched again in shorter periods.
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+        - { name: month, in: query, required: true, schema: { type: string, pattern: "^\\d{4}-\\d{2}$" } }
+        - { name: channel, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { month: { type: string }, days: { type: array, items: { type: string, format: date } } } } } } }
+  /cameras/{id}/recordings/oldest:
+    get:
+      tags: [Cameras]
+      summary: When the recordings on the camera begin, camera local time (cameras:recordings)
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+        - { name: channel, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { oldest: { type: string, nullable: true } } } } } }
+  /cameras/{id}/playback/prepare:
+    post:
+      tags: [Cameras]
+      summary: Points this session's playback stream at a time (cameras:recordings)
+      description: The browser then opens `/api/cameras/{id}/playback/ws`. A time in a gap plays from the next recording; a day without recordings at or after the time answers 422 `NO_RECORDINGS`.
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+        - { name: channel, in: query, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [start], properties: { start: { type: string, example: "2026-11-16T09:30:00" }, speed: { type: number, minimum: 1, maximum: 16 } } } } }
+      responses:
+        "200": { description: "{ ok, start }: when playback really starts" }
+        "422": { description: "NO_RECORDINGS or PLAYBACK_UNAVAILABLE, with the reason" }
+  /cameras/{id}/playback/problem:
+    get:
+      tags: [Cameras]
+      summary: Why a recording does not play (cameras:recordings)
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+      responses:
+        "200": { description: "{ message } in plain words" }
+  /cameras/{id}/recordings/clip:
+    get:
+      tags: [Cameras]
+      summary: A clip of the recording as an MP4 file (cameras:recordings)
+      parameters:
+        - { $ref: "#/components/parameters/CameraId" }
+        - { name: start, in: query, required: true, schema: { type: string, example: "2026-11-16T09:30:00" } }
+        - { name: seconds, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 1800 } }
+        - { name: channel, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: MP4 video (takes as long as the clip lasts), content: { video/mp4: {} } }
+
+  # ------------------------------------------------------------------ users: camera access and sessions
+  /users/{id}/camera-access:
+    get:
+      tags: [Admin]
+      summary: Which cameras a member may see, and their live/recordings/actions switches (users:manage)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK }
+    put:
+      tags: [Admin]
+      summary: Sets a member's camera access (users:manage; never the super admin by someone else)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [all, limited] }
+                locations: { type: array, items: { type: string } }
+                cameraIds: { type: array, items: { type: string, format: uuid } }
+                features: { type: object, properties: { live: { type: boolean }, recordings: { type: boolean }, actions: { type: boolean } } }
+      responses:
+        "200": { description: The access as saved }
+        "403": { description: "SUPER_ADMIN: refused (audited)" }
+  /users/{id}/sessions:
+    get:
+      tags: [Admin]
+      summary: Where a member is signed in (users:manage)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { sessions: { type: array, items: { $ref: "#/components/schemas/ActiveSession" } } } } } } }
+  /users/{id}/sign-out:
+    post:
+      tags: [Admin]
+      summary: Signs a member out everywhere (users:manage; never the super admin by someone else)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { ended: { type: integer } } } } } }
+        "403": { description: "SUPER_ADMIN: refused (audited)" }
+  /invitations/{id}:
+    delete:
+      tags: [Admin]
+      summary: Deletes an invitation (users:manage)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+
+  # ------------------------------------------------------------------ settings
+  /settings/security:
+    get:
+      tags: [Settings]
+      summary: Sign-in security (system:manage)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { idleTimeoutMinutes: { type: integer } } } } } }
+    patch:
+      tags: [Settings]
+      summary: Changes sign-in security (system:manage)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { idleTimeoutMinutes: { type: integer, minimum: 0, maximum: 1440, description: "0: never" } } } } }
+      responses:
+        "200": { description: Saved }
+  /settings/backup:
+    get:
+      tags: [Settings]
+      summary: The daily backup's settings, the last outcome and the backups kept (system:manage)
+      responses:
+        "200": { description: "{ settings, status, folder, defaultFolder, files }" }
+    patch:
+      tags: [Settings]
+      summary: Changes the daily backup (system:manage)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                hour: { type: integer, minimum: 0, maximum: 23 }
+                timeZone: { type: string, example: Asia/Kolkata }
+                keepDays: { type: integer, minimum: 1, maximum: 365 }
+                folder: { type: string, nullable: true, description: "A full path; null: the data folder's backups" }
+      responses:
+        "200": { description: Saved }
+  /settings/backup/run:
+    post:
+      tags: [Settings]
+      summary: Backs up now (system:manage; rate limited)
+      responses:
+        "200": { description: "{ file, folder, size, rows, tables, durationMs, removed }" }
+        "400": { description: The backup failed, with the reason }
+  /settings/health:
+    get:
+      tags: [Settings]
+      summary: System health, every part of the installation rated (system:manage)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok, warn, bad, info] }
+                  checkedAt: { type: string, format: date-time }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        group: { type: string }
+                        label: { type: string }
+                        status: { type: string, enum: [ok, warn, bad, info] }
+                        value: { type: string }
+                        detail: { type: string }
+  /settings/email:
+    get:
+      tags: [Settings]
+      summary: Email settings, without the password (system:manage)
+      responses:
+        "200": { description: OK }
+    patch:
+      tags: [Settings]
+      summary: Changes email settings (system:manage)
+      responses:
+        "200": { description: Saved }
+  /settings/email/detect:
+    get:
+      tags: [Settings]
+      summary: The mail server for a mailbox's domain (system:manage)
+      parameters:
+        - { name: email, in: query, required: true, schema: { type: string, format: email } }
+      responses:
+        "200": { description: OK }
+  /settings/email/test:
+    post:
+      tags: [Settings]
+      summary: Sends a test email (system:manage; audited)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [to], properties: { to: { type: string, format: email } } } } }
+      responses:
+        "200": { description: "{ ok, message }" }
+  /settings/sign-in-providers:
+    get:
+      tags: [Settings]
+      summary: Google / Zoho sign-in settings and the redirect addresses to register (system:manage)
+      responses:
+        "200": { description: OK }
+    patch:
+      tags: [Settings]
+      summary: Changes Google / Zoho sign-in (system:manage)
+      responses:
+        "200": { description: Saved }
+  /settings/camera-password-policy:
+    get:
+      tags: [Settings]
+      summary: The standard for cameras' own passwords (settings:read)
+      responses:
+        "200": { description: OK }
+    patch:
+      tags: [Settings]
+      summary: Changes the camera password standard (settings:write)
+      responses:
+        "200": { description: Saved }
+  /settings/camera-password-rules:
+    get:
+      tags: [Settings]
+      summary: The camera password rules in force, for the camera form (cameras:read)
+      responses:
+        "200": { description: OK }
+  /settings/weekly-report:
+    get:
+      tags: [Settings]
+      summary: The weekly email report's settings and recipients (settings:read)
+      responses:
+        "200": { description: OK }
+    patch:
+      tags: [Settings]
+      summary: Changes the weekly email report (settings:write)
+      responses:
+        "200": { description: Saved }
+  /settings/weekly-report/preview:
+    get:
+      tags: [Settings]
+      summary: The weekly report email as it would be sent (settings:read)
+      responses:
+        "200": { description: HTML, content: { text/html: {} } }
+  /settings/weekly-report.xlsx:
+    get:
+      tags: [Settings]
+      summary: The weekly report workbook (settings:read; rate limited)
+      responses:
+        "200": { description: XLSX workbook, content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {} } }
+  /settings/weekly-report/send:
+    post:
+      tags: [Settings]
+      summary: Sends the weekly report now (settings:write; audited)
+      responses:
+        "200": { description: "{ sentTo, failed }" }
+
+  # ------------------------------------------------------------------ integrations
+  /integrations/detect:
+    post:
+      tags: [Integrations]
+      summary: Which built-in adapter a camera works with (integrations write)
+      responses:
+        "200": { description: "{ reachable, match, attempts }" }
+  /integrations/works-like:
+    post:
+      tags: [Integrations]
+      summary: Adds a brand that works like a built-in adapter (an OEM brand) (integrations write)
+      responses:
+        "201": { description: Added }
+
 components:
   securitySchemes:
     session:
@@ -1106,6 +1624,16 @@ components:
                         field: { type: string }
                         message: { type: string }
   schemas:
+    ActiveSession:
+      type: object
+      properties:
+        id: { type: string, description: "A hash of the session's token: names it, cannot be used to sign in" }
+        device: { type: string, example: Chrome on Windows }
+        ip: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        current: { type: boolean }
+        organizationName: { type: string, nullable: true }
     Session:
       type: object
       properties:

@@ -178,14 +178,33 @@ Open `https://<SITE_ADDRESS>`. Caddy terminates HTTPS (its own local CA by defau
 > `docker compose cp api:/app/server/data/credential.key ./credential.key` and store that file somewhere
 > safe (or put its contents in `CREDENTIAL_ENCRYPTION_KEY`).
 
-## Testing against a real Hikvision camera
+## Testing against a real camera
 
 Only do this on a network and camera you are authorised to access.
 
-1. Confirm the API works from the server with the same request the app makes:
+1. Confirm the camera's API works from the server with the same request the app makes. `--digest`
+   sends the password as a digest, not in the clear; `read -rs` keeps it off the screen:
    ```bash
-   curl --digest -u admin:'YourCameraPassword' "http://<CAMERA_IP>/ISAPI/ContentMgmt/Storage"
+   read -rsp 'Camera password: ' CAMPW; echo
+   # Hikvision / Prama: storage, device, recording status, clock
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/ISAPI/ContentMgmt/Storage"
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/ISAPI/System/deviceInfo"
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/ISAPI/ContentMgmt/Recording/status"
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/ISAPI/System/time"
+   # Dahua, Amcrest, CP Plus V-series (CP-VNC / CP-VNR)
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo"
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/cgi-bin/magicBox.cgi?action=getSystemInfo"
+   # Uniview, CP Plus U-series (CP-UNC / CP-UNR): a 404 on both storage addresses means "read over ONVIF"
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/LAPI/V1.0/System/DeviceInfo"
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/LAPI/V1.0/Storage/Containers/DetailInfos"
+   curl --digest -u "admin:$CAMPW" "http://<CAMERA_IP>/LAPI/V1.0/Storage/Disks"
+   # ONVIF turned on? Any HTTP status (400, 405, 500) means yes; "connection refused" or 404 means no
+   curl -s -o /dev/null -w '%{http_code}\n' "http://<CAMERA_IP>/onvif/device_service"
+   unset CAMPW
    ```
+   A reply of `302` with a `Location: https://…` header means the camera accepts only HTTPS: in the
+   camera form, **Test connection** then offers **Switch to HTTPS** and fetches the camera's certificate
+   to trust (certificate checks are never turned off). Not sure of the brand? Use **Detect** next to Brand.
 2. Make sure the camera's address is inside an allowed network in **Settings → Camera networks** (e.g. `10.10.15.0/24`).
 3. In the UI choose **Add camera**, enter the IP and credentials and click **Test connection**.
    Each step reports separately, so you can tell an unreachable camera from wrong credentials, a missing
@@ -195,6 +214,40 @@ Only do this on a network and camera you are authorised to access.
 
 **Units:** ISAPI reports `capacity` and `freeSpace` in megabytes (MiB). The app converts them to bytes and
 displays decimal units (GB), so a card shown as 121942 MB by the camera appears as 128 GB.
+
+## Using the API with curl
+
+Every endpoint is described at `https://<dashboard>/api/docs` (OpenAPI: `/api/openapi.json`). Sign in
+once with a cookie jar; state-changing requests also send the CSRF token from the sign-in, and Settings
+changes need the password confirmed in the session. `root.crt` is the dashboard's certificate (Windows:
+`C:\cctv-monitor\root.crt`); the password goes in on standard input, so it is not in the process list.
+
+```bash
+B=https://<dashboard-address>          # e.g. https://10.71.122.109 or https://10.71.122.109:18443
+C=(curl -sS --cacert root.crt -b jar.txt -c jar.txt -H "Origin: $B")
+read -rsp 'Password: ' PW; echo
+CSRF=$(printf '{"username":"admin","password":"%s"}' "$PW" | "${C[@]}" -H 'Content-Type: application/json' \
+  --data-binary @- "$B/api/auth/login" | python3 -c 'import sys,json; print(json.load(sys.stdin)["csrfToken"])')
+H=(-H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json')
+printf '{"password":"%s"}' "$PW" | "${C[@]}" "${H[@]}" --data-binary @- "$B/api/auth/confirm-password"  # unlocks Settings
+unset PW
+
+"${C[@]}" "$B/api/cameras?pageSize=5"                                   # cameras with their status
+"${C[@]}" "$B/api/cameras/summary"                                      # the dashboard's numbers
+"${C[@]}" "$B/api/alerts?status=open"                                   # open alerts
+"${C[@]}" "$B/api/cameras/<id>/recordings?date=2026-11-16"              # one day's recordings (camera time)
+"${C[@]}" "$B/api/cameras/<id>/recordings/days?month=2026-11"           # the calendar
+"${C[@]}" -o weekly.xlsx "$B/api/cameras/weekly-report.xlsx?timeZone=Asia/Kolkata"
+"${C[@]}" "$B/api/settings/health"                                      # System health (super admin)
+"${C[@]}" "${H[@]}" -X POST "$B/api/settings/backup/run"                # Back up now (super admin)
+"${C[@]}" "$B/api/settings/backup"                                      # backups kept, last outcome
+"${C[@]}" "$B/api/auth/sessions"                                        # where you are signed in
+"${C[@]}" "${H[@]}" -X POST "$B/api/auth/sessions/sign-out-others"      # sign out other devices
+"${C[@]}" -o audit.csv "$B/api/audit/export?category=users&timeZone=Asia/Kolkata"
+"${C[@]}" "${H[@]}" -X POST "$B/api/auth/logout"; rm -f jar.txt
+```
+
+`jar.txt` holds the session while you work: keep it private and delete it afterwards (as above).
 
 ## Commands
 
