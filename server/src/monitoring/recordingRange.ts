@@ -19,7 +19,11 @@ export async function recordingRangeOf(adapter: CameraBrandAdapter, cfg: CameraC
     } catch (err) {
       // Firmware that refuses the brand's long search may still list a shorter period.
       if (!adapter.listRecordings || !(err instanceof CameraApiError) || !REFUSALS.includes(err.code)) throw err;
-      return rangeFromListing(adapter, cfg).catch(() => Promise.reject(err));
+      // Only the real oldest recording counts here; a lower bound ("at least") from a short search
+      // says less than the refusal (the last value is kept).
+      const listed = await rangeFromListing(adapter, cfg).catch(() => undefined);
+      if (listed === undefined || listed?.atLeast) throw err;
+      return listed;
     }
   }
   if (adapter.listRecordings) return rangeFromListing(adapter, cfg);

@@ -396,6 +396,12 @@ async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapt
     // The brand's own report, or worked out from its recordings, or over ONVIF.
     const range = await recordingRangeOf(adapter, cfg, onvif);
     if (range === undefined) return;
+    // A lower bound ("at least N days") never replaces a larger known value: the last one is kept.
+    const known = rows[0]?.recording_days === null || rows[0]?.recording_days === undefined ? null : Number(rows[0].recording_days);
+    if (range?.atLeast && known !== null && known > range.days) {
+      await pool.query("UPDATE camera_status SET recording_range_error = NULL, recording_range_at = now() WHERE camera_id = $1", [cameraId]);
+      return;
+    }
     await pool.query(
       `UPDATE camera_status SET recording_days = $2, recording_oldest = $3, recording_days_at_least = $4,
               recording_range_error = NULL, recording_range_at = now() WHERE camera_id = $1`,
