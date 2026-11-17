@@ -180,7 +180,7 @@ describe("UniviewAdapter", () => {
     try {
       const err = await adapter.getStorageStatus(ctx.config).then(() => null, (e: Error & { code?: string }) => e);
       expect(err?.code).toBe("API_UNAVAILABLE");
-      expect(err?.message).toMatch(/Uniview's own API .*Storage\/Disks/);
+      expect(err?.message).toMatch(/does not provide the storage in Uniview's own API .*Storage\/Disks/);
       expect(err?.message).toMatch(/over ONVIF failed: /);
       expect(err?.message).toMatch(/turn on ONVIF/);
     } finally {
@@ -189,6 +189,12 @@ describe("UniviewAdapter", () => {
         body: lapi({ Disks: [{ ID: 1, Name: "sdcard0", Status: "Normal", Type: "Local", TotalCapacity: 128000, UsedCapacity: 64500, FreeCapacity: 63500 }] }),
       });
     }
+  });
+
+  it("moves on to Storage/Disks when Containers/DetailInfos answers in a layout this firmware does not use for storage", async () => {
+    cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: lapi({ HDDList: [{ ID: 1 }] }) });
+    const r = await adapter.getStorageStatus(ctx.config);
+    expect(r.devices).toEqual([expect.objectContaining({ id: "disk-1", name: "sdcard0", healthStatus: "healthy" })]);
   });
 
   it("reads the SD card from Storage/Containers/DetailInfos (real IPC815SB-ADF14K-I0 reply)", async () => {

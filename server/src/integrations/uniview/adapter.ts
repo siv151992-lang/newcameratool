@@ -12,6 +12,9 @@ export const UNIVIEW_LEGACY_STORAGE_PATH = "/LAPI/V1.0/Storage/Disks";
 export const UNIVIEW_DEVICE_INFO_PATH = "/LAPI/V1.0/System/DeviceInfo";
 export const UNIVIEW_RECORDING_PATH = "/LAPI/V1.0/Storage/Status";
 
+/** The LAPI address is missing on this model, or answers in a layout it does not use for this. */
+const notHere = (err: CameraApiError) => err.code === "API_UNAVAILABLE" || err.code === "INVALID_RESPONSE";
+
 export class UniviewAdapter implements CameraBrandAdapter {
   readonly meta: BrandMeta = {
     key: "uniview",
@@ -41,9 +44,17 @@ export class UniviewAdapter implements CameraBrandAdapter {
   /** The main stream, or the path of other firmware. */
   readonly rtspFallbacks = ["/media/video1", "/unicast/c1/s1/live"];
 
-  /** The current picture for the live view: the camera's own channel 0, or an NVR's channel N (numbered from 1). */
-  getSnapshot(camera: CameraConfig, channel?: number) {
-    return fetchSnapshot(this.http, camera, `/LAPI/V1.0/Channels/${channel ?? 0}/Media/Video/Streams/0/Snapshot`);
+  /**
+   * The current picture for the live view: the camera's own channel 0, or an NVR's channel N
+   * (numbered from 1). A camera without LAPI's snapshot gives it over ONVIF.
+   */
+  async getSnapshot(camera: CameraConfig, channel?: number) {
+    try {
+      return await fetchSnapshot(this.http, camera, `/LAPI/V1.0/Channels/${channel ?? 0}/Media/Video/Streams/0/Snapshot`);
+    } catch (err) {
+      if (channel || !(err instanceof CameraApiError) || !notHere(err)) throw err;
+      return this.viaOnvif(err, () => this.onvif.getSnapshot(camera), "the picture");
+    }
   }
 
   /** NVR channel N: sub stream, then main stream. */
@@ -59,12 +70,13 @@ export class UniviewAdapter implements CameraBrandAdapter {
     try {
       return parseUniviewContainers(await this.getJson(camera, UNIVIEW_STORAGE_PATH));
     } catch (err) {
-      if (!(err instanceof CameraApiError) || err.code !== "API_UNAVAILABLE") throw err;
+      // Missing, or answered in a layout this firmware does not use for storage: the older address.
+      if (!(err instanceof CameraApiError) || !notHere(err)) throw err;
     }
     try {
       return parseUniviewStorage(await this.getJson(camera, UNIVIEW_LEGACY_STORAGE_PATH));
     } catch (err) {
-      return this.viaOnvif(err, () => this.onvif.getStorageStatus(camera));
+      return this.viaOnvif(err, () => this.onvif.getStorageStatus(camera), "the storage");
     }
   }
 
@@ -72,7 +84,7 @@ export class UniviewAdapter implements CameraBrandAdapter {
     try {
       return parseUniviewDeviceInfo(await this.getJson(camera, UNIVIEW_DEVICE_INFO_PATH));
     } catch (err) {
-      return this.viaOnvif(err, () => this.onvif.getDeviceInfo(camera));
+      return this.viaOnvif(err, () => this.onvif.getDeviceInfo(camera), "the device information");
     }
   }
 
@@ -81,8 +93,8 @@ export class UniviewAdapter implements CameraBrandAdapter {
    * every LAPI address answers 404. They usually speak ONVIF, so read it there. When ONVIF fails
    * too, the LAPI error is reported (it names what the camera does not provide).
    */
-  private async viaOnvif<T>(lapiError: unknown, read: () => Promise<T>): Promise<T> {
-    if (!(lapiError instanceof CameraApiError) || lapiError.code !== "API_UNAVAILABLE") throw lapiError;
+  private async viaOnvif<T>(lapiError: unknown, read: () => Promise<T>, what = "it"): Promise<T> {
+    if (!(lapiError instanceof CameraApiError) || !notHere(lapiError)) throw lapiError;
     try {
       return await read();
     } catch (onvifError) {
@@ -91,7 +103,7 @@ export class UniviewAdapter implements CameraBrandAdapter {
       const why = onvifError instanceof Error ? onvifError.message : String(onvifError);
       throw new CameraApiError(
         "API_UNAVAILABLE",
-        `This model does not provide it in Uniview's own API (${lapiError.message}), and reading it over ONVIF failed: ${why}. ` +
+        `This model does not provide ${what} in Uniview's own API (${lapiError.message}), and reading it over ONVIF failed: ${why}. ` +
           "In the camera's web page, turn on ONVIF and allow this user to use it (Setup → Network → ONVIF or Integration Protocol), then test again.",
         lapiError.options,
       );
@@ -109,7 +121,11 @@ export class UniviewAdapter implements CameraBrandAdapter {
     } catch (err) {
       if (!(err instanceof CameraApiError) || err.code !== "API_UNAVAILABLE") throw err;
     }
-    const viaOnvif = await this.onvif.getRecordingStatus(camera);
+    const viaOnvif = await this.viaOnvif(
+      new CameraApiError("API_UNAVAILABLE", `The camera does not provide ${UNIVIEW_RECORDING_PATH}`),
+      () => this.onvif.getRecordingStatus(camera),
+      "the recording status",
+    );
     return { ...viaOnvif, detail: `${viaOnvif.detail ? `${viaOnvif.detail}; ` : ""}read over ONVIF` };
   }
 
