@@ -32,7 +32,6 @@ const SERVER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const DEFAULTS: WeeklyReportSettings = { enabled: true, day: 1, hour: 9, timeZone: SERVER_ZONE };
 const KEY = "weekly_report";
 export const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export async function getWeeklyReportSettings(orgId: string): Promise<WeeklyReportSettings & { recipients: string[]; lastSent: string | null }> {
   const { rows } = await pool.query<{ value: Partial<WeeklyReportSettings> & { lastSent?: string } }>(
@@ -361,4 +360,3 @@ export async function sendDueWeeklyReports(now = new Date()): Promise<void> {
   }
 }
 
-export const describeSchedule = (s: WeeklyReportSettings) => `every ${DAYS[s.day]} at ${String(s.hour).padStart(2, "0")}:00 (${s.timeZone})`;

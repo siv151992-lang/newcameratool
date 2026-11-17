@@ -69,12 +69,6 @@ export async function providerCredentials(p: Provider): Promise<ProviderCredenti
   return c.enabled && c.clientId && c.clientSecret ? c : null;
 }
 
-export async function enabledProviders(): Promise<Provider[]> {
-  const out: Provider[] = [];
-  for (const p of PROVIDERS) if (await providerCredentials(p)) out.push(p);
-  return out;
-}
-
 export function clearProviderSettingsCache() {
   cache = undefined;
 }

@@ -11,7 +11,6 @@ import jpeg from "jpeg-js";
  */
 
 export type PictureState = "ok" | "black" | "blank" | "blurred" | "frozen" | "moved";
-export const PICTURE_PROBLEMS: readonly PictureState[] = ["black", "blank", "blurred", "frozen", "moved"];
 
 /** What one snapshot shows, reduced to a few numbers and a tiny picture (kept, never the snapshot). */
 export interface PictureMetrics {

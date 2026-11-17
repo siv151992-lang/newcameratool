@@ -54,8 +54,6 @@ class OnvifNamedAdapter extends OnvifBrandAdapter {
   }
 }
 
-export const ONVIF_BRAND_KEYS = BRANDS.map((b) => b.key);
-
 export function onvifBrandAdapters(http: CameraHttpClient): OnvifBrandAdapter[] {
   return BRANDS.map((b) => new OnvifNamedAdapter(http, b));
 }

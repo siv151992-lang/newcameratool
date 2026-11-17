@@ -26,23 +26,6 @@ export const AUTH_ERROR_CODES: ReadonlySet<CameraErrorCode> = new Set([
   "AUTH_FAILED", "AUTH_METHOD_INSECURE", "PERMISSION_DENIED",
 ]);
 
-export const ERROR_DESCRIPTIONS: Record<CameraErrorCode, string> = {
-  INVALID_HOST: "The camera address is not a valid IP address or hostname",
-  HOST_NOT_ALLOWED: "The camera address is outside the allowed camera networks",
-  DNS_FAILED: "The camera hostname could not be resolved",
-  UNREACHABLE: "Camera unreachable (connection refused or no route)",
-  TIMEOUT: "Camera did not respond in time",
-  TLS_ERROR: "HTTPS connection failed (certificate or protocol problem)",
-  AUTH_FAILED: "Authentication failed: username or password rejected",
-  AUTH_METHOD_INSECURE: "Camera only offers Basic authentication over plain HTTP",
-  PERMISSION_DENIED: "Camera user lacks permission for this API",
-  API_UNAVAILABLE: "Storage API not available on this device",
-  API_ERROR: "Camera API returned an error",
-  INVALID_RESPONSE: "Camera returned a response that could not be understood",
-  CREDENTIALS_UNAVAILABLE: "Stored credentials could not be decrypted",
-  UNSUPPORTED_BRAND: "No working integration exists for this brand",
-};
-
 export class CameraApiError extends Error {
   constructor(
     public readonly code: CameraErrorCode,
