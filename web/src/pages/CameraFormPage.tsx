@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, KeyRound, PlugZap, Save, ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { Brand, CameraDetail, CameraPasswordPolicyView, ConnectionResult, MonitoringSettings } from "../api/types";
@@ -105,6 +105,25 @@ export function CameraFormPage() {
     if (!editing && usable.length && !usable.some((b) => b.key === form.brand)) chooseBrand(usable[0]!.key);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brands.data, editing]);
+  // The camera answered over HTTP with a redirect to HTTPS: it accepts only HTTPS (and on which port).
+  const httpsOnly = useMemo(() => {
+    if (!test || form.protocol === "https") return null;
+    const m = /redirects .*? to HTTPS \((https:\/\/[^)\s]+)\)/.exec(JSON.stringify(test));
+    if (!m) return null;
+    try {
+      return { port: new URL(m[1]!).port || "443" };
+    } catch {
+      return { port: "443" };
+    }
+  }, [test, form.protocol]);
+  const certificateRef = useRef<HTMLDivElement>(null);
+  const [fetchCertificateNow, setFetchCertificateNow] = useState(0);
+  const switchToHttps = () => {
+    // The port the camera redirects to (blank: the HTTPS default, 443).
+    setForm((f) => ({ ...f, protocol: "https", port: httpsOnly?.port === "443" ? "" : httpsOnly!.port }));
+    setFetchCertificateNow((n) => n + 1);
+    setTimeout(() => certificateRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+  };
   const snapshot = useMemo(() => JSON.stringify(toPayload(form)), [form]);
   const testIsCurrent = test && testedSnapshot === snapshot;
 
@@ -257,11 +276,12 @@ export function CameraFormPage() {
               </div>
             )}
             {form.protocol === "https" && (
-              <div className="border-t border-line p-4">
+              <div ref={certificateRef} className="border-t border-line p-4">
                 <CameraCertificate
                   host={form.host}
                   port={form.port}
                   onTrust={(pem) => set("caCertificate", pem)}
+                  fetchNow={fetchCertificateNow}
                 />
                 <Field
                   label="Camera CA certificate (optional)"
@@ -347,6 +367,17 @@ export function CameraFormPage() {
               <Button className="w-full" icon={<PlugZap className="h-4 w-4" />} loading={testMutation.isPending} onClick={() => testMutation.mutate()}>
                 Test connection
               </Button>
+              {httpsOnly && (
+                <div className="rounded-md border border-accent/40 bg-accent-soft/40 p-3 text-sm">
+                  <p className="font-medium">This camera accepts only HTTPS.</p>
+                  <p className="mt-1 text-ink-secondary">
+                    Switch the camera to HTTPS{httpsOnly.port !== "443" ? ` (port ${httpsOnly.port})` : ""}. Its own certificate is fetched for you: check it, trust it, then test again.
+                  </p>
+                  <Button size="sm" variant="primary" className="mt-2" icon={<ShieldCheck className="h-4 w-4" />} onClick={switchToHttps}>
+                    Switch to HTTPS
+                  </Button>
+                </div>
+              )}
               {test && <Diagnostics result={test} />}
               {test && !testIsCurrent && <p className="text-xs text-ink-muted">The form changed since this test. Test again to confirm.</p>}
             </div>
@@ -425,12 +456,17 @@ interface FetchedCertificate {
  * Gets the certificate the camera presents on HTTPS and shows its fingerprint, so the user can
  * trust that exact certificate (it becomes the camera's TLS CA certificate).
  */
-function CameraCertificate({ host, port, onTrust }: { host: string; port: string; onTrust: (pem: string) => void }) {
+function CameraCertificate({ host, port, onTrust, fetchNow = 0 }: { host: string; port: string; onTrust: (pem: string) => void; fetchNow?: number }) {
   const [trusted, setTrusted] = useState<string | null>(null);
   const fetchCert = useMutation({
     mutationFn: () => api<FetchedCertificate>("/cameras/tls-certificate", { method: "POST", body: { host, port: port.trim() ? Number(port) : 443 } }),
     onSuccess: () => setTrusted(null),
   });
+  // "Switch to HTTPS" after a test: fetch the certificate at once.
+  useEffect(() => {
+    if (fetchNow && host.trim()) fetchCert.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchNow]);
   const c = fetchCert.data;
   return (
     <div className="mb-4 rounded-md border border-line bg-raised/40 p-3">
@@ -456,7 +492,7 @@ function CameraCertificate({ host, port, onTrust }: { host: string; port: string
           </dl>
           <p className="text-xs text-ink-muted">If you can, compare the fingerprint with the one the camera's web page shows, then trust it.</p>
           {trusted === c.fingerprint256 ? (
-            <p className="flex items-center gap-1.5 text-sm text-good"><ShieldCheck className="h-4 w-4" aria-hidden /> Trusted: save the camera to keep it.</p>
+            <p className="flex items-center gap-1.5 text-sm text-good"><ShieldCheck className="h-4 w-4" aria-hidden /> Trusted: test the connection again, then save the camera.</p>
           ) : (
             <Button size="sm" variant="primary" icon={<ShieldCheck className="h-4 w-4" />} onClick={() => { onTrust(c.pem); setTrusted(c.fingerprint256); }}>
               Trust this certificate

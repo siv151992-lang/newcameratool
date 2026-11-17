@@ -85,8 +85,16 @@ export class UniviewAdapter implements CameraBrandAdapter {
     if (!(lapiError instanceof CameraApiError) || lapiError.code !== "API_UNAVAILABLE") throw lapiError;
     try {
       return await read();
-    } catch {
-      throw lapiError;
+    } catch (onvifError) {
+      // Both ways failed: say both reasons (the ONVIF one is usually what to fix: ONVIF turned off,
+      // or a user without ONVIF access), not only the Uniview API's "not provided".
+      const why = onvifError instanceof Error ? onvifError.message : String(onvifError);
+      throw new CameraApiError(
+        "API_UNAVAILABLE",
+        `This model does not provide it in Uniview's own API (${lapiError.message}), and reading it over ONVIF failed: ${why}. ` +
+          "In the camera's web page, turn on ONVIF and allow this user to use it (Setup → Network → ONVIF or Integration Protocol), then test again.",
+        lapiError.options,
+      );
     }
   }
 

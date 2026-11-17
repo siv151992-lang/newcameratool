@@ -174,6 +174,23 @@ describe("UniviewAdapter", () => {
     cam.route(UNIVIEW_STORAGE_PATH, { contentType: "application/json", body: IPC815SB_CONTAINERS });
   });
 
+  it("says both reasons when a model has no Uniview storage address and ONVIF fails too (GV-DNC564-MV)", async () => {
+    cam.route(UNIVIEW_STORAGE_PATH, { status: 404, contentType: "text/html", body: "Not Found" });
+    cam.route(UNIVIEW_LEGACY_STORAGE_PATH, { status: 404, contentType: "text/html", body: "Not Found" });
+    try {
+      const err = await adapter.getStorageStatus(ctx.config).then(() => null, (e: Error & { code?: string }) => e);
+      expect(err?.code).toBe("API_UNAVAILABLE");
+      expect(err?.message).toMatch(/Uniview's own API .*Storage\/Disks/);
+      expect(err?.message).toMatch(/over ONVIF failed: /);
+      expect(err?.message).toMatch(/turn on ONVIF/);
+    } finally {
+      cam.route(UNIVIEW_LEGACY_STORAGE_PATH, {
+        contentType: "application/json",
+        body: lapi({ Disks: [{ ID: 1, Name: "sdcard0", Status: "Normal", Type: "Local", TotalCapacity: 128000, UsedCapacity: 64500, FreeCapacity: 63500 }] }),
+      });
+    }
+  });
+
   it("reads the SD card from Storage/Containers/DetailInfos (real IPC815SB-ADF14K-I0 reply)", async () => {
     const r = await adapter.getStorageStatus(ctx.config);
     expect(r).toMatchObject({ totalBytes: 243712 * MIB, freeBytes: 37298 * MIB });
