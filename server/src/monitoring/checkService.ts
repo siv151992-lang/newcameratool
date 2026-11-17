@@ -25,6 +25,7 @@ import { credentialsFor, getCameraConfig } from "../services/cameraService.js";
 import { getMonitoringSettings, type MonitoringSettings } from "../services/settingsService.js";
 import { formatBytes } from "../lib/format.js";
 import { findRecordingGaps, type RecordingGap } from "./recordingGaps.js";
+import { recordingRangeOf } from "./recordingRange.js";
 import { type CheckResult, evaluateConditions, passwordAgeCondition, raiseForCriticalArea, storageHealth, thresholdsFor } from "./evaluate.js";
 import { getCameraPasswordPolicy } from "../services/cameraPasswordPolicy.js";
 import { analysePicture, judgePicture, type PictureBaseline, type PictureState } from "./picture.js";
@@ -164,7 +165,7 @@ export async function runCheck(
         : { state: "unknown", channels: [], detail: meta.recordsElsewhere ? `Records on its own servers (${meta.displayName}); each camera's recording is shown on its channel` : "No local storage: this camera records elsewhere (e.g. an NVR)" };
       if (row.device_type === "nvr") channels = await readChannels(adapter, cfg);
       deviceInfo = await refreshDeviceInfo(cameraId, adapter, cfg, settings);
-      if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger);
+      if (local) await refreshRecordingRange(cameraId, adapter, cfg, trigger, deps.registry);
       if (local && row.device_type !== "nvr") await refreshRecordingSetup(cameraId, adapter, cfg, trigger, settings.recordingGapMinutes);
       await refreshClock(cameraId, adapter, cfg, trigger);
       // The picture of a camera (an NVR's channels are cameras of their own elsewhere).
@@ -380,8 +381,9 @@ export function capacityChanged(before: number | null, after: number | undefined
  * Updates how many days of recordings the camera holds. Optional, like device information: a
  * failure leaves the last value and is retried after an hour.
  */
-async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapter, cfg: CameraConfig, trigger: "scheduled" | "manual") {
-  if (!adapter.getRecordingRange) {
+async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapter, cfg: CameraConfig, trigger: "scheduled" | "manual", registry: BrandRegistry) {
+  const onvif = registry.isSupported("onvif") ? registry.builtinAdapter("onvif") : undefined;
+  if (!adapter.getRecordingRange && !adapter.listRecordings && !onvif?.getRecordingRange) {
     // Marks it as looked at, so the camera page says the brand does not report it.
     await pool.query("UPDATE camera_status SET recording_range_at = now() WHERE camera_id = $1 AND recording_range_at IS NULL", [cameraId]);
     return;
@@ -391,7 +393,9 @@ async function refreshRecordingRange(cameraId: string, adapter: CameraBrandAdapt
   const wait = rows[0]?.recording_range_error ? 3600_000 : RECORDING_RANGE_REFRESH_MS; // a failure is retried after an hour
   if (trigger === "scheduled" && last && Date.now() - last.getTime() < wait) return;
   try {
-    const range = await adapter.getRecordingRange(cfg);
+    // The brand's own report, or worked out from its recordings, or over ONVIF.
+    const range = await recordingRangeOf(adapter, cfg, onvif);
+    if (range === undefined) return;
     await pool.query(
       `UPDATE camera_status SET recording_days = $2, recording_oldest = $3, recording_days_at_least = $4,
               recording_range_error = NULL, recording_range_at = now() WHERE camera_id = $1`,
