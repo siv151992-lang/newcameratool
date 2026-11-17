@@ -181,7 +181,7 @@ export function AppShell() {
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             icon={collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
           />
-          <Brand size="sm" className="lg:hidden" />
+          <Brand size="sm" className="lg:hidden" withZoho={false} />
           <div className="flex min-w-0 flex-1 justify-end sm:justify-start sm:pl-2">
             <OrganizationSwitcher />
           </div>
