@@ -70,6 +70,7 @@ export function UptimePage() {
             <Figure label="Total downtime" value={formatDuration(r.overall.downtimeSeconds)} hint="added over all cameras" />
           </div>
           <Card title="By location">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-ink-muted">
                 <tr><th className="px-4 py-2 font-medium">Location</th><th className="px-2 py-2 font-medium">Cameras</th><th className="px-2 py-2 text-right font-medium">Uptime</th><th className="px-2 py-2 text-right font-medium">Outages</th><th className="px-4 py-2 text-right font-medium">Downtime</th></tr>
@@ -86,8 +87,10 @@ export function UptimePage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </Card>
           <Card title={r.camerasShown < r.overall.cameras ? `Cameras (the ${r.camerasShown} lowest; all ${r.overall.cameras} in the CSV)` : "Cameras"}>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-ink-muted">
                 <tr><th className="px-4 py-2 font-medium">Camera</th><th className="px-2 py-2 font-medium">Location</th><th className="px-2 py-2 text-right font-medium">Uptime</th><th className="px-2 py-2 text-right font-medium">Outages</th><th className="px-2 py-2 text-right font-medium">Downtime</th><th className="px-4 py-2 text-right font-medium">Longest outage</th></tr>
@@ -105,6 +108,7 @@ export function UptimePage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </Card>
           <p className="text-xs text-ink-muted">
             {new Date(r.from).toLocaleString()} – {new Date(r.to).toLocaleString()}. A camera counts as offline from the check that marked it offline

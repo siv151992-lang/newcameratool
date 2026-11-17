@@ -137,7 +137,7 @@ export function AlertsPage() {
           <option value="critical">Critical</option>
           <option value="warning">Warning</option>
         </Select>
-        <Select aria-label="Filter by type" className="w-auto" value={type} onChange={(e) => { setType(e.target.value); setPage(1); }}>
+        <Select aria-label="Filter by type" className="w-auto max-w-full" value={type} onChange={(e) => { setType(e.target.value); setPage(1); }}>
           <option value="">All types</option>
           {Object.entries(ALERT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </Select>

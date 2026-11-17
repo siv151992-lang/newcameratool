@@ -41,6 +41,7 @@ export function FirmwarePage() {
             {inv.data.models.length === 0 ? (
               <EmptyState title="No cameras" description="Add cameras to see their firmware." />
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-ink-muted">
                   <tr>
@@ -61,6 +62,7 @@ export function FirmwarePage() {
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </Card>
         </>
@@ -107,6 +109,7 @@ function ModelCameras({ brand, model }: { brand: string; model: string }) {
   if (cams.isLoading) return <Spinner />;
   if (cams.error) return <ErrorMessage error={cams.error as Error} />;
   return (
+    <div className="overflow-x-auto">
     <table className="w-full text-sm">
       <thead className="text-left text-xs text-ink-muted">
         <tr>
@@ -134,6 +137,7 @@ function ModelCameras({ brand, model }: { brand: string; model: string }) {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 

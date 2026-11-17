@@ -56,7 +56,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
 export function Card({ className, children, title, actions }: { className?: string; children: ReactNode; title?: ReactNode; actions?: ReactNode }) {
   return (
-    <section className={clsx("rounded-lg border border-line bg-surface", className)}>
+    <section className={clsx("min-w-0 rounded-lg border border-line bg-surface", className)}>
       {(title || actions) && (
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
           {title && <h2 className="text-sm font-semibold text-ink">{title}</h2>}

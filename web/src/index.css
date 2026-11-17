@@ -1,4 +1,12 @@
 @tailwind base;
+
+@layer base {
+  /* Grid items may shrink below their content's width: a wide table or row then scrolls inside its
+     card instead of stretching the whole page column past the screen (phones). */
+  .grid > * {
+    min-width: 0;
+  }
+}
 @tailwind components;
 @tailwind utilities;
 

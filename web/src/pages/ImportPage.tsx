@@ -213,7 +213,7 @@ export function ImportPage() {
           <Card title="1. Choose a file">
             <div className="space-y-4 p-4 text-sm">
               <p className="text-ink-secondary">
-                Columns: <code className="text-xs">{COLUMNS.join(",")}</code>. Name, ip and brand are required; port and protocol default per brand
+                Columns: <code className="break-all text-xs">{COLUMNS.join(",")}</code>. Name, ip and brand are required; port and protocol default per brand
                 (HTTP 80). Rows from multiple brands are allowed.
               </p>
               <p className="text-ink-secondary">
