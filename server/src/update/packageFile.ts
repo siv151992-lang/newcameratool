@@ -2,7 +2,7 @@ import { createHash, createPublicKey, verify as verifySig } from "node:crypto";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { Transform } from "node:stream";
+import { Transform, Writable } from "node:stream";
 import yauzl from "yauzl";
 import { UPDATE_PUBLIC_KEYS } from "./trustedKeys.js";
 
@@ -165,11 +165,8 @@ export async function checkPackage(zipFile: string, opts: { stageDir?: string; k
         mkdirSync(dirname(out), { recursive: true });
         await pipeline(source, hasher, createWriteStream(out));
       } else {
-        await pipeline(source, hasher, async function* (src) {
-          for await (const _ of src) {
-            // Only hashed.
-          }
-        });
+        // Only hashed: the bytes are not kept.
+        await pipeline(source, hasher, new Writable({ write: (_chunk, _enc, cb) => cb() }));
       }
       if (hash.digest("hex") !== expected) throw new UpdatePackageError(`The package was changed after it was signed (${rel} differs): it was not installed.`);
     }
