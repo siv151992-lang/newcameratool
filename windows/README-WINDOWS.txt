@@ -27,7 +27,15 @@ STOP / START
 - STOP.bat  (Run as administrator) stops the app.
 - START.bat (Run as administrator) starts it again.
 
-UPDATE
+UPDATE (from the dashboard, version 1.1.0 and later)
+- Settings > Updates > Check for updates > Download > Install. Or, without internet on the
+  server: download cctv-monitor-windows.zip on another PC and use "Install from a file".
+- Only packages signed with the CCTV Monitor release key are installed; every file is checked.
+- The app stops for 1-2 minutes. If the new version does not start, the previous one is put back
+  by itself. The previous version is kept in C:\cctv-monitor\update-backup until the next update.
+- The "CCTV Monitor Updater" task (as SYSTEM) does the installing; its log is data\logs\updater.log.
+
+UPDATE (by hand, always works)
 1. STOP.bat (Run as administrator).
 2. Extract the new cctv-monitor-windows.zip to C:\ and replace the files.
    (Your data is in C:\cctv-monitor\data and is kept.)

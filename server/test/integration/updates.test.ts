@@ -17,6 +17,7 @@ const { config } = await import("../../src/config.js");
 const { pool } = await import("../../src/db/pool.js");
 const { createTestUser, PASSWORD, prepareDb, resetData } = await import("../helpers.js");
 const { updatesFolder } = await import("../../src/services/updateService.js");
+const installed = (await import("../../src/services/backupService.js")).appVersion();
 
 const app = createApp();
 const saved = { file: config.CREDENTIAL_KEY_FILE, pkg: config.CCTV_PACKAGE };
@@ -117,9 +118,9 @@ describe("Settings > Updates", () => {
     expect(ready.ready).toEqual([expect.objectContaining({ version: "1.2.0", source: "download" })]);
 
     const inst = await agent.post("/api/settings/updates/install").set("X-CSRF-Token", csrf).send({ version: "1.2.0" }).expect(202);
-    expect(inst.body.install).toMatchObject({ state: "requested", version: "1.2.0", fromVersion: "1.0.0" });
+    expect(inst.body.install).toMatchObject({ state: "requested", version: "1.2.0", fromVersion: installed });
     const req = JSON.parse(readFileSync(join(updatesFolder(), "install.request.json"), "utf8"));
-    expect(req).toMatchObject({ version: "1.2.0", fromVersion: "1.0.0" });
+    expect(req).toMatchObject({ version: "1.2.0", fromVersion: installed });
     expect(existsSync(req.zip)).toBe(true);
     await agent.post("/api/settings/updates/install").set("X-CSRF-Token", csrf).send({ version: "1.2.0" }).expect(409);
     await agent.delete("/api/settings/updates/install").set("X-CSRF-Token", csrf).expect(200);

@@ -132,10 +132,11 @@ if ($firstInstall) {
   if ($ports[1] -ne 443) { Write-Host "Port 443 is used by another program on this PC: the dashboard uses port $($ports[1])." -ForegroundColor Yellow }
 }
 
-# The app runs as NETWORK SERVICE: it may read this folder and change data\. data\ holds the
-# database, its password and the key to the camera passwords: only the app, SYSTEM and
-# administrators may open it (not the other users of this PC, who could read C:\ subfolders).
-icacls $Root /grant "*S-1-5-20:(OI)(CI)RX" /C /Q | Out-Null
+# The app runs as NETWORK SERVICE: it may read this folder and change data\. Only SYSTEM and
+# administrators may change the program files: the updater (as SYSTEM) runs them, and a folder made
+# under C:\ would otherwise let every user of this PC change them. data\ holds the database, its
+# password and the key to the camera passwords: only the app, SYSTEM and administrators may open it.
+icacls $Root /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-20:(OI)(CI)RX" "*S-1-5-32-545:(OI)(CI)RX" /C /Q | Out-Null
 icacls $Data /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-20:(OI)(CI)M" /C /Q | Out-Null
 icacls "$Data\*" /reset /T /C /Q | Out-Null
 
@@ -151,6 +152,18 @@ $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) 
   -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -Priority 4
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
+
+# Installs the updates asked for in Settings > Updates (service\apply-update.mjs, as SYSTEM): every
+# minute it looks for a request, and at startup it finishes or undoes an interrupted update. It runs
+# its own copy of Node (updater\node.exe), which an update never replaces while it runs.
+$UpdaterDir = Join-Path $Root "updater"
+New-Item -ItemType Directory -Force $UpdaterDir | Out-Null
+Copy-Item $Node (Join-Path $UpdaterDir "node.exe") -Force -ErrorAction SilentlyContinue
+$uAction = New-ScheduledTaskAction -Execute (Join-Path $UpdaterDir "node.exe") -Argument "`"$(Join-Path $Root 'service\apply-update.mjs')`"" -WorkingDirectory $Root
+$uTriggers = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)))
+$uPrincipal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+$uSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+Register-ScheduledTask -TaskName "$TaskName Updater" -Action $uAction -Trigger $uTriggers -Principal $uPrincipal -Settings $uSettings -Force | Out-Null
 
 Write-Host "Waiting for the app (the first start creates the database: up to 2 minutes)..."
 $ready = $false

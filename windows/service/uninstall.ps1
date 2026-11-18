@@ -12,6 +12,7 @@ if (-not $isAdmin) { Write-Host "Right-click UNINSTALL.bat and choose 'Run as ad
 
 & (Join-Path $PSScriptRoot "stop.ps1")
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "$TaskName Updater" -Confirm:$false -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -DisplayName $TaskName -ErrorAction SilentlyContinue
 Get-ChildItem Cert:\CurrentUser\Root | Where-Object { $_.Subject -match "Caddy Local Authority" } | Remove-Item -ErrorAction SilentlyContinue
 Write-Host "The app no longer starts with Windows." -ForegroundColor Green

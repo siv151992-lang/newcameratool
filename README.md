@@ -178,6 +178,29 @@ Open `https://<SITE_ADDRESS>`. Caddy terminates HTTPS (its own local CA by defau
 > `docker compose cp api:/app/server/data/credential.key ./credential.key` and store that file somewhere
 > safe (or put its contents in `CREDENTIAL_ENCRYPTION_KEY`).
 
+## Updates and releases
+
+**Settings → Updates** (system administrator) checks for a new release, downloads the Windows package
+(or takes one uploaded from a PC), checks it and installs it: the app stops for a minute or two, and the
+previous version is put back by itself if the new one does not start. Docker installations see the new
+version there and are updated with `docker compose up -d --build` from the release's `cctv-monitor.zip`.
+
+- **Source:** the GitHub repository whose Releases hold the packages (Settings → Updates; a read-only,
+  fine-grained token with *Contents: Read* for a private repository). The server needs HTTPS access to
+  `api.github.com` (and GitHub's file storage); without it, use **Install from a file**.
+- **Signed:** every Windows package carries `update.json` (the SHA-256 of each file) and `update.sig`
+  (Ed25519). Only packages signed by a key in `server/src/update/trustedKeys.ts` of the *installed*
+  version are accepted, so a key can only be changed by installing a package by hand.
+- **Publishing a release:** set the repository secret `UPDATE_SIGNING_KEY` (the private key, PKCS#8 PEM)
+  once; then raise the version in `package.json`, `server/package.json` and `web/package.json`, and push a
+  tag: `git tag v1.2.0 && git push origin v1.2.0`. The *Release* workflow builds, signs and publishes
+  `cctv-monitor-windows.zip` and `cctv-monitor.zip`. Locally: `UPDATE_SIGNING_KEY_FILE=key.pem windows/build-package.sh`.
+- **Windows updater:** `windows/service/apply-update.mjs`, run every minute by the *CCTV Monitor Updater*
+  task as SYSTEM (registered by START.bat). It checks the package again with the installed keys, backs
+  up, swaps the folders, starts the app, waits for it to answer and rolls back if it does not.
+- **Brand integrations** travel separately: **Export** on a brand's page saves it as a file;
+  **Import** on Settings → Camera brands adds or updates it on another server (as a new version to test).
+
 ## Testing against a real camera
 
 Only do this on a network and camera you are authorised to access.

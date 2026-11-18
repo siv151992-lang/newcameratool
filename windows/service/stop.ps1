@@ -20,8 +20,10 @@ $pgCtl = Join-Path $Root "runtime\pgsql\bin\pg_ctl.exe"
 if ((Test-Path $pgCtl) -and (Test-Path (Join-Path $Data "pgdata\postmaster.pid"))) {
   & $pgCtl stop -D (Join-Path $Data "pgdata") -m fast -w -t 30 *> $null
 }
+# Not the updater (updater\node.exe): it stops the app this way while it installs an update.
+$Updater = Join-Path $Root "updater"
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-  Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Root, [StringComparison]::OrdinalIgnoreCase) } |
+  Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Root, [StringComparison]::OrdinalIgnoreCase) -and -not $_.ExecutablePath.StartsWith($Updater, [StringComparison]::OrdinalIgnoreCase) } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Remove-Item (Join-Path $Data "stop.request") -Force -ErrorAction SilentlyContinue
 if (-not $Quiet) { Write-Host "      OK  Stopped. It starts again with Windows, or with START.bat." -ForegroundColor Green }
