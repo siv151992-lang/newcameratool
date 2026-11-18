@@ -241,3 +241,60 @@ describe("integration safety checks", () => {
     expect((await agent.post("/api/integrations/open-cam/reassign").set("X-CSRF-Token", csrf).send({ toKey: "hikvision" }).expect(409)).body.error.code).toBe("CREDENTIALS_MISMATCH");
   });
 });
+
+describe("brand integration files", () => {
+  it("exports a brand added here and imports it on another server: added, then updated as a new version to test", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const post = (url: string, body: unknown = {}) => agent.post(url).set("X-CSRF-Token", csrf).send(body as object);
+    await post("/api/integrations", { details, config: acmeConfig() }).expect(201);
+    await post("/api/integrations/acme-vision/test", { target: target() }).expect(200);
+    await post("/api/integrations/acme-vision/enable").expect(200);
+
+    const exp = await agent.get("/api/integrations/acme-vision/export").expect(200);
+    expect(exp.headers["content-disposition"]).toContain('filename="acme-vision.integration.json"');
+    const file = exp.body;
+    expect(file).toMatchObject({ format: "cctv-monitor/brand-integration", formatVersion: 1, key: "acme-vision", details: { displayName: "Acme Vision", supportedModels: ["AV-200"] } });
+    expect(file.config.response.devicesPath).toBe("storage.devices");
+    // Nothing about cameras, tests or people.
+    expect(JSON.stringify(file)).not.toMatch(/Acme-Passw0rd|127\.0\.0\.1|admin|tested|createdBy/i);
+
+    // Another server: the brand is not there yet.
+    await agent.delete("/api/integrations/acme-vision").set("X-CSRF-Token", csrf).expect(204);
+    const added = await post("/api/integrations/import", { file }).expect(201);
+    expect(added.body.result).toBe("added");
+    expect(added.body.integration).toMatchObject({ key: "acme-vision", status: "draft", latestVersion: 1 });
+
+    // The same file again: nothing new to test.
+    const same = await post("/api/integrations/import", { file }).expect(200);
+    expect(same.body).toMatchObject({ result: "details_updated", integration: { latestVersion: 1 } });
+
+    // A newer file: a new version, which must pass a test before cameras use it.
+    await post("/api/integrations/acme-vision/test", { target: target() }).expect(200);
+    await post("/api/integrations/acme-vision/enable").expect(200);
+    const newer = { ...file, details: { ...file.details, integrationVersion: "1.1" }, config: acmeConfig("storage.disks") };
+    const upd = await post("/api/integrations/import", { file: newer }).expect(200);
+    expect(upd.body).toMatchObject({ result: "new_version", integration: { status: "enabled", latestVersion: 2, activeVersion: 1, integrationVersion: "1.1" } });
+    const log = await pool.query("SELECT details FROM audit_logs WHERE action = 'integration.imported' ORDER BY created_at");
+    expect(log.rows.map((r) => r.details.result)).toEqual(["added", "details_updated", "new_version"]);
+  });
+
+  it("refuses files that are not integration files, hold invalid configurations, or would replace a built-in adapter", async () => {
+    const { agent, csrf } = await signIn("admin");
+    const post = (body: unknown) => agent.post("/api/integrations/import").set("X-CSRF-Token", csrf).send(body as object);
+    const base = { format: "cctv-monitor/brand-integration", formatVersion: 1, key: "acme-vision", details, config: acmeConfig() };
+    expect((await post({ file: { hello: "world" } }).expect(400)).body.error.code).toBe("INVALID_INTEGRATION_FILE");
+    expect((await post({ file: { ...base, formatVersion: 2 } }).expect(400)).body.error.message).toMatch(/newer version/);
+    expect((await post({ file: { ...base, config: { ...acmeConfig(), request: { ...acmeConfig().request, headers: [{ name: "X-Api-Key", value: "abc" }] } } } }).expect(400)).body.error.message).toMatch(/secret/);
+    expect((await post({ file: { ...base, key: "hikvision", details: { ...details, displayName: "Hikvision" } } }).expect(409)).body.error.message).toMatch(/built-in adapter/);
+    expect((await agent.get("/api/integrations/hikvision/export").expect(400)).body.error.code).toBe("BUILTIN_INTEGRATION");
+    // Works-like brands travel too.
+    const alias = await post({ file: { format: base.format, formatVersion: 1, key: "acme-hik", details: { ...details, displayName: "Acme Hik" }, worksLike: "hikvision" } }).expect(201);
+    expect(alias.body.integration).toMatchObject({ key: "acme-hik", integrationType: "alias", basedOn: { key: "hikvision" } });
+  });
+
+  it("only the system administrator imports and exports", async () => {
+    const { agent, csrf } = await signIn("operator");
+    await agent.post("/api/integrations/import").set("X-CSRF-Token", csrf).send({ file: {} }).expect(403);
+    await agent.get("/api/integrations/hikvision/export").expect(403);
+  });
+});

@@ -13,6 +13,9 @@ import {
   deleteIntegration,
   disableIntegration,
   enableIntegration,
+  exportIntegration,
+  importIntegration,
+  importIntegrationSchema,
   getImpact,
   getIntegration,
   listIntegrationCameras,
@@ -27,6 +30,7 @@ import {
   updateIntegrationSchema,
   validateConfig,
 } from "../services/integrationService.js";
+import { appVersion } from "../services/backupService.js";
 import { integrationLimiter } from "./limits.js";
 
 /**
@@ -60,6 +64,12 @@ integrationsRouter.post("/works-like", write, async (req, res) => {
   res.status(201).json(await createWorksLikeIntegration(parse(createWorksLikeSchema, req.body), actorOf(req), req.ip));
 });
 
+// Brand integration files: copy a brand added here to another server, or update it there.
+integrationsRouter.post("/import", write, async (req, res) => {
+  const r = await importIntegration(parse(importIntegrationSchema, req.body), actorOf(req), req.ip);
+  res.status(r.result === "added" ? 201 : 200).json(r);
+});
+
 integrationsRouter.post("/", write, async (req, res) => {
   res.status(201).json(await createIntegration(parse(createIntegrationSchema, req.body), actorOf(req), req.ip));
 });
@@ -72,6 +82,11 @@ integrationsRouter.patch("/:key", write, async (req, res) => {
 integrationsRouter.delete("/:key", write, async (req, res) => {
   await deleteIntegration(param(req, "key"), actorOf(req), req.ip);
   res.status(204).end();
+});
+integrationsRouter.get("/:key/export", write, async (req, res) => {
+  const { file, filename } = await exportIntegration(param(req, "key"), appVersion());
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.json(file);
 });
 integrationsRouter.get("/:key/impact", system, async (req, res) => {
   res.json(await getImpact(param(req, "key")));

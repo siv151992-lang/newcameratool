@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, Upload } from "lucide-react";
+import { useRef } from "react";
 import { Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { IntegrationSummary } from "../../api/types";
 import { IntegrationStatusBadge } from "../../components/status";
+import { useToast } from "../../components/toast";
 import { Button, Card, ErrorMessage, Spinner } from "../../components/ui";
 import { useAuth } from "../../hooks/auth";
 import { absoluteTime, capabilityLabel, relativeTime } from "../../lib/format";
@@ -38,6 +40,63 @@ function LastTest({ b }: { b: IntegrationSummary }) {
   );
 }
 
+const IMPORT_RESULTS = {
+  added: "added. Test it with one of its cameras, then enable it.",
+  new_version: "updated: the new configuration is saved as a new version. Test it, then enable it (the brand keeps running its tested version until then).",
+  details_updated: "is already up to date: its details were refreshed.",
+} as const;
+
+/** Adds or updates a brand from a file exported on another server (Export on a brand's page). */
+function ImportBrandButton() {
+  const input = useRef<HTMLInputElement>(null);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const importFile = useMutation({
+    mutationFn: async (f: File) => {
+      if (f.size > 512 * 1024) throw new Error("This file is too large to be a brand integration file.");
+      let file: unknown;
+      try {
+        file = JSON.parse(await f.text());
+      } catch {
+        throw new Error("This is not a brand integration file (it is not JSON). Use a file saved with Export on a brand's page.");
+      }
+      return api<{ result: keyof typeof IMPORT_RESULTS; integration: IntegrationSummary }>("/integrations/import", { method: "POST", body: { file } });
+    },
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+      void qc.invalidateQueries({ queryKey: ["brands"] });
+      toast("success", `${r.integration.displayName} ${IMPORT_RESULTS[r.result]}`);
+      navigate(r.integration.key);
+    },
+    onError: (e) => toast("error", (e as Error).message),
+  });
+  return (
+    <>
+      <input
+        ref={input}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        aria-label="Brand integration file"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) importFile.mutate(f);
+        }}
+      />
+      <Button
+        icon={<Upload className="h-4 w-4" />}
+        loading={importFile.isPending}
+        title="Add or update a brand from a file saved with Export on another server"
+        onClick={() => input.current?.click()}
+      >
+        Import
+      </Button>
+    </>
+  );
+}
+
 function BrandList() {
   const { can } = useAuth();
   const navigate = useNavigate();
@@ -50,9 +109,12 @@ function BrandList() {
           <strong className="font-medium text-ink">Configurable API</strong> integrations are defined here for brands whose storage API is a single HTTP request returning JSON or XML.
         </p>
         {can("system:manage") && (
-          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate("new")}>
-            Add brand
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <ImportBrandButton />
+            <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate("new")}>
+              Add brand
+            </Button>
+          </div>
         )}
       </div>
       {brands.isLoading && <Spinner />}

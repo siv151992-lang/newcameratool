@@ -127,6 +127,12 @@ async function uniqueKey(name: string, db: Queryable): Promise<string> {
   throw conflict("Could not generate a unique key for this brand");
 }
 
+/** The key a file asks for when it is free (same brand on every server), otherwise one made from the name. */
+async function keyFor(name: string, preferred: string | undefined, db: Queryable): Promise<string> {
+  if (preferred && !registry.isBuiltin(preferred) && !(await db.query("SELECT 1 FROM camera_brands WHERE key = $1", [preferred])).rowCount) return preferred;
+  return uniqueKey(name, db);
+}
+
 async function assertNameFree(name: string, exceptKey: string | null, db: Queryable) {
   const norm = name.toLowerCase().replace(/[\s_-]+/g, "");
   const existing = registry.resolveKey(name);
@@ -332,12 +338,12 @@ export async function listIntegrationTests(key: string, page: number, pageSize: 
 
 // ------------------------------------------------------------------ create / edit
 
-export async function createIntegration(input: z.infer<typeof createIntegrationSchema>, actor: Actor, ip?: string) {
+export async function createIntegration(input: z.infer<typeof createIntegrationSchema>, actor: Actor, ip?: string, preferredKey?: string) {
   const config = requireValidConfig(input.config);
   const d = input.details;
   const key = await withTransaction(async (db) => {
     await assertNameFree(d.displayName, null, db);
-    const key = await uniqueKey(d.displayName, db);
+    const key = await keyFor(d.displayName, preferredKey, db);
     await db.query(
       `INSERT INTO camera_brands (key, display_name, support_status, auth_methods, default_http_port, default_https_port, capabilities, notes,
                                   integration_type, status, manufacturer, description, supported_models, default_protocol,
@@ -360,12 +366,12 @@ export async function createIntegration(input: z.infer<typeof createIntegrationS
 }
 
 /** Adds a brand that works like a built-in adapter: enabled at once (the adapter is tested code). */
-export async function createWorksLikeIntegration(input: z.infer<typeof createWorksLikeSchema>, actor: Actor, ip?: string) {
+export async function createWorksLikeIntegration(input: z.infer<typeof createWorksLikeSchema>, actor: Actor, ip?: string, preferredKey?: string) {
   const base = registry.builtinMeta(input.basedOn);
   if (!base || !registry.isSupported(input.basedOn)) throw new HttpError(400, "VALIDATION_ERROR", "Choose an enabled built-in adapter");
   const key = await withTransaction(async (db) => {
     await assertNameFree(input.displayName, null, db);
-    const key = await uniqueKey(input.displayName, db);
+    const key = await keyFor(input.displayName, preferredKey, db);
     const description = input.description ?? `Works like ${base.displayName}.`;
     await db.query(
       `INSERT INTO camera_brands (key, display_name, support_status, auth_methods, default_http_port, default_https_port, capabilities, notes,
@@ -487,6 +493,105 @@ export async function updateIntegration(key: string, input: z.infer<typeof updat
   });
   await registry.refresh();
   return getIntegration(key, null);
+}
+
+// ------------------------------------------------------------------ files (export / import)
+
+/**
+ * A brand integration as a file, to copy it to another server or update it there. Only the brand's
+ * details and its API configuration (or the built-in adapter it works like): never credentials (the
+ * configuration cannot hold any; they are stored with each camera) and never test results.
+ */
+export const INTEGRATION_FILE_FORMAT = "cctv-monitor/brand-integration";
+
+const integrationFileSchema = z
+  .object({
+    format: z.literal(INTEGRATION_FILE_FORMAT, { message: "This is not a brand integration file exported from CCTV Monitor" }),
+    formatVersion: z.literal(1, { message: "This file is from a newer version of the app: update this server first" }),
+    exportedAt: z.string().max(40).optional(),
+    appVersion: z.string().max(40).optional(),
+    key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/, "Invalid brand key"),
+    details: integrationDetailsSchema,
+    worksLike: z.string().trim().min(1).max(60).optional(),
+    config: z.unknown().optional(),
+  })
+  .strict()
+  .refine((f) => (f.worksLike === undefined) !== (f.config === undefined), { message: "The file must hold either an API configuration or the adapter the brand works like" });
+
+export const importIntegrationSchema = z.object({ file: z.unknown(), changeNote: text(200) }).strict();
+
+export async function exportIntegration(key: string, appVersion: string) {
+  const r = await brandRow(key);
+  if (r.integration_type === "builtin") {
+    throw new HttpError(400, "BUILTIN_INTEGRATION", "Built-in adapters are part of the app: every server already has them. Only brands added here can be exported.");
+  }
+  const versions = await pool.query("SELECT config FROM brand_integration_versions WHERE brand_key = $1 ORDER BY (id = $2) DESC, version DESC LIMIT 1", [key, r.active_version_id]);
+  const file = {
+    format: INTEGRATION_FILE_FORMAT,
+    formatVersion: 1 as const,
+    exportedAt: new Date().toISOString(),
+    appVersion,
+    key: r.key as string,
+    details: {
+      displayName: r.display_name, manufacturer: r.manufacturer, description: r.description, supportedModels: r.supported_models ?? [],
+      defaultProtocol: r.default_protocol ?? "http", defaultHttpPort: r.default_http_port, defaultHttpsPort: r.default_https_port,
+      integrationVersion: r.integration_version ?? "1.0.0", compatibilityNotes: r.compatibility_notes,
+    },
+    ...(r.integration_type === "alias" ? { worksLike: r.based_on as string } : { config: versions.rows[0]?.config ?? null }),
+  };
+  return { file, filename: `${r.key}.integration.json` };
+}
+
+/**
+ * Adds the brand in a file, or updates it when the server has it (same key, or the same name). An
+ * API configuration that differs becomes a new version: as when it is edited here, it must pass a
+ * test with a camera before it is used (an enabled brand keeps running its tested version meanwhile).
+ */
+export async function importIntegration(input: z.infer<typeof importIntegrationSchema>, actor: Actor, ip?: string) {
+  const parsed = integrationFileSchema.safeParse(input.file);
+  if (!parsed.success) {
+    const issues = formatZodError(parsed.error);
+    throw new HttpError(400, "INVALID_INTEGRATION_FILE", issues[0] ? `${issues[0].field ? issues[0].field + ": " : ""}${issues[0].message}` : "Invalid file", issues);
+  }
+  const f = parsed.data;
+  const changeNote = input.changeNote ?? `Imported from file${f.appVersion ? ` (exported by version ${f.appVersion})` : ""}`;
+  if (f.config !== undefined) requireValidConfig(f.config);
+  if (f.worksLike !== undefined && (!registry.builtinMeta(f.worksLike) || !registry.isSupported(f.worksLike))) {
+    throw new HttpError(400, "VALIDATION_ERROR", `The file's brand works like the "${f.worksLike}" adapter, which this server does not have enabled`);
+  }
+  const norm = f.details.displayName.toLowerCase().replace(/[\s_-]+/g, "");
+  const existing = (await pool.query(
+    `SELECT * FROM camera_brands WHERE deleted_at IS NULL AND (key = $1 OR regexp_replace(lower(display_name), '[\\s_-]+', '', 'g') = $2)
+     ORDER BY (key = $1) DESC LIMIT 1`,
+    [f.key, norm],
+  )).rows[0];
+  if (!existing) {
+    const created = f.config !== undefined
+      ? await createIntegration({ details: f.details, config: f.config, changeNote }, actor, ip, f.key)
+      : await createWorksLikeIntegration(
+        { displayName: f.details.displayName, manufacturer: f.details.manufacturer, description: f.details.description, basedOn: f.worksLike!, defaultProtocol: f.details.defaultProtocol },
+        actor, ip, f.key,
+      );
+    await audit({ actor: serverWide(actor), ip, action: "integration.imported", entityType: "integration", entityId: created.key, details: { result: "added", fromKey: f.key } });
+    return { result: "added" as const, integration: created };
+  }
+  const kind = f.config !== undefined ? "configurable" : "alias";
+  if (existing.integration_type !== kind) {
+    const what = existing.integration_type === "builtin" ? "a built-in adapter" : existing.integration_type === "alias" ? "a brand that works like a built-in adapter" : "a brand with its own API configuration";
+    throw conflict(`"${existing.display_name}" on this server is ${what}, so it cannot be replaced from this file. Rename the brand in the file, or delete the one here first.`);
+  }
+  if (kind === "alias" && existing.based_on !== f.worksLike) {
+    throw conflict(`"${existing.display_name}" here works like ${existing.based_on}; the file's works like ${f.worksLike}. Change it here by hand.`);
+  }
+  const before = (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM brand_integration_versions WHERE brand_key = $1", [existing.key])).rows[0]!.n;
+  const details = kind === "alias"
+    ? { displayName: f.details.displayName, manufacturer: f.details.manufacturer, description: f.details.description, supportedModels: f.details.supportedModels, compatibilityNotes: f.details.compatibilityNotes }
+    : f.details;
+  const updated = await updateIntegration(existing.key, { details, ...(kind === "configurable" ? { config: f.config } : {}), changeNote }, actor, ip);
+  const after = (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM brand_integration_versions WHERE brand_key = $1", [existing.key])).rows[0]!.n;
+  const result = after > before ? ("new_version" as const) : ("details_updated" as const);
+  await audit({ actor: serverWide(actor), ip, action: "integration.imported", entityType: "integration", entityId: existing.key, details: { result, fromKey: f.key } });
+  return { result, integration: updated };
 }
 
 // ------------------------------------------------------------------ preview and test

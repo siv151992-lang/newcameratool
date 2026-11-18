@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, FlaskConical, Pencil, Power, PowerOff, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Download, FlaskConical, Pencil, Power, PowerOff, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../../api/client";
+import { api, downloadFile } from "../../api/client";
 import type { Brand, IntegrationCamera, IntegrationDetail, IntegrationTestRecord, IntegrationTestResult, Page } from "../../api/types";
 import { ConnectionBadge, HealthBadge, IntegrationStatusBadge } from "../../components/status";
 import { useToast } from "../../components/toast";
@@ -113,6 +113,15 @@ export function BrandDetailPage() {
               </Button>
             ) : (
               <Button icon={<PowerOff className="h-4 w-4" />} onClick={() => setDialog("disable")}>Disable</Button>
+            )}
+            {(configurable || d.integrationType === "alias") && (
+              <Button
+                icon={<Download className="h-4 w-4" />}
+                title="Save this brand's setup as a file, to add or update it on another server (Import on the brands list). Holds no passwords."
+                onClick={() => downloadFile(`/integrations/${key}/export`, `${key}.integration.json`).catch(onError)}
+              >
+                Export
+              </Button>
             )}
             {(configurable || d.integrationType === "alias") && <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} onClick={() => setDialog("delete")}>Delete</Button>}
           </div>

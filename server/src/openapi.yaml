@@ -1586,6 +1586,38 @@ paths:
       summary: Adds a brand that works like a built-in adapter (an OEM brand) (integrations write)
       responses:
         "201": { description: Added }
+  /integrations/import:
+    post:
+      tags: [Integrations]
+      summary: Adds or updates a brand from a brand integration file (system administrator)
+      description: >-
+        The file is what GET /integrations/{key}/export saves. A brand with the same key or name is updated:
+        a different API configuration becomes a new version that must pass a test before it is used.
+        Built-in adapters cannot be replaced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: object, description: "The exported file's JSON" }
+                changeNote: { type: string, maxLength: 200 }
+      responses:
+        "201": { description: "{ result: added, integration }" }
+        "200": { description: "{ result: new_version | details_updated, integration }" }
+        "400": { description: Not an integration file, or its configuration is invalid }
+        "409": { description: Would replace a built-in adapter or a brand of another kind }
+  /integrations/{key}/export:
+    parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: acme-vision }
+    get:
+      tags: [Integrations]
+      summary: Saves a brand added here as a file (system administrator; no credentials)
+      responses:
+        "200": { description: "Brand integration file (attachment: <key>.integration.json)" }
+        "400": { description: Built-in adapters are part of the app and are not exported }
 
 components:
   securitySchemes:
