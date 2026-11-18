@@ -83,6 +83,36 @@ export async function downloadFile(path: string, fallbackName: string): Promise<
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/**
+ * POSTs a file as the request body (e.g. an update package of 100+ MB), reporting upload progress
+ * (0 to 1). XMLHttpRequest because fetch cannot report how much of a body has been sent.
+ */
+export function uploadFile<T>(path: string, file: Blob, contentType: string, onProgress?: (fraction: number) => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api${path}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.setRequestHeader("Accept", "application/json");
+    if (csrfToken) xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onerror = () => reject(new ApiError(0, "NETWORK_ERROR", "The upload was interrupted. Check the connection to the server and try again."));
+    xhr.onload = () => {
+      let data: { error?: { code: string; message: string; details?: FieldError[] } } | null = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        data = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data as T);
+      if (xhr.status === 401) unauthorizedListeners.forEach((l) => l());
+      const err = data?.error;
+      reject(new ApiError(xhr.status, err?.code ?? "HTTP_ERROR", err?.message ?? (xhr.status === 413 ? "The file is too large." : `Upload failed (${xhr.status})`), err?.details));
+    };
+    xhr.send(file);
+  });
+}
+
 export function toQuery(params: Record<string, string | number | boolean | undefined | null>) {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));

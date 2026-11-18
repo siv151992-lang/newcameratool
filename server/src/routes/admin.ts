@@ -1,6 +1,7 @@
 import { type Request, Router } from "express";
 import { backupFolder, backupSettingsSchema, defaultBackupFolder, getBackupSettings, getBackupStatus, listBackupFiles, runBackup, updateBackupSettings } from "../services/backupService.js";
 import { systemHealth } from "../services/healthService.js";
+import { cancelInstall, checkForUpdates, getUpdateState, receiveUpload, requestInstall, saveUpdateSettings, startDownload, updateSettingsSchema } from "../services/updateService.js";
 import { endSessions, getSecuritySettings, listSessions, securitySettingsSchema, updateSecuritySettings } from "../services/sessionService.js";
 import { allCamerasMiddleware } from "../auth/cameraScope.js";
 import { cameraAccessSchema, getCameraAccess, setCameraAccess } from "../services/memberCameraAccess.js";
@@ -179,6 +180,53 @@ settingsRouter.post("/backup/run", requirePermission(SYSTEM_PERMISSION), reportL
     throw err;
   }
 });
+/** Updates: new releases (GitHub), a package uploaded from a PC, and installing it (Windows package). */
+settingsRouter.get("/updates", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
+  res.json(await getUpdateState());
+});
+settingsRouter.patch("/updates", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const patch = parse(updateSettingsSchema, req.body);
+  await saveUpdateSettings(patch, req.auth!.user.id);
+  const details = { ...patch, token: patch.token === undefined ? undefined : patch.token ? "set" : "removed" };
+  await audit({ actor: actorOf(req), ip: req.ip, action: "settings.updates_updated", entityType: "settings", entityId: "updates", details, organizationId: null });
+  res.json(await getUpdateState());
+});
+settingsRouter.post("/updates/check", requirePermission(SYSTEM_PERMISSION), reportLimiter, async (req, res) => {
+  await checkForUpdates(req.auth!.user.id);
+  res.json(await getUpdateState());
+});
+settingsRouter.post("/updates/download", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const d = await startDownload();
+  await audit({ actor: actorOf(req), ip: req.ip, action: "update.download_started", entityType: "update", entityId: d?.version ?? null, organizationId: null });
+  res.status(202).json(await getUpdateState());
+});
+// The zip itself is the body (application/zip or application/octet-stream), streamed to disk.
+settingsRouter.post("/updates/upload", requirePermission(SYSTEM_PERMISSION), reportLimiter, async (req, res) => {
+  if (!/^application\/(zip|x-zip-compressed|octet-stream)\b/i.test(req.get("content-type") ?? "")) {
+    throw new HttpError(415, "UNSUPPORTED_MEDIA_TYPE", "Send the package zip itself (Content-Type: application/zip).");
+  }
+  const length = req.get("content-length") ? Number(req.get("content-length")) : undefined;
+  try {
+    const info = await receiveUpload(req, length);
+    await audit({ actor: actorOf(req), ip: req.ip, action: "update.uploaded", entityType: "update", entityId: info.version, details: { size: info.size }, organizationId: null });
+  } catch (err) {
+    await audit({ actor: actorOf(req), ip: req.ip, action: "update.refused", entityType: "update", entityId: null, details: { reason: (err as Error).message.slice(0, 200) }, organizationId: null });
+    throw err;
+  }
+  res.status(201).json(await getUpdateState());
+});
+settingsRouter.post("/updates/install", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  const { version } = parse(z.object({ version: z.string().regex(/^\d{1,4}(\.\d{1,4}){1,3}$/) }).strict(), req.body);
+  const r = await requestInstall(version, req.auth!.user.username);
+  await audit({ actor: actorOf(req), ip: req.ip, action: "update.install_requested", entityType: "update", entityId: version, details: { fromVersion: r.fromVersion }, organizationId: null });
+  res.status(202).json(await getUpdateState());
+});
+settingsRouter.delete("/updates/install", requirePermission(SYSTEM_PERMISSION), async (req, res) => {
+  cancelInstall();
+  await audit({ actor: actorOf(req), ip: req.ip, action: "update.install_cancelled", entityType: "update", entityId: null, organizationId: null });
+  res.json(await getUpdateState());
+});
+
 /** System health: every part of the installation, rated. */
 settingsRouter.get("/health", requirePermission(SYSTEM_PERMISSION), async (_req, res) => {
   res.json(await systemHealth());

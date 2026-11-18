@@ -1586,6 +1586,68 @@ paths:
       summary: Adds a brand that works like a built-in adapter (an OEM brand) (integrations write)
       responses:
         "201": { description: Added }
+  /settings/updates:
+    get:
+      tags: [Settings]
+      summary: Installed version, latest release, download, packages ready and installation status (system administrator)
+      responses:
+        "200": { description: "{ currentVersion, package, canInstall, settings, lastCheck, latest, download, ready, install }" }
+    patch:
+      tags: [Settings]
+      summary: Where releases are published (GitHub owner/repo), read-only access token (write-only), daily check
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repository: { type: string, example: my-company/cctv-monitor }
+                token: { type: string, description: "Write-only; empty removes it" }
+                autoCheck: { type: boolean }
+      responses:
+        "200": { description: Update state }
+  /settings/updates/check:
+    post:
+      tags: [Settings]
+      summary: Looks for the latest release now
+      responses:
+        "200": { description: Update state }
+  /settings/updates/download:
+    post:
+      tags: [Settings]
+      summary: Downloads the latest release's Windows package and checks it (in the background)
+      responses:
+        "202": { description: Update state with download progress }
+  /settings/updates/upload:
+    post:
+      tags: [Settings]
+      summary: Takes a Windows package uploaded from a PC; it must be signed by the release key and newer
+      requestBody:
+        required: true
+        content:
+          application/zip:
+            schema: { type: string, format: binary }
+      responses:
+        "201": { description: Update state (the package is ready to install) }
+        "409": { description: Not newer than the installed version }
+        "422": { description: Not a signed CCTV Monitor package, or changed after signing }
+  /settings/updates/install:
+    post:
+      tags: [Settings]
+      summary: Asks the Windows updater to install a ready version (backup, swap, restart, rollback if it fails)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [version], properties: { version: { type: string, example: 1.1.0 } } }
+      responses:
+        "202": { description: Update state (install requested) }
+        "409": { description: Not the Windows package, or an installation is already waiting }
+    delete:
+      tags: [Settings]
+      summary: Withdraws an installation the updater has not started
+      responses:
+        "200": { description: Update state }
   /integrations/import:
     post:
       tags: [Integrations]

@@ -13,6 +13,7 @@ import { syncBrands } from "./services/brandService.js";
 import { sendDueWeeklyReports } from "./services/weeklyReportService.js";
 import { backupIfDue } from "./services/backupService.js";
 import { notifyHealthProblems, recordWorkerHeartbeat } from "./services/healthService.js";
+import { autoCheckForUpdates } from "./services/updateService.js";
 
 async function main() {
   getCipher(); // fail fast if the encryption key is missing
@@ -32,6 +33,8 @@ async function main() {
   const heartbeat = setInterval(beat, 60_000);
   // Emails the system administrators when a part of the installation turns into a problem.
   const health = setInterval(() => void notifyHealthProblems().catch(() => undefined), 15 * 60_000);
+  // Settings → Updates: looks for a new release once a day (nothing is downloaded or installed).
+  const updates = setInterval(() => void autoCheckForUpdates().catch(() => undefined), 60 * 60_000);
   logger.info({ instance: INSTANCE_ID }, "Monitoring worker started");
 
   const shutdown = async (signal: string) => {
@@ -40,6 +43,7 @@ async function main() {
     clearInterval(backups);
     clearInterval(heartbeat);
     clearInterval(health);
+    clearInterval(updates);
     await Promise.all([scheduler.stop(), streams.stop()]);
     await pool.end();
     process.exit(0);

@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BackupsTab, HealthTab } from "./SystemPages";
+import { BackupsTab, HealthTab, UpdatesTab } from "./SystemPages";
 import { SessionsCard, SessionTable, type SessionRow } from "../components/SessionsCard";
 import { AUDIT_CATEGORIES, auditIsProblem, auditLabel } from "../lib/auditLabels";
 import { ActionMenu } from "../components/ActionMenu";
 import clsx from "clsx";
-import { Activity, AlertTriangle, Archive, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, KeyRound, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, DatabaseBackup, HeartPulse, LogOut, MonitorSmartphone, Sun, Trash2, UserCheck, UserX, Users as UsersIcon } from "lucide-react";
+import { Activity, AlertTriangle, Archive, ArrowUpCircle, AtSign, Boxes, Building2, Check, ChevronRight, Clock, Download, Gauge, KeyRound, Mail, Monitor, Moon, Network, Palette, Plus, ScrollText, Send, Sparkles, DatabaseBackup, HeartPulse, LogOut, MonitorSmartphone, Sun, Trash2, UserCheck, UserX, Users as UsersIcon } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api, ApiError, downloadFile, toQuery } from "../api/client";
@@ -50,6 +50,7 @@ function useSections(): Section[] {
     can("system:manage") && { path: "email", label: "Email & sign-in", description: "The mail server for alerts and invitations, the dashboard address, and who can create accounts.", icon: <AtSign className={icon} />, element: <EmailSettingsTab /> },
     can("system:manage") && { path: "health", label: "System health", description: "Whether every part of the installation works: database, monitoring, disk space, backups, email and live video.", icon: <HeartPulse className={icon} />, element: <HealthTab /> },
     can("system:manage") && { path: "backups", label: "Backups", description: "The daily backup of all data, how long backups are kept, and how to restore one.", icon: <DatabaseBackup className={icon} />, element: <BackupsTab /> },
+    can("system:manage") && { path: "updates", label: "Updates", description: "New versions of the app: check, download and install them, with automatic rollback.", icon: <ArrowUpCircle className={icon} />, element: <UpdatesTab /> },
     can("system:manage") && { path: "organizations", label: "Organizations", description: "Create, rename and deactivate organizations (system administrator).", icon: <Building2 className={icon} />, element: <OrganizationsTab /> },
     { path: "account", label: "Account & theme", description: "Light or dark mode, the color theme, your password, and where you're signed in.", icon: <Palette className={icon} />, element: <AccountTab /> },
     can("audit:read") && { path: "audit", label: "Audit log", description: "Who changed what, and when.", icon: <ScrollText className={icon} />, element: <AuditTab /> },

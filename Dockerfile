@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build && npm prune --omit=dev && mkdir -p server/node_modules
 
 FROM node:22-alpine
-ENV NODE_ENV=production PORT=4000 WEB_DIST_DIR=/app/web/dist
+ENV NODE_ENV=production PORT=4000 WEB_DIST_DIR=/app/web/dist CCTV_PACKAGE=docker
 WORKDIR /app
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules

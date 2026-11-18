@@ -72,6 +72,8 @@ const appEnv = {
   ...process.env,
   ...settings,
   NODE_ENV: "production",
+  // Settings > Updates installs updates through the "CCTV Monitor Updater" task (service\apply-update.mjs).
+  CCTV_PACKAGE: "windows",
   PORT: String(API_PORT),
   LISTEN_HOST: "127.0.0.1",
   DATABASE_URL: `postgres://cctv@127.0.0.1:${PG_PORT}/postgres`,

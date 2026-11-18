@@ -74,6 +74,11 @@ const schema = z.object({
   AI_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
   /** Name of the organization created for the first administrator on a new installation. */
   DEFAULT_ORGANIZATION_NAME: z.string().trim().min(1).max(120).default("My organization"),
+  // How this installation was installed: "windows" (the Windows package: Settings > Updates installs
+  // updates), "docker", or unset (development). Set by the package itself.
+  CCTV_PACKAGE: z.enum(["windows", "docker"]).optional(),
+  // Where Settings > Updates looks for releases (GitHub "owner/repo"); the page can change it.
+  UPDATE_REPOSITORY: z.string().regex(/^[\w.-]+\/[\w.-]+$/, "UPDATE_REPOSITORY must look like owner/repo").optional(),
   BOOTSTRAP_ADMIN_USERNAME: z.string().optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().optional(),
 });
