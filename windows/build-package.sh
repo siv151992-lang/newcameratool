@@ -75,6 +75,15 @@ cp "$ROOT/windows/"*.bat "$ROOT/windows/README-WINDOWS.txt" "$STAGE/"
 cp "$ROOT/LICENSE"* "$STAGE/licenses/" 2>/dev/null || true
 
 rm -rf "$OUT/tmp"
+# Signed for in-app updates (Settings > Updates) when the release signing key is given; without it the
+# package still installs by hand (START.bat), but the app's Updates page refuses it.
+VERSION="$(node -p "require('$ROOT/server/package.json').version")"
+if [ -n "${UPDATE_SIGNING_KEY_FILE:-}" ]; then
+  node "$ROOT/windows/sign-package.mjs" "$STAGE" "$UPDATE_SIGNING_KEY_FILE" "$VERSION"
+else
+  echo "Not signed (set UPDATE_SIGNING_KEY_FILE to sign): installs by hand only, not from the Updates page"
+fi
+
 rm -f "$OUT/cctv-monitor-windows.zip"
 (cd "$OUT" && zip -qr -9 cctv-monitor-windows.zip cctv-monitor)
 echo "Built $OUT/cctv-monitor-windows.zip ($(du -h "$OUT/cctv-monitor-windows.zip" | cut -f1))"

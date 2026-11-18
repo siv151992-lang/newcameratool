@@ -1,0 +1,56 @@
+name: Release
+
+# Publishes a release when a version tag is pushed (git tag v1.1.0 && git push origin v1.1.0): the
+# signed Windows package (installable from Settings > Updates) and the Docker package. The tag must
+# match the version in package.json. Needs the repository secret UPDATE_SIGNING_KEY: the release
+# signing key (PKCS#8 PEM) whose public half is in server/src/update/trustedKeys.ts.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Tag matches the app version
+        run: |
+          v="$(node -p "require('./server/package.json').version")"
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match version $v in server/package.json"; exit 1; }
+      - run: npm ci
+      - run: npm run typecheck && npm run lint
+      - name: Build and sign the Windows package
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          [ -n "$UPDATE_SIGNING_KEY" ] || { echo "The UPDATE_SIGNING_KEY repository secret is not set"; exit 1; }
+          umask 077
+          key="$RUNNER_TEMP/update-signing.key"
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key"
+          UPDATE_SIGNING_KEY_FILE="$key" windows/build-package.sh dist-windows
+          rm -f "$key"
+      - name: Docker package (source)
+        run: git archive --prefix=cctv-monitor/ -o dist-windows/cctv-monitor.zip "$GITHUB_REF_NAME"
+      - name: Release notes (changes since the previous release)
+        run: |
+          prev="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)"
+          {
+            echo "## What's new"
+            git log --no-merges --format='- %s' ${prev:+$prev..}"$GITHUB_REF_NAME"
+            echo
+            echo "**Windows:** Settings > Updates > Check for updates, or download cctv-monitor-windows.zip and run START.bat."
+            echo "**Docker:** download cctv-monitor.zip, extract it over the old folder (keep .env), then docker compose up -d --build."
+          } > "$RUNNER_TEMP/notes.md"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist-windows/cctv-monitor-windows.zip dist-windows/cctv-monitor.zip --title "CCTV Monitor $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
